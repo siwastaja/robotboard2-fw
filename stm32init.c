@@ -226,7 +226,7 @@ void refresh_settings()
 
 void stm32init(void)
 {
-	RCC->AHB1ENR |= 1UL<<20; // Enable DTCM RAM...
+//	RCC->AHB1ENR |= 1UL<<20; // Enable DTCM RAM...
 
 	uint32_t* bss_begin = (uint32_t*)&_BSS_BEGIN;
 	uint32_t* bss_end   = (uint32_t*)&_BSS_END;
@@ -236,6 +236,7 @@ void stm32init(void)
 		bss_begin++;
 	}
 
+#if 0
 	uint32_t* dtcm_bss_begin = (uint32_t*)&_DTCM_BSS_BEGIN;
 	uint32_t* dtcm_bss_end   = (uint32_t*)&_DTCM_BSS_END;
 	while(dtcm_bss_begin < dtcm_bss_end)
@@ -243,7 +244,7 @@ void stm32init(void)
 		*dtcm_bss_begin = 0;
 		dtcm_bss_begin++;
 	}
-
+#endif
 
 	uint32_t* data_begin  = (uint32_t*)&_DATA_BEGIN;
 	uint32_t* data_end    = (uint32_t*)&_DATA_END;
@@ -255,6 +256,9 @@ void stm32init(void)
 		data_begin++;
 		datai_begin++;
 	}
+
+
+#if 0
 
 	uint32_t* dtcm_data_begin  = (uint32_t*)&_DTCM_DATA_BEGIN;
 	uint32_t* dtcm_data_end    = (uint32_t*)&_DTCM_DATA_END;
@@ -279,6 +283,8 @@ void stm32init(void)
 		text_itcm_begin++;
 		text_itcm_i_begin++;
 	}
+
+#endif
 
 	main();
 }
