@@ -1,7 +1,26 @@
-#ifndef __OWN_STD_H
-#define __OWN_STD_H
+/*
+	RobotBoard firmware project
+	
+	Some helper functions from my earlier projects
 
-#include <inttypes.h>
+	(c) 2014-2018 Antti Alhonen, Pulu Robotics and other contributors
+	Maintainer: Antti Alhonen <antti.alhonen@iki.fi>
+
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License version 2, as 
+	published by the Free Software Foundation.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	GNU General Public License version 2 is supplied in file LICENSING.
+*/
+
+#pragma once
+
+#include <stdint.h>
 
 // Find terminating 0 from a string, or terminate after n characters,
 // whichever comes first. Returns the length of a null-terminated string,
@@ -26,5 +45,3 @@ char* o_utoa16_hex(uint16_t val, char* str);
 char* o_utoa32_hex(uint32_t val, char* str);
 
 
-
-#endif

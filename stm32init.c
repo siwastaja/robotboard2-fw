@@ -226,7 +226,42 @@ void refresh_settings()
 
 void stm32init(void)
 {
-//	RCC->AHB1ENR |= 1UL<<20; // Enable DTCM RAM...
+
+	RCC->APB4ENR |= 1UL<<1 /*SYSCFG needs to be on for some configuration thingies often needed when fighting against
+		 device errata*/;
+
+
+	/*
+	To get us started, we jump right into our typical STM32 territory:
+	The errata sheet will tell us they failed the SRAM bus connectivity, and random data corruption will occur
+	unless we set a workaround bit which will limit the bus performance:
+		"Set the READ_ISS_OVERRIDE bit in the AXI_TARG7_FN_MOD register."
+
+	Easier said than done. Guess what? They didn't bother defining these register names in their header files. 
+	Furthermore, they won't tell you the addresses these registers reside in; only some imaginary "offsets", but
+	the base is hard to find- they refer you to a table which won't include said information - so we'll need to guess.
+	Finally, you can find out the information, from a different table than you were referred at. Guess what they call
+	AXIM in this table? Not AXIM, but GPV. Of course!
+	*/
+
+	(*(uint32_t*)(0x51000000UL /*The magical, hard to find GPV aka AXIM base*/ + 0x8108UL /*AXI_TARG7_FN_MOD*/)) 
+		|= 1UL<<0;
+
+
+
+	PWR->CR3 = /*bit1=0 Disable regulator*/  1UL<<0 /*bypass regulator*/;
+
+	// Since we are using external Vcore, Before RAM write access is allowed, the VOS (voltage scaling) setting must
+	// match the actual core voltage.
+	// We are supplying 1.20V, which corresponds to the highest performance VOS1 scale.
+
+	PWR->D3CR = 0b11UL<<14; // VOS1
+
+
+	// Enable RAM from the start so that we can copy data sections / initialize bss sections on these:
+	RCC->AHB2ENR |= 1UL<<31 /*SRAM3*/ | 1UL<<30 /*SRAM2*/ | 1UL<<29 /*SRAM1*/;
+	// All other RAMs are accessible by CPU by default
+
 
 	uint32_t* bss_begin = (uint32_t*)&_BSS_BEGIN;
 	uint32_t* bss_end   = (uint32_t*)&_BSS_END;
@@ -258,8 +293,6 @@ void stm32init(void)
 	}
 
 
-#if 0
-
 	uint32_t* dtcm_data_begin  = (uint32_t*)&_DTCM_DATA_BEGIN;
 	uint32_t* dtcm_data_end    = (uint32_t*)&_DTCM_DATA_END;
 	uint32_t* dtcm_data_i_begin = (uint32_t*)&_DTCM_DATA_I_BEGIN;
@@ -283,8 +316,6 @@ void stm32init(void)
 		text_itcm_begin++;
 		text_itcm_i_begin++;
 	}
-
-#endif
 
 	main();
 }

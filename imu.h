@@ -1,8 +1,7 @@
 /*
 	RobotBoard firmware project
-
-	Flash firmware updater & non-volatile storage manager	
-
+	
+	Intertial measurement unit - integrates sensor data
 
 	(c) 2017-2018 Pulu Robotics and other contributors
 	Maintainer: Antti Alhonen <antti.alhonen@iki.fi>
@@ -19,22 +18,5 @@
 	GNU General Public License version 2 is supplied in file LICENSING.
 */
 
-#ifndef _FLASHER_H
-#define _FLASHER_H
-
-void run_flasher();
-
-extern void refresh_settings(); // in stm32init.c
-void save_flash_settings(); // don't do too often
-
-
-typedef struct __attribute__((packed)) __attribute__((aligned(4)))
-{
-	int32_t offsets[4][4];
-	int32_t offsets_at_temps[4];
-} settings_t;
-
-extern volatile settings_t settings;
-
-
-#endif
+#pragma once
+#include <stdint.h>

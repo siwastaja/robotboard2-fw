@@ -5,19 +5,22 @@ LD = arm-none-eabi-gcc
 SIZE = arm-none-eabi-size
 OBJCOPY = arm-none-eabi-objcopy
 
+OBJ = stm32init.o main.o own_std.o flash.o tof_muxing.o tof_ctrl.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o
+
 CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
 ASMFLAGS = -S -fverbose-asm
 LDFLAGS = -mcpu=cortex-m7 -mthumb -nostartfiles -mfloat-abi=hard -mfpu=fpv5-d16 -specs=nano.specs
 
-DEPS = tof_muxing.h own_std.h stm32_cmsis_extension.h
-#OBJ = stm32init.o main.o own_std.o flash.o tof_muxing.o
-OBJ = stm32init.o main.o
-ASMS = stm32init.s main.s own_std.s flash.s tof_muxing.o
-
 all: main.bin
 
-%.o: %.c $(DEPS)
-	$(CC) -c -o $@ $< $(CFLAGS)
+%.o: %.c
+	$(CC) -c $(CFLAGS) $*.c -o $*.o
+	$(CC) -MM $(CFLAGS) $*.c > $*.d
+	@mv -f $*.d $*.d.tmp
+	@sed -e 's|.*:|$*.o:|' < $*.d.tmp > $*.d
+	@sed -e 's/.*://' -e 's/\\$$//' < $*.d.tmp | fmt -1 | \
+	  sed -e 's/^ *//' -e 's/$$/:/' >> $*.d
+	@rm -f $*.d.tmp
 
 main.bin: $(OBJ)
 	$(LD) -Tlinker.ld $(LDFLAGS) -o main.elf $^ -lm
@@ -51,7 +54,7 @@ syms:
 asm: $(ASMS)
 
 e:
-	gedit --new-window linker.ld `echo "$(OBJ)" | sed s/"\.o"/"\.c"/g` $(DEPS) &
+	gedit --new-window makefile linker.ld `echo "$(OBJ)" | sed s/"\.o"/"\.c"/g` `echo "$(OBJ)" | sed s/"\.o"/"\.h"/g` &
 
 s:
 	screen /dev/ttyUSB0 115200

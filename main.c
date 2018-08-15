@@ -36,7 +36,6 @@ void delay_ms(uint32_t i)
 void main()
 {
 
-	//AXI_TARG7_FN_MOD |= 1UL<<0; // From device errata sheet: SRAM connectivity is broken and data will be randomly corrupted unless this bit is set.
 
 	RCC->AHB4ENR |= 0b111111111; // GPIOA to GPIOI (J and K do not exist on the device)
 
