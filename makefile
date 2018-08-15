@@ -10,7 +10,8 @@ ASMFLAGS = -S -fverbose-asm
 LDFLAGS = -mcpu=cortex-m7 -mthumb -nostartfiles -mfloat-abi=hard -mfpu=fpv5-d16 -specs=nano.specs
 
 DEPS = tof_muxing.h own_std.h stm32_cmsis_extension.h
-OBJ = stm32init.o main.o own_std.o flash.o tof_muxing.o
+#OBJ = stm32init.o main.o own_std.o flash.o tof_muxing.o
+OBJ = stm32init.o main.o
 ASMS = stm32init.s main.s own_std.s flash.s tof_muxing.o
 
 all: main.bin

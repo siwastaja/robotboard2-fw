@@ -8,10 +8,35 @@
 #define LED_ON()  HI(GPIOC, 13);
 #define LED_OFF() LO(GPIOC, 13);
 
+
+void error(int code)
+{
+	while(1);
+}
+
+//void delay_us(uint32_t i) __attribute__((section(".text_itcm")));
+void delay_us(uint32_t i)
+{
+	if(i==0) return;
+	i *= 90;
+	i -= 7;
+	while(i--)
+		__asm__ __volatile__ ("nop");
+}
+
+//void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
+void delay_ms(uint32_t i)
+{
+	while(i--)
+	{
+		delay_us(1000);
+	}
+}
+
 void main()
 {
 
-	AXI_TARG7_FN_MOD |= 1UL<<0; // From device errata sheet: SRAM connectivity is broken and data will be randomly corrupted unless this bit is set.
+	//AXI_TARG7_FN_MOD |= 1UL<<0; // From device errata sheet: SRAM connectivity is broken and data will be randomly corrupted unless this bit is set.
 
 	RCC->AHB4ENR |= 0b111111111; // GPIOA to GPIOI (J and K do not exist on the device)
 
