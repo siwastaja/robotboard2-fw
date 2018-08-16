@@ -21,3 +21,15 @@
 
 #pragma once
 #include <stdint.h>
+
+
+/*
+Call these two functions in two critical parts of the program, between 2 and 10 kHz, between 35% and 65% duty cycle.
+
+If these are not called alternatively, main power switch NFET gate charge depletes and power turns off.
+*/
+
+void pwrswitch_init();
+
+void alive_platform_0();
+void alive_platform_1();
