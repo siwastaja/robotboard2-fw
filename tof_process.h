@@ -32,6 +32,8 @@
 #define AMBLIGHT_NGROUPS 16    // Max 16 to hold the index in 4 bits
 #define AMBLIGHT_NSTEPS 32
 
+#define TEMPERATURE_NSTEPS 3
+
 /*
 	TOF calibration data is the dominating source of flash storage - if we followed the Espros'
 	recommendations for storing the calibration data, we would run out of flash with just a few sensors.
@@ -133,14 +135,77 @@ typedef struct __attribute__((packed))
 		pixel demodulators (partially differing for each pixel).
 
 		Industry baseline is to compensate all pixels with a single temperature coefficient - pixels are
-		close enough. We can do better.
+		close enough. It's OK, but we can do better.
 
+		Fixed point math will be used:
+
+		dist_corrected = dist - (global_temp_coeff (int32) + perpix_temp_coeff[pixel] (uint4)) * (actual_temp - calibration_temp)
+
+		Because the temperature correction may be slightly nonlinear, the coefficient is not exactly a constant.
+
+		This is why several steps with different constants are used. Interpolate linearly between the constants.
 	*/
 
-	int32_t global_temp_coeff;    // 4 bytes
+	// Calibration temperature
+	int16_t temp_coeffs_measured_at[TEMPERATURE_NSTEPS];
 
-	int8_t  perpix_temp_coeff[TOF_XS*TOF_YS/2]; // 4800 bytes
+
+	int32_t global_temp_coeff[TEMPERATURE_NSTEPS];    // 12 bytes
+
+	uint8_t perpix_temp_coeff[TEMPERATURE_NSTEPS][TOF_XS*TOF_YS/2]; // 14400 bytes
 
 	
+} tof_chip_calib_t;
 
-} tof_sensor_calib_t;
+
+/*
+	Optical calibration for a sensor.
+
+	Calibration is fixed for a single rotation of the sensor. For different rotations, the data itself needs to be rotated.
+	This way, a lot of runtime calculation is saved. The obvious limitation is that the sensors cannot be installed in
+	rotating arms, etc. Rotating a sensor requires calibration data update (which can be made a quick and simple operation,
+	but still comparable to firmware update.)
+
+*/
+
+typedef struct __attribute__((packed))
+{
+	/*
+		Angles the pixels point at.
+
+		The final point is calculated by:
+		x = d * cos(pix_ver_ang + sensor_ver_ang) * cos(pix_hor_ang + sensor_hor_ang) + sensor_x;
+		y = d * cos(pix_ver_ang + sensor_ver_ang) * sin(pix_hor_ang + sensor_hor_ang) + sensor_y;
+		z = d * sin(pix_ver_ang + sensor_ver_ang) + sensor_z;
+		
+		Horizontal angle is positive CCW. Zero looking right on the standard UI screen - East for the recommended standard notation.
+		Vertical angle is positive upwards. Zero looking forward.
+
+		Angle unit is, like everywhere, so that full data type range corresponds for 360 degrees.
+		These angles are, naturally, limited between -90...+90 degrees, so we could add one bit of extra precision by shifting, but no need
+		for it right now - with 16-bit range, the resolution is about 0.005 degrees.
+	*/
+
+	int16_t perpix_ver_angs[TOF_XS*TOF_YS];
+	int16_t perpix_hor_angs[TOF_XS*TOF_YS];
+
+	/*
+		TODO:
+
+		Parameters for lens blur & stray light model. Brute-forcing/lookup-tabling these would get huge; so
+		they will be simple, small parameters generating a "good enough" model. Not expecting much memory
+		footprint for this.
+	*/
+
+
+} tof_optical_calib_t;
+
+
+typedef struct __attribute__((packed))
+{
+	tof_chip_calib_t    chip_calib_at_freq[2];
+	tof_optical_calib_t optical_calib;
+} tof_calib_t;
+
+
+
