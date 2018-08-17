@@ -20,3 +20,9 @@
 
 #pragma once
 #include <stdint.h>
+
+
+typedef struct
+{
+	
+} adc1_data_t;
