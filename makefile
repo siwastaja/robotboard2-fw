@@ -5,7 +5,7 @@ LD = arm-none-eabi-gcc
 SIZE = arm-none-eabi-size
 OBJCOPY = arm-none-eabi-objcopy
 
-OBJ = stm32init.o main.o own_std.o flash.o tof_muxing.o tof_ctrl.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o
+OBJ = stm32init.o main.o own_std.o flash.o tof_muxing.o tof_ctrl.o tof_process.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o
 
 CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
 ASMFLAGS = -S -fverbose-asm

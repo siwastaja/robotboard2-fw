@@ -35,7 +35,7 @@ void delay_ms(uint32_t i)
 
 void main()
 {
-
+	// 2 WS (3 flash clock cycles) : 185..210MHz in VOS1
 
 	RCC->AHB4ENR |= 0b111111111; // GPIOA to GPIOI (J and K do not exist on the device)
 

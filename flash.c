@@ -51,6 +51,9 @@
 
 */
 
+// Programming delay (WRHIGHFREQ): 0b10 = 185..210MHz AXI bus freq in VOS1
+
+
 #include <stdint.h>
 #include "ext_include/stm32h7xx.h"
 #include "stm32_cmsis_extension.h"
