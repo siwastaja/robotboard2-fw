@@ -1,53 +1,14 @@
 /*
-	Originally from: PULUROBOT RN1-BRAIN RobotBoard main microcontroller firmware project
+	Flasher code is located in ITCM core-coupled RAM.
 
-	(c) 2017-2018 Pulu Robotics and other contributors
-	Maintainer: Antti Alhonen <antti.alhonen@iki.fi>
+	The flasher allows erasing and writing one complete sector at a time.
+	All sectors are 128*1024 bytes.
 
-	This program is free software; you can redistribute it and/or modify
-	it under the terms of the GNU General Public License version 2, as 
-	published by the Free Software Foundation.
+	Flasher completely uses SRAM1 (exactly 128*1024 bytes as well) as a buffer for
+	the data to be written.
 
-	This program is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-	GNU General Public License for more details.
-
-	GNU General Public License version 2 is supplied in file LICENSING.
-
-
-
-	FLASHER module.
-
-	Allows full in-system firmware update, through the same SPI interface
-	used for normal operation.
-
-	Flashing functions are run from the ITCM RAM section, allowing reflashing
-	the flasher code itself (and anything else). (TODO: Not much ITCM, it's valuable.
-	Find out how to alias these functions to the same addresses as anything else on
-	the ITCM; just copy them to actual memory when the flasher is run, not in the startup code.)
-
-
-	For maximum robustness and reliability, the complete firmware is transferred
-	to RAM first, then checked using CRC8. Only after that, flash is erased and
-	written.
-
-	For this reason, the firmware size is limited to available RAM.
-
-	The flasher always ends up in reset.
-
-	Hence, we just mercilessly reuse the SRAM1, starting from 0x20020000, for the huge
-	firmware buffer. Former application RAM usage does not matter since we always reset
-	after running the flasher. This limits the maximum firmware size to about 360K
-	(SRAM1 368K minus some storage for the flasher itself). Let's say 256K since it's
-	a nice number, and fits in FLASH sectors 0..4, leaving the rest (5,6,7, each 256K)
-	for storing some calibration etc.
-
-	NOTE: For this reason, any variables for flasher need to reside either in stack,
-	or in their own section located after the large firmware buffer. Right now we
-	don't have globals or statics here. Keep it that way if you don't know what you
-	are doing.
-
+	The flasher disregards any other use for SRAM1 - any other data is lost. Using flasher
+	always ends up in system reset.
 
 */
 
@@ -59,48 +20,101 @@
 #include "stm32_cmsis_extension.h"
 
 #include "flash.h"
-#include "own_std.h"
 
 #define FLASH_OFFSET 0x08000000
 
 extern void delay_us(uint32_t i);
 extern void delay_ms(uint32_t i);
-#define LED_ON()  HI(GPIOF, 2)
-#define LED_OFF() LO(GPIOF, 2)
 
 
-static void unlock_flash() __attribute__((section(".text_itcm")));
-static void unlock_flash()
+static void unlock_flash(int bank) __attribute__((section(".text_itcm")));
+static void unlock_flash(int bank)
 {
-	if(FLASH->CR & (1UL<<31))
+	if(bank==1)
 	{
-		FLASH->KEYR = 0x45670123;
-		FLASH->KEYR = 0xCDEF89AB;
+		if(FLASH->CR1 & (1UL<<0))
+		{
+			FLASH->KEYR1 = 0x45670123;
+			FLASH->KEYR1 = 0xCDEF89AB;
+		}
 	}
+	else if(bank==2)
+	{
+		if(FLASH->CR2 & (1UL<<0))
+		{
+			FLASH->KEYR2 = 0x45670123;
+			FLASH->KEYR2 = 0xCDEF89AB;
+		}
+	}
+	// else (invalid bank id): flash remains locked, and no harm happens (erasing and writing fails)
+
 }
 
 static void lock_flash() __attribute__((section(".text_itcm")));
 static void lock_flash()
 {
-	FLASH->CR |= 1UL<<31;
+	// Lock both banks
+	FLASH->CR1 |= 1UL<<0;
+	FLASH->CR2 |= 1UL<<0;
 }
 
-static int flash_erase_sector(int sector) __attribute__((section(".text_itcm")));
-static int flash_erase_sector(int sector)
+/*
+	Delay which is surely long enough so that setting a command bit and then polling for the expected result status works.
+*/
+static void delay() __attribute__((section(".text_itcm")));
+static void delay()
 {
-	if(sector < 0 || sector > 7)
+	for(int i=0; i<16; i++)
+	{
+		__asm__ __volatile__ ("nop");
+	}
+}
+
+#define POLL_QW_BANK1() do{while(FLASH->SR1 & (1UL<<2));}while(0)
+#define POLL_QW_BANK2() do{while(FLASH->SR2 & (1UL<<2));}while(0)
+
+#define POLL_BSY_BANK1() do{while(FLASH->SR1 & (1UL<<0));}while(0)
+#define POLL_BSY_BANK2() do{while(FLASH->SR2 & (1UL<<0));}while(0)
+
+static int flash_erase_sector(int bank, int sector) __attribute__((section(".text_itcm")));
+static int flash_erase_sector(int bank, int sector)
+{
+	if(bank < 1 || bank > 2 || sector < 0 || sector > 7)
 		return 1;
 
-	while(FLASH->SR & (1UL<<16)) ; // Poll busy bit
-	FLASH->CR |= 0b10UL<<8 /*32-bit parallelism*/ | sector<<3 | 1UL<<1 /*sector erase*/;
-	FLASH->CR |= 1UL<<16; // Start
-	__asm__ __volatile__ ("nop");
-	__asm__ __volatile__ ("nop");
-	while(FLASH->SR & (1UL<<16)) ; // Poll busy bit
+	if(bank == 1)
+	{
+		POLL_QW_BANK1();
+		FLASH->CR1 |= 0b11UL<<4 /*64-bit parallelism*/ | sector<<8 | 1UL<<2 /*sector erase*/;
+		FLASH->CR1 |= 1UL<<7; // Start
+		delay();
+		POLL_QW_BANK1();
+		delay();
+		POLL_BSY_BANK1(); // Just to be sure everything goes well, we wait for the actual operation to finish, not just to get out of the queue.
+		FLASH->CR1 = 0; // Clear configuration, keep flash unlocked
+	}
+	else
+	{
+		POLL_QW_BANK2();
+		FLASH->CR2 |= 0b11UL<<4 /*64-bit parallelism*/ | sector<<8 | 1UL<<2 /*sector erase*/;
+		FLASH->CR2 |= 1UL<<7; // Start
+		delay();
+		POLL_QW_BANK2();
+		delay();
+		POLL_BSY_BANK2(); // Just to be sure everything goes well, we wait for the actual operation to finish, not just to get out of the queue.
+		FLASH->CR2 = 0; // Clear configuration, keep flash unlocked
+	}
 
-	FLASH->CR = 0; // Clear erase bit.
 	return 0;
 }
+
+// write: 
+// unlock
+//clear PGSERR and INCERR
+//PG high.
+//check for write protection
+//write 32-bit word at 32-bit aligned address
+//poll until QW is high, then poll until QW is low
 
 volatile settings_t settings __attribute__((section(".settings")));
 
