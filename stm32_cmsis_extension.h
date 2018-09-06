@@ -8,6 +8,9 @@
 #define HI(port, idx) do{(port)->BSRR = 1UL<<(idx);}while(0)
 #define LO(port, idx) do{(port)->BSRR = 1UL<<(16+idx);}while(0)
 
+#define IN(port, idx) ((port)->IDR & (1UL<<(idx)))
+#define IN_SHIFTED(port, idx) (((port)->IDR & (1UL<<(idx)))>>idx)
+
 #define IO_TO_GPI(port, idx) do{ uint32_t _tmp_ = (port)->MODER; _tmp_ &= ~(0b11UL<<((idx)*2)); (port)->MODER = _tmp_; }while(0)
 #define IO_TO_GPO(port, idx) do{ uint32_t _tmp_ = (port)->MODER; _tmp_ &= ~(1UL<<((idx)*2+1)); _tmp_ |= 1UL<<((idx)*2); (port)->MODER = _tmp_; }while(0)
 #define IO_TO_ALTFUNC(port, idx) do{ uint32_t _tmp_ = (port)->MODER; _tmp_ &= ~(1UL<<((idx)*2)); _tmp_ |= 1UL<<((idx)*2+1); (port)->MODER = _tmp_; }while(0)
@@ -42,3 +45,5 @@
 
 #define IO_ALTFUNC(port, pin, af) do{ IO_TO_ALTFUNC((port),(pin)); IO_SET_ALTFUNC((port),(pin),(af));}while(0)
 
+
+#define REG_WRITE_PART(reg, start_shift, mask, content) do{uint32_t _tmp_ = (reg); _tmp_ &= ~((mask)<<(start_shift)); _tmp_ |= ((content)<<(start_shift)); (reg) = _tmp_;}while(0)
