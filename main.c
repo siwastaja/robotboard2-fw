@@ -35,42 +35,67 @@ void delay_ms(uint32_t i)
 
 void main()
 {
-	// 2 WS (3 flash clock cycles) : 185..210MHz in VOS1
 
-	RCC->AHB4ENR |= 0b111111111; // GPIOA to GPIOI (J and K do not exist on the device)
+	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
 
 	IO_TO_GPO(GPIOC, 13);
 
-	while(1)
-	{
-		LED_ON();
-		delay_ms(100);
-		LED_OFF();
-		delay_ms(100);
-	}
+	LED_ON();
+	delay_ms(20);
+	LED_OFF();
+	delay_ms(10);
 
-#if 0
-	RCC->APB1ENR |= 1UL<<28; // Power interface clock enable - needed to configure PWR registers
-	RCC->PLLCFGR = 9UL<<24 /*Q*/ | 1UL<<22 /*HSE as source*/ | 0b00UL<<16 /*P=2*/ | 216UL<<6 /*N*/ | 4UL /*M*/;
+
+	// sys_ck (for CPU, etc.) is pll1_p_ck
+	// Fvco = Fref * divN
+	// Fout = Fvco / (postdiv_reg+1)
+	// VCO must be between 192 and 836MHz
+	// Multiplier (divN) must be from 4 to 512
+	
+	// Fractional PLL mode not needed - initialize in integer mode
+	// Input clock = 8 MHz
 
 	RCC->CR |= 1UL<<16; // HSE clock on
-	RCC->CR |= 1UL<<24; // PLL on
+	while(!(RCC->CR & 1UL<<17)) ; // Wait for HSE oscillator stabilization
+	delay_ms(1);
+	// M prescalers - set to 0 when PLL is disabled. 1 = div by 1 (bypass)
+	RCC->PLLCKSELR = 0UL<<20 /* PLL3 M(prescaler)*/ | 
+			 0UL<<12 /* PLL2 M(prescaler)*/ | 
+			 0UL<<4 /* PLL1 M(prescaler)*/ |
+			 0b10UL /*HSE as PLL source*/;
+			
+	RCC->PLLCFGR =  0b000UL<<22 /*PLL3 divider output enables: R,Q,P */ |
+			0b000UL<<19 /*PLL2 divider output enables: R,Q,P */ |
+			0b001UL<<16 /*PLL1 divider output enables: R,Q,P */ |
+			0b10UL<<10 /*PLL3 input between 4..8MHz*/ |
+			0b10UL<<6  /*PLL2 input between 4..8MHz*/ |
+			0b10UL<<2  /*PLL1 input between 4..8MHz*/;
+	
 
-	PWR->CR1 |= 1UL<<16; // Overdrive on
-	while(!(PWR->CSR1 & (1UL<<16))) ; // Wait for overdrive ready
-	PWR->CR1 |= 1UL<<17; // Switch to overdrive
-	while(!(PWR->CSR1 & (1UL<<17))) ; // Wait for overdrive switching ready
+	RCC->PLL1DIVR = 0UL<<24 /*R*/ | 2UL<<16 /*Q ->pll1_q_ck (200MHz)*/ | 1UL<<9 /*P ->sys_ck (400MHz)*/ | (50UL   -1UL)<<0 /*N  8MHz->400MHz*/;
+
+	RCC->CR |= 1UL<<24; // PLL1 on
+	// Configure other registers while waiting PLL1 stabilization:
+
+	FLASH->ACR = 0b10UL<<4 /*WRHIGHFREQ programming delay: 185..210MHz AXI bus in VOS1 */ |
+		     2UL<<0    /*LATENCY = 2 wait states: 185..210MHz in VOS1 */;
+
+	while(!(RCC->CR & 1UL<<25)) ; // Wait for PLL1 ready
+
+	RCC->CFGR |= 0b011; // Change PLL to system clock
+	while((RCC->CFGR & (0b111UL<<3)) != (0b011UL<<2)) ; // Wait for switchover to PLL.
 
 
-	FLASH->ACR = 1UL<<9 /* ART accelerator enable (caches) */ | 1UL<<8 /*prefetch enable*/ | 7UL /*7 wait states*/;
-	RCC->CFGR = 0b100UL<<13 /*APB2 div 2*/ | 0b101UL<<10 /*APB1 div 4*/;
-	RCC->DCKCFGR2 = 0b01UL<<4 /*USART3 = sysclk*/ | 0b00UL<<22 /*I2C4 = APB1clk*/ | 0b00UL<<20 /*I2C3 = APB1clk*/;
 
-	while(!(RCC->CR & 1UL<<25)) ; // Wait for PLL
-	RCC->CFGR |= 0b10; // Change PLL to system clock
-	while((RCC->CFGR & (0b11UL<<2)) != (0b10UL<<2)) ; // Wait for switchover to PLL.
+//	RCC->CR |= 1UL<<26; // PLL2 on
+//	while(!(RCC->CR & 1UL<<27)) ; // Wait for PLL2 ready
 
-#endif
+//	RCC->CR |= 1UL<<28; // PLL2 on
+//	while(!(RCC->CR & 1UL<<29)) ; // Wait for PLL2 ready
+
+	
+
+
 
 	// Enable FPU
 
