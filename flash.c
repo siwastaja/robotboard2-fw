@@ -7,8 +7,9 @@
 	Flasher completely uses SRAM1 (exactly 128*1024 bytes as well) as a buffer for
 	the data to be written.
 
-	The flasher disregards any other use for SRAM1 - any other data is lost. Using flasher
-	always ends up in system reset.
+	The flasher disregards any other use for SRAM1 - any other data is lost. Now, using flasher
+	always ends up in system reset. If the flasher is modified to allow returining to the application,
+	SRAM1 contents must be rebuilt.
 
 */
 
@@ -22,6 +23,11 @@
 #include "flash.h"
 
 #define FLASH_OFFSET 0x08000000
+
+#define SECTOR_LEN (128*1024)
+#if (SECTOR_LEN%32 != 0)
+#error "SECTOR_LEN must be multiple of 32 (256 bits is the smallest writable block with standard means, with valid ECC)"
+#endif
 
 extern void delay_us(uint32_t i);
 extern void delay_ms(uint32_t i);
@@ -90,7 +96,8 @@ static int flash_erase_sector(int bank, int sector)
 		delay();
 		POLL_QW_BANK1();
 		delay();
-		POLL_BSY_BANK1(); // Just to be sure everything goes well, we wait for the actual operation to finish, not just to get out of the queue.
+		POLL_BSY_BANK1(); // Just to be sure everything goes well, 
+		                  // we wait for the actual operation to finish, not just to get out of the queue.
 		FLASH->CR1 = 0; // Clear configuration, keep flash unlocked
 	}
 	else
@@ -101,7 +108,8 @@ static int flash_erase_sector(int bank, int sector)
 		delay();
 		POLL_QW_BANK2();
 		delay();
-		POLL_BSY_BANK2(); // Just to be sure everything goes well, we wait for the actual operation to finish, not just to get out of the queue.
+		POLL_BSY_BANK2(); // Just to be sure everything goes well, 
+		                  // we wait for the actual operation to finish, not just to get out of the queue.
 		FLASH->CR2 = 0; // Clear configuration, keep flash unlocked
 	}
 
@@ -116,33 +124,6 @@ static int flash_erase_sector(int bank, int sector)
 //write 32-bit word at 32-bit aligned address
 //poll until QW is high, then poll until QW is low
 
-volatile settings_t settings __attribute__((section(".settings")));
-
-void save_flash_settings()
-{
-	unlock_flash();
-	flash_erase_sector(7);
-
-	FLASH->CR = 0b10<<8 /*32-bit parallellism*/ | 1UL /*activate programming*/;
-
-	volatile uint32_t* p_flash = (volatile uint32_t*)(FLASH_OFFSET + 0x000C0000 /*sector 7*/);
-	volatile uint32_t* p_ram = (volatile uint32_t* volatile)(&settings);
-
-	for(int i=0; i<sizeof(settings)/4; i++)
-	{
-		*p_flash = *p_ram;
-		p_flash++;
-		p_ram++;
-		__DSB(); __ISB();
-		while(FLASH->SR & (1UL<<16)) ; // Poll busy bit
-	}
-
-	FLASH->SR |= 1UL; // Clear End Of Operation bit by writing '1'
-	FLASH->CR = 0; // Clear programming bit.
-
-	lock_flash();
-}
-
 /*
 
 Flashing: 
@@ -154,24 +135,22 @@ Flashing:
 
 
 To program:	
-	Do a 9-byte write:
+	Do a 7-byte write:
 		uint32_t little endian: 0xabba1337
-		uint32_t little endian: firmware size in bytes, rounded up to next four
-		data bytes padded to next four bytes: valid: 512 to 262144
-		CRC8 over the full, padded firmware
+		uint8_t: bank number (1 or 2)
+		uint8_t: sector number (0 to 7)
+		uint8_t: CRC8 over the 128*1024 bytes of data
 
-	Then do as many writes as needed, max 65535 bytes each.
+	Then write 128*1024 bytes of data, in as many writes as needed, max 65535 bytes each. (Minimum
+	3 writes)
 
 	Erasing & programming happens automatically after nCS goes low with enough number
-	of bytes in buffer, and the data passes size sanity, size match, and CRC tests.
+	of bytes in buffer, and the data passes the CRC test.
 
 	Then, do 5-byte long reads (writes with any dummy data). You'll get 0x55 or 0x00
 	or something similar back, the flashing is busy. When done, you'll get:
 		uint32_t little endian: 0xacdc3579
 		uint8_t success code:
-			2 = size sanity check fail
-			4 = size mismatch
-			5 = len not aligned to 4
 			6 = crc test fail
 			123 = success
 			others = unspecified error
@@ -179,10 +158,10 @@ To program:
 To read:
 	Do a 8-byte long write as one operation:
 		uint32_t little endian: 0xbeef1234
-		uint32_t little endian: memory offset. Starts at 0.
+		uint32_t little endian: flash memory offset starting from bank0sect0 - starts from 0
 
 	Then, as a separate operation, do dummy writes (generate clocks) for max 65535
-	bytes. If the firmware is longer, do multiple read operations (first command, then
+	bytes. If you want to read more than that, do multiple read operations (first command, then
 	data clocks.)
 
 
@@ -196,19 +175,18 @@ To reset:
 	You have to reset. There's no other way going back to the application.
 */
 
-#define FLASHER_BUF_ADDR 0x20020000
-#define FLASHER_MAX_FW_SIZE (256*1024)
-#define FLASHER_BUF_SIZE (FLASHER_MAX_FW_SIZE+16)
+#define FLASHER_BUF_ADDR 0x30000000
 #define FLASHER_DMA_SIZE 65535
 
-#define FLASHER_REPLY_BUF_ADDR (FLASHER_BUF_ADDR+FLASHER_BUF_SIZE)
 #define FLASHER_REPLY_BUF_SIZE 5
+volatile uint8_t flasher_reply_buf[FLASHER_REPLY_BUF_SIZE] __attribute__((aligned(4)));
+
 
 static void ena_tx_dma() __attribute__((section(".text_itcm")));
 static void ena_tx_dma()
 {
 	DMA1_Stream4->PAR = (uint32_t)&(SPI2->DR);
-	DMA1_Stream4->M0AR = FLASHER_REPLY_BUF_ADDR;
+	DMA1_Stream4->M0AR = flasher_reply_buf;
 	DMA1_Stream4->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
@@ -222,7 +200,7 @@ static void ena_tx_dma_for_flash_read(int offset) __attribute__((section(".text_
 static void ena_tx_dma_for_flash_read(int offset)
 {
 	DMA1_Stream4->PAR = (uint32_t)&(SPI2->DR);
-	DMA1_Stream4->M0AR = 0x08000000 + offset; // FLASH on AXIM interface
+	DMA1_Stream4->M0AR = FLASH_OFFSET + offset; // FLASH on AXIM interface
 	DMA1_Stream4->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
@@ -320,23 +298,13 @@ static void reset_spi_with_rxbuf_offset(int offset)
 		} \
 	}
 
-uint8_t do_program(int fw_len, uint8_t expected_crc) __attribute__((section(".text_itcm")));
-uint8_t do_program(int fw_len, uint8_t expected_crc)
+static uint8_t do_program(int bank, int sector, uint8_t expected_crc) __attribute__((section(".text_itcm")));
+static uint8_t do_program(int bank, int sector, uint8_t expected_crc)
 {
 	__DSB(); __ISB();
 
-	if(fw_len < 512 || fw_len > FLASHER_MAX_FW_SIZE)
-	{
-		return 2;
-	}
-
-	if(fw_len%4 != 0)
-	{
-		return 5;
-	}
-
 	uint8_t chk = CRC_INITIAL_REMAINDER;
-	for(int i=0; i<fw_len; i++)
+	for(int i=0; i<SECTOR_LEN; i++)
 	{
 		chk ^= *((volatile uint8_t*)(FLASHER_BUF_ADDR+i));
 		CALC_CRC(chk);
@@ -349,33 +317,63 @@ uint8_t do_program(int fw_len, uint8_t expected_crc)
 
 	unlock_flash();
 
-	flash_erase_sector(0);
-	if(fw_len > (1*32)*1024) flash_erase_sector(1);
-	if(fw_len > (2*32)*1024) flash_erase_sector(2);
-	if(fw_len > (3*32)*1024) flash_erase_sector(3);
-	if(fw_len > (4*32)*1024) flash_erase_sector(4);
+	flash_erase_sector(bank, sector);
 
-	FLASH->CR = 0b10<<8 /*32-bit parallellism*/ | 1UL /*activate programming*/;
 
-	volatile uint32_t* p_flash = (uint32_t*)FLASH_OFFSET;
-	volatile uint32_t* p_ram = (volatile uint32_t* volatile)(FLASHER_BUF_ADDR);
-
-	for(int i=0; i<fw_len/4; i++)
+	if(bank == 1)
 	{
+		POLL_QW_BANK1();
+		FLASH->CR1 |= 0b11UL<<4 /*64-bit parallelism*/ | 1UL<<1 /*misleadingly named write command*/;
+	}
+	else
+	{
+		POLL_QW_BANK2();
+		FLASH->CR2 |= 0b11UL<<4 /*64-bit parallelism*/ | 1UL<<1 /*misleadingly named write command*/;
+	}
+
+
+	volatile uint64_t* p_flash = (uint64_t*)(FLASH_OFFSET + (bank*8+sector)*128*1024));
+	volatile uint64_t* p_ram = (volatile uint64_t* volatile)(FLASHER_BUF_ADDR);
+
+	for(int i=0; i<SECTOR_LEN/8; i++)
+	{
+		if(bank == 1)
+			POLL_QW_BANK1();
+		else
+			POLL_QW_BANK2();
+
 		*p_flash = *p_ram;
 		p_flash++;
 		p_ram++;
 		__DSB(); __ISB();
-		while(FLASH->SR & (1UL<<16)) ; // Poll busy bit
 	}
 
-	FLASH->SR |= 1UL; // Clear End Of Operation bit by writing '1'
-	FLASH->CR = 0; // Clear programming bit.
+	if(bank == 1)
+	{
+		POLL_QW_BANK1();
+		POLL_BSY_BANK1();
+	}
+	else
+	{
+		POLL_QW_BANK2();
+		POLL_BSY_BANK2();
+	}
 
 	lock_flash();
 
 	return 123; // The magical success code.
 }
+
+static void wait_nss_low()
+{
+	while(GPIOB->IDR & (1UL<<12));
+}
+
+static void wait_nss_high()
+{
+	while(!(GPIOB->IDR & (1UL<<12))) ;
+}
+
 
 void flasher() __attribute__((section(".text_itcm")));
 void flasher()

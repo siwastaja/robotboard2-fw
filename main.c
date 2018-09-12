@@ -33,6 +33,11 @@ void delay_ms(uint32_t i)
 	}
 }
 
+
+// Priority 0 is the highest quick-safety-shutdown level which won't be disabled for atomic operations.
+#define DIS_IRQ() do{__set_BASEPRI(1UL << (8 - __NVIC_PRIO_BITS))}while(0)
+#define ENA_IRQ() do{__set_BASEPRI(0UL)}while(0)
+
 void main()
 {
 
@@ -105,14 +110,13 @@ void main()
 
 
 	/*
-		Interrupts will have 4 levels of pre-emptive priority, and 4 levels of sub-priority.
+		Interrupts will have 16 levels of pre-emptive priority.
 
 		Interrupt with more urgent (lower number) pre-emptive priority will interrupt another interrupt running.
 
-		If interrupts with similar or lower urgency happen during another ISR, the subpriority level will decide
-		the order they will be run after finishing the more urgent ISR first.
+		Priority 0 is the highest quick-safety-shutdown level which won't be disabled for atomic operations.
 	*/
-//	NVIC_SetPriorityGrouping(2);
+	NVIC_SetPriorityGrouping(0);
 //	NVIC_SetPriority(PVD_IRQn, 0b0000);
 //	NVIC_EnableIRQ(PVD_IRQn);
 
