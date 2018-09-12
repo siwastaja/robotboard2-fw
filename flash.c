@@ -487,8 +487,6 @@ void run_flasher()
 	ADC1->CR2 = 0; // Disable ADC
 	DMA2_Stream0->CR = 0; // Disable ADC DMA, so that it doesn't write stuff in our buffer
 
-	FLASH->ACR &= ~(1UL<<9); // Disable the ART accelerator (instruction caches?) Just in case.
-
 
 	// Hard-reset SPI - the only way to empty TXFIFO!
 
