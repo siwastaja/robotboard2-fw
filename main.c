@@ -43,41 +43,61 @@ void main()
 
 	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
 
-	IO_TO_GPO(GPIOC, 13);
+	IO_TO_GPO(GPIOC, 13); // LED
 
 	LED_ON();
 	delay_ms(20);
 	LED_OFF();
 	delay_ms(10);
 
-
-	// sys_ck (for CPU, etc.) is pll1_p_ck
-	// Fvco = Fref * divN
-	// Fout = Fvco / (postdiv_reg+1)
-	// VCO must be between 192 and 836MHz
-	// Multiplier (divN) must be from 4 to 512
+/*
+	sys_ck (for CPU, etc.) is pll1_p_ck
+	Fvco = Fref * divN
+	Fout = Fvco / (postdiv_reg+1)
+	VCO must be between 192 and 836MHz
+	Multiplier (divN) must be from 4 to 512
 	
-	// Fractional PLL mode not needed - initialize in integer mode
-	// Input clock = 8 MHz
+	Fractional PLL mode not needed - initialize in integer mode
+	Input clock = 8 MHz
 
+	Let:
+	AHB1 aka hclk1 = 200 MHz   HPRE    = 2
+	AHB2 aka hclk2 = 200 MHz  (HPRE    = 2)
+	AHB3 aka hclk3 = 200 MHz  (HPRE    = 2)
+	APB1 aka pclk1 = 100 MHz   D2PPRE1 = 2
+	APB2 aka pclk2 = 100 MHz   D2PPRE2 = 2
+	APB3 aka pclk3 = 100 MHz   D1PPRE  = 2
+	APB4 aka pclk4 = 100 MHz   D3PPRE  = 2
+
+	Some APB* peripheral kernel clocks are 100MHz max, and cannot be connected to
+	PLL1. So, if 200MHz bus on APB1 or APB2 is ever needed, PLL2 needs to be configured
+	to drive the kernel clocks for such peripherals. For example, SPI4,5.
+
+	For now, it's simplest to drive these peripherals directly on the bus clock, so we
+	use 100MHz bus. It's highly unlikely this would never be an performance issue.
+
+	The most busy/biggest bandwidth SPI is SPI1, which is in APB2. Consider increasing APB2
+	to 200MHz.
+	
+*/
 	RCC->CR |= 1UL<<16; // HSE clock on
 	while(!(RCC->CR & 1UL<<17)) ; // Wait for HSE oscillator stabilization
 	delay_ms(1);
 	// M prescalers - set to 0 when PLL is disabled. 1 = div by 1 (bypass)
 	RCC->PLLCKSELR = 0UL<<20 /* PLL3 M(prescaler)*/ | 
 			 0UL<<12 /* PLL2 M(prescaler)*/ | 
-			 0UL<<4 /* PLL1 M(prescaler)*/ |
+			 1UL<<4 /* PLL1 M(prescaler)*/ |
 			 0b10UL /*HSE as PLL source*/;
 			
 	RCC->PLLCFGR =  0b000UL<<22 /*PLL3 divider output enables: R,Q,P */ |
 			0b000UL<<19 /*PLL2 divider output enables: R,Q,P */ |
-			0b001UL<<16 /*PLL1 divider output enables: R,Q,P */ |
+			0b011UL<<16 /*PLL1 divider output enables: R,Q,P */ |
 			0b10UL<<10 /*PLL3 input between 4..8MHz*/ |
 			0b10UL<<6  /*PLL2 input between 4..8MHz*/ |
 			0b10UL<<2  /*PLL1 input between 4..8MHz*/;
 	
 
-	RCC->PLL1DIVR = 0UL<<24 /*R*/ | 2UL<<16 /*Q ->pll1_q_ck (200MHz)*/ | 1UL<<9 /*P ->sys_ck (400MHz)*/ | (50UL   -1UL)<<0 /*N  8MHz->400MHz*/;
+	RCC->PLL1DIVR = 0UL<<24 /*R*/ | 4UL<<16 /*Q ->pll1_q_ck (100MHz)*/ | 1UL<<9 /*P ->sys_ck (400MHz)*/ | (50UL   -1UL)<<0 /*N  8MHz->400MHz*/;
 
 	RCC->CR |= 1UL<<24; // PLL1 on
 	// Configure other registers while waiting PLL1 stabilization:
@@ -85,11 +105,15 @@ void main()
 	FLASH->ACR = 0b10UL<<4 /*WRHIGHFREQ programming delay: 185..210MHz AXI bus in VOS1 */ |
 		     2UL<<0    /*LATENCY = 2 wait states: 185..210MHz in VOS1 */;
 
+
+	RCC->D1CFGR = 0UL<<8 /*D1CPRE = sysck divider = 1*/ | 0b100UL<<4 /*D1PPRE = 2*/ | 0b1000UL<<0 /*HPRE = 2*/;
+	RCC->D2CFGR = 0b100UL<<8 /*D2PPRE2 = 2*/ | 0b100UL<<4 /*D2PPRE1 = 2*/;
+	RCC->D3CFGR = 0b100UL<<4 /*D3PPRE = 2*/;
+
 	while(!(RCC->CR & 1UL<<25)) ; // Wait for PLL1 ready
 
 	RCC->CFGR |= 0b011; // Change PLL to system clock
 	while((RCC->CFGR & (0b111UL<<3)) != (0b011UL<<2)) ; // Wait for switchover to PLL.
-
 
 
 //	RCC->CR |= 1UL<<26; // PLL2 on
