@@ -43,21 +43,40 @@
 
 */
 
+/*
+	ADC1 is "dedicated" for motor controllers - i.e., synchronized (triggered) by advanced control timers
+	(TIM1&TIM8). ADC1 is chosen for this purpose because one of the current sense signals (mc0_imeasb) is
+	available to ADC1 only.
+
+	To reduce DC link ripple, MC0 and MC1 run their PWMs 180 degrees out of phase. Hence, mc0_imeas* and
+	mc1_imeas* are measured with a half a PWM cycle timing offset.
+
+	The ADC is triggered in the middle of the PWM cycle, once for MC0, then once for MC1.
+	Due to this, ADC1 is run in discontinuous-grouped mode. Each trigger runs 5 conversions out of 10.
+
+
+	Similarly, ADC2 is dedicated to the charger
+
+*/
 typedef struct __attribute__((packed))
 {
-	uint16_t bms_temp_contacts;     // ADC1   16+ PA0   Charger contact temperature NTC
-	uint16_t bms_temp_plat_mosfets; // ADC1   17+ PA1   Platform power switch MOSFET&fuse temperature NTC
 	uint16_t mc0_imeasb;            // ADC1   2+  PF11  Motor controller 0 phase B current measurement
 	uint16_t mc0_imeasc;            // ADC12  7+  PA7   Motor controller 0 phase C current measurement
+
+	uint16_t bms_temp_contacts;     // ADC1   16+ PA0   Charger contact temperature NTC
+	uint16_t bms_temp_plat_mosfets; // ADC1   17+ PA1   Platform power switch MOSFET&fuse temperature NTC
+	uint16_t cha_vin_meas;          // ADC12  4+  PC4   Charger input voltage
+
+	uint16_t mc1_imeasb;            // ADC12  15+ PA3   Motor controller 1 phase B current measurement
+	uint16_t mc1_imeasc;            // ADC12  14+ PA2   Motor controller 1 phase C current measurement
+
+	uint16_t vbat_meas;             // ADC12  18+ PA4   Battery voltage
+	uint16_t bms_temp_battery;      // ADC123 12+ PC2   Battery temperature NTC
+	uint16_t cha_vinbus_meas;       // ADC12  8+  PC5   Charger input voltage after the input ideal diode MOSFET
 } adc1_group_t;
 
 typedef struct __attribute__((packed))
 {
-	uint16_t mc1_imeasb;            // ADC12  15+ PA3   Motor controller 1 phase B current measurement
-	uint16_t mc1_imeasc;            // ADC12  14+ PA2   Motor controller 1 phase C current measurement
-	uint16_t vbat_meas;             // ADC12  18+ PA4   Battery voltage
-	uint16_t cha_vin_meas;          // ADC12  4+  PC4   Charger input voltage
-	uint16_t cha_vinbus_meas;       // ADC12  8+  PC5   Charger input voltage after the input ideal diode MOSFET
 	uint16_t cha_currmeasa;         // ADC12  9+  PB0   Charger sync buck phase A inductor current
 	uint16_t cha_currmeasb;         // ADC12  5+  PB1   Charger sync buck phase B inductor current
 } adc2_group_t;
@@ -72,7 +91,6 @@ typedef struct __attribute__((packed))
 	uint16_t bms_vref3;             // ADC3   15+ PH4   TI BMS chip 3.0V reference voltage
 	uint16_t bms_vmeas;             // ADC3   16+ PH5   TI BMS chip cell measurement voltage
 	uint16_t bms_temp_app_mosfets;  // ADC3   13+ PH2   Application power switch MOSFET&fuse temperature NTC
-	uint16_t bms_temp_battery;      // ADC123 12+ PC2   Battery temperature NTC
 	uint16_t cpu_temp;              // ADC3   18+ internal
 } adc3_group_t;
 
@@ -84,5 +102,7 @@ typedef struct __attribute__((packed))
 
 #define ADC3_SEQ_LEN 10
 #define ADC3_SEQ 5,6,10,1,14,15,16,13,12,18,0,0,0,0,0,0
+
+
 
 
