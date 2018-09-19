@@ -20,3 +20,7 @@
 */
 #pragma once
 #include <stdint.h>
+
+void init_sbc_comm();
+void deinit_sbc_comm();
+

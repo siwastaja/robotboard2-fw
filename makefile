@@ -54,7 +54,7 @@ syms:
 asm: $(ASMS)
 
 e:
-	gedit --new-window makefile linker.ld `echo "$(OBJ)" | sed s/"\.o"/"\.c"/g` `echo "$(OBJ)" | sed s/"\.o"/"\.h"/g` &
+	gedit --new-window makefile linker.ld misc.h `echo "$(OBJ)" | sed s/"\.o"/"\.c"/g` `echo "$(OBJ)" | sed s/"\.o"/"\.h"/g` &
 
 s:
 	screen /dev/ttyUSB0 115200

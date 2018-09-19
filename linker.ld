@@ -260,6 +260,7 @@ SECTIONS
 
     . = ALIGN(8);
 
+/*
     _SETTINGS_I_BEGIN = LOADADDR(.settings);
 
     .settings :
@@ -269,5 +270,5 @@ SECTIONS
         *(.settings.*)
         _SETTINGS_END = .;
     } >ram_dtcm AT>rom_sect7
-
+*/
 }  

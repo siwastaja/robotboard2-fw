@@ -16,6 +16,8 @@ void hardfault_handler();
 extern void error(int code);
 extern void main();
 
+extern void sbc_spi_eot_inthandler();
+
 extern unsigned int _STACKTOP;
 
 // Vector table on page 730 on the Reference Manual RM0433
@@ -72,11 +74,11 @@ unsigned int * the_nvic_vector[126] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00C0                    */ (unsigned int *) invalid_handler,
 /* 0x00C4                    */ (unsigned int *) invalid_handler,
 /* 0x00C8                    */ (unsigned int *) invalid_handler,
-/* 0x00CC                    */ (unsigned int *) invalid_handler,
-/* 0x00D0                    */ (unsigned int *) invalid_handler,
-/* 0x00D4                    */ (unsigned int *) invalid_handler,
-/* 0x00D8                    */ (unsigned int *) invalid_handler,
-/* 0x00DC                    */ (unsigned int *) invalid_handler,
+/* 0x00CC SPI1               */ (unsigned int *) sbc_spi_eot_inthandler(),
+/* 0x00D0 SPI2               */ (unsigned int *) invalid_handler,
+/* 0x00D4 USART1             */ (unsigned int *) invalid_handler,
+/* 0x00D8 USART2             */ (unsigned int *) invalid_handler,
+/* 0x00DC USART3             */ (unsigned int *) invalid_handler,
 /* 0x00E0 EXTI15_10          */ (unsigned int *) invalid_handler,
 /* 0x00E4                    */ (unsigned int *) invalid_handler,
 /* 0x00E8                    */ (unsigned int *) invalid_handler,
@@ -88,9 +90,9 @@ unsigned int * the_nvic_vector[126] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0100                    */ (unsigned int *) invalid_handler,
 /* 0x0104                    */ (unsigned int *) invalid_handler,
 /* 0x0108                    */ (unsigned int *) invalid_handler,
-/* 0x010C                    */ (unsigned int *) invalid_handler,
-/* 0x0110                    */ (unsigned int *) invalid_handler,
-/* 0x0114                    */ (unsigned int *) invalid_handler,
+/* 0x010C SPI3               */ (unsigned int *) invalid_handler,
+/* 0x0110 UART4              */ (unsigned int *) invalid_handler,
+/* 0x0114 UART5              */ (unsigned int *) invalid_handler,
 /* 0x0118                    */ (unsigned int *) invalid_handler,
 /* 0x011C                    */ (unsigned int *) invalid_handler,
 /* 0x0120                    */ (unsigned int *) invalid_handler,
@@ -108,7 +110,7 @@ unsigned int * the_nvic_vector[126] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0150                    */ (unsigned int *) invalid_handler,
 /* 0x0154                    */ (unsigned int *) invalid_handler,
 /* 0x0158                    */ (unsigned int *) invalid_handler,
-/* 0x015C                    */ (unsigned int *) invalid_handler,
+/* 0x015C USART6             */ (unsigned int *) invalid_handler,
 /* 0x0160                    */ (unsigned int *) invalid_handler,
 /* 0x0164                    */ (unsigned int *) invalid_handler,
 /* 0x0168                    */ (unsigned int *) invalid_handler,
@@ -119,11 +121,11 @@ unsigned int * the_nvic_vector[126] __attribute__ ((section(".nvic_vector"))) =
 /* 0x017C                    */ (unsigned int *) invalid_handler,
 /* 0x0180                    */ (unsigned int *) invalid_handler,
 /* 0x0184                    */ (unsigned int *) invalid_handler,
-/* 0x0188                    */ (unsigned int *) invalid_handler,
-/* 0x018C                    */ (unsigned int *) invalid_handler,
-/* 0x0190                    */ (unsigned int *) invalid_handler,
-/* 0x0194                    */ (unsigned int *) invalid_handler,
-/* 0x0198                    */ (unsigned int *) invalid_handler,
+/* 0x0188 UART7              */ (unsigned int *) invalid_handler,
+/* 0x018C UART8              */ (unsigned int *) invalid_handler,
+/* 0x0190 SPI4               */ (unsigned int *) invalid_handler,
+/* 0x0194 SPI5               */ (unsigned int *) invalid_handler,
+/* 0x0198 SPI6               */ (unsigned int *) invalid_handler,
 /* 0x019C                    */ (unsigned int *) invalid_handler,
 /* 0x01A0                    */ (unsigned int *) invalid_handler,
 /* 0x01A4                    */ (unsigned int *) invalid_handler,
@@ -257,6 +259,7 @@ extern unsigned int _TEXT_ITCM_I_BEGIN;
 
 extern void hwtest_main();
 
+/*
 void refresh_settings()
 {
 	volatile uint32_t* settings_begin  = (volatile uint32_t*)&_SETTINGS_BEGIN;
@@ -271,7 +274,7 @@ void refresh_settings()
 	}
 	__DSB(); __ISB();
 }
-
+*/
 void stm32init(void)
 {
 
@@ -306,7 +309,7 @@ void stm32init(void)
 	PWR->D3CR = 0b11UL<<14; // VOS1
 
 
-	// Enable RAM from the start so that we can copy data sections / initialize bss sections on these:
+	// Enable RAMs from the start so that we can copy data sections / initialize bss sections on these:
 	RCC->AHB2ENR |= 1UL<<31 /*SRAM3*/ | 1UL<<30 /*SRAM2*/ | 1UL<<29 /*SRAM1*/;
 	// All other RAMs are accessible by CPU by default
 
@@ -439,7 +442,7 @@ void stm32init(void)
 	}
 
 
-	refresh_settings();
+	//refresh_settings();
 
 	uint32_t* text_itcm_begin  = (uint32_t*)&_TEXT_ITCM_BEGIN;
 	uint32_t* text_itcm_end    = (uint32_t*)&_TEXT_ITCM_END;
@@ -451,6 +454,8 @@ void stm32init(void)
 		text_itcm_begin++;
 		text_itcm_i_begin++;
 	}
+
+	__DSB(); __ISB();
 
 	main();
 }
