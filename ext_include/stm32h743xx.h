@@ -1466,7 +1466,13 @@ typedef struct
 typedef struct
 {
   __IO uint32_t CR1;          /*!< SPI Control register 1,                             Address offset: 0x00 */
-  __IO uint32_t CR2;          /*!< SPI Control register 2,                             Address offset: 0x04 */
+//  __IO uint32_t CR2;          /*!< SPI Control register 2,                             Address offset: 0x04 */
+/*
+	Fix by A.A.:
+	TSER needs to be written as a 16-bit operation, without touching TSIZE; both reside in CR2:
+*/
+  __IO uint16_t TSIZE;
+  __IO uint16_t TSER;
   __IO uint32_t CFG1;         /*!< SPI Status register,                                Address offset: 0x08 */
   __IO uint32_t CFG2;         /*!< SPI Status register,                                Address offset: 0x0C */
   __IO uint32_t IER;          /*!< SPI data register,                                  Address offset: 0x10 */
