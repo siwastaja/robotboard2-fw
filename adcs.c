@@ -1,5 +1,7 @@
 #include <stdint.h>
-
+#include "ext_include/stm32h7xx.h"
+#include "stm32_cmsis_extension.h"
+#include "misc.h"
 
 #define CONF_ADC_SEQ(adc_,len_,s1_,s2_,s3_,s4_,s5_,s6_,s7_,s8_,s9_,s10_,s11_,s12_,s13_,s14_,s15_,s16_) do{ \
 	adc_->SQR1 = (s4_)<<24 | (s3_)<<18 | (s2_)<<12 | (s1_)<<6 | (len_-1); \
@@ -53,7 +55,7 @@ void init_adcs()
 
 
 	init_calib_adc(ADC1);
-	CONF_ADC_SEQ(ADC1, ADC1_SEQ_LEN, ADC1_SEQ);
+//	CONF_ADC_SEQ(ADC1, ADC1_SEQ_LEN, ADC1_SEQ);
 	ADC1->CFGR = 1UL<<31 /*Injected queue disable*/ |
 
 		     0UL<<26 /*AWD1 chan*/ | 0UL<<23 /*Enable AWD1?*/ | 1UL<<22 /*AWD1 on the single (configured) channel only?*/ |
@@ -74,9 +76,9 @@ void init_adcs()
 	ADC1->HTR3 = 65535;
 
 	init_calib_adc(ADC2);
-	CONF_ADC_SEQ(ADC2, ADC2_SEQ_LEN, ADC2_SEQ);
+//	CONF_ADC_SEQ(ADC2, ADC2_SEQ_LEN, ADC2_SEQ);
 
 	init_calib_adc(ADC3);
-	CONF_ADC_SEQ(ADC3, ADC3_SEQ_LEN, ADC3_SEQ);
+//	CONF_ADC_SEQ(ADC3, ADC3_SEQ_LEN, ADC3_SEQ);
 
 }

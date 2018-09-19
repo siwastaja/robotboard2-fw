@@ -67,6 +67,42 @@ char* o_utoa16_fixed(uint16_t val, char* str)
 	return str;
 }
 
+char* o_btoa8_fixed(uint8_t val, char* str)
+{
+	int i;
+	for(i = 7; i >= 0; i--)
+	{
+		char c = (val&(1<<i))?'1':'.';
+		*str++ = c;
+	}
+	*str = 0;
+	return str;
+}
+
+char* o_btoa16_fixed(uint16_t val, char* str)
+{
+	int i;
+	for(i = 15; i >= 0; i--)
+	{
+		char c = (val&(1<<i))?'1':'.';
+		*str++ = c;
+	}
+	*str = 0;
+	return str;
+}
+
+char* o_btoa32_fixed(uint32_t val, char* str)
+{
+	int i;
+	for(i = 31; i >= 0; i--)
+	{
+		char c = (val&(1<<i))?'1':'.';
+		*str++ = c;
+	}
+	*str = 0;
+	return str;
+}
+
 char* o_utoa8_hex(uint8_t val, char* str)
 {
 	uint8_t first = (val&0xf0)>>4;

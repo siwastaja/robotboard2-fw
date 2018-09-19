@@ -1,5 +1,8 @@
 #include <stdint.h>
 #include "adcs.h"
+#include "ext_include/stm32h7xx.h"
+#include "stm32_cmsis_extension.h"
+
 
 void pwrswitch_init()
 {
@@ -18,8 +21,8 @@ void alive_platform_1()
 	// the protection circuit. In this case, don't fight back, stop the charge pump
 	// by constant low level.
 
-	if(recent_adcs.v_bms_mainfet_gate /* */ < 1000 /* */)
-		LO(GPIOB, 2);
-	else
+//	if(recent_adcs.v_bms_mainfet_gate /* */ < 1000 /* */)
+//		LO(GPIOB, 2);
+//	else
 		HI(GPIOB, 2);
 }

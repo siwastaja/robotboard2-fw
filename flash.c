@@ -185,44 +185,44 @@ volatile uint8_t flasher_reply_buf[FLASHER_REPLY_BUF_SIZE] __attribute__((aligne
 static void ena_tx_dma() __attribute__((section(".text_itcm")));
 static void ena_tx_dma()
 {
-	DMA1_Stream4->PAR = (uint32_t)&(SPI2->DR);
-	DMA1_Stream4->M0AR = flasher_reply_buf;
-	DMA1_Stream4->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+	DMA1_Stream0->PAR = (uint32_t)&(SPI2->DR);
+	DMA1_Stream0->M0AR = flasher_reply_buf;
+	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
-	DMA1_Stream4->NDTR = FLASHER_REPLY_BUF_SIZE;
-	DMA_CLEAR_INTFLAGS(DMA1, 4);
-	DMA1_Stream4->CR |= 1; // Enable TX DMA
-	SPI2->CR2 |= 1UL<<1 /*TX DMA ena*/;
+	DMA1_Stream0->NDTR = FLASHER_REPLY_BUF_SIZE;
+	DMA_CLEAR_INTFLAGS(DMA1, 0);
+	DMA1_Stream0->CR |= 1; // Enable TX DMA
+	SPI2->CFG1 |= 1UL<<15 /*TX DMA ena*/;
 }
 
 static void ena_tx_dma_for_flash_read(int offset) __attribute__((section(".text_itcm")));
 static void ena_tx_dma_for_flash_read(int offset)
 {
-	DMA1_Stream4->PAR = (uint32_t)&(SPI2->DR);
-	DMA1_Stream4->M0AR = FLASH_OFFSET + offset; // FLASH on AXIM interface
-	DMA1_Stream4->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+	DMA1_Stream1->PAR = (uint32_t)&(SPI2->DR);
+	DMA1_Stream1->M0AR = FLASH_OFFSET + offset; // FLASH on AXIM interface
+	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
-	DMA1_Stream4->NDTR = FLASHER_DMA_SIZE;
-	DMA_CLEAR_INTFLAGS(DMA1, 4);
-	DMA1_Stream4->CR |= 1; // Enable TX DMA
-	SPI2->CR2 |= 1UL<<1 /*TX DMA ena*/;
+	DMA1_Stream1->NDTR = FLASHER_DMA_SIZE;
+	DMA_CLEAR_INTFLAGS(DMA1, 1);
+	DMA1_Stream1->CR |= 1; // Enable TX DMA
+	SPI2->CFG1 |= 1UL<<15 /*TX DMA ena*/;
 }
 
 static void reset_spi() __attribute__((section(".text_itcm")));
 static void reset_spi()
 {
 	// Disable the DMAs:
-	DMA1_Stream4->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
-	DMA1_Stream3->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
-	while(DMA1_Stream4->CR & 1UL) ;
-	while(DMA1_Stream3->CR & 1UL) ;
+	while(DMA1_Stream0->CR & 1UL) ;
+	while(DMA1_Stream1->CR & 1UL) ;
 
 	// Hard-reset SPI - the only way to empty TXFIFO! (Go figure.)
 

@@ -44,4 +44,8 @@ char* o_utoa8_hex(uint8_t val, char* str);
 char* o_utoa16_hex(uint16_t val, char* str);
 char* o_utoa32_hex(uint32_t val, char* str);
 
+char* o_btoa8_fixed(uint8_t val, char* str);
+char* o_btoa16_fixed(uint16_t val, char* str);
+char* o_btoa32_fixed(uint32_t val, char* str);
+
 

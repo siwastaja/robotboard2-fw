@@ -17,11 +17,12 @@ extern void error(int code);
 extern void main();
 
 extern void sbc_spi_eot_inthandler();
+extern void sbc_spi_cs_end_inthandler();
 
 extern unsigned int _STACKTOP;
 
 // Vector table on page 730 on the Reference Manual RM0433
-unsigned int * the_nvic_vector[126] __attribute__ ((section(".nvic_vector"))) =
+unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 {
 /* 0x0000                    */ (unsigned int *) &_STACKTOP,
 /* 0x0004 RESET              */ (unsigned int *) stm32init,
@@ -74,12 +75,12 @@ unsigned int * the_nvic_vector[126] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00C0                    */ (unsigned int *) invalid_handler,
 /* 0x00C4                    */ (unsigned int *) invalid_handler,
 /* 0x00C8                    */ (unsigned int *) invalid_handler,
-/* 0x00CC SPI1               */ (unsigned int *) sbc_spi_eot_inthandler(),
+/* 0x00CC SPI1               */ (unsigned int *) sbc_spi_eot_inthandler,
 /* 0x00D0 SPI2               */ (unsigned int *) invalid_handler,
 /* 0x00D4 USART1             */ (unsigned int *) invalid_handler,
 /* 0x00D8 USART2             */ (unsigned int *) invalid_handler,
 /* 0x00DC USART3             */ (unsigned int *) invalid_handler,
-/* 0x00E0 EXTI15_10          */ (unsigned int *) invalid_handler,
+/* 0x00E0 EXTI15_10          */ (unsigned int *) sbc_spi_cs_end_inthandler,
 /* 0x00E4                    */ (unsigned int *) invalid_handler,
 /* 0x00E8                    */ (unsigned int *) invalid_handler,
 /* 0x00EC                    */ (unsigned int *) invalid_handler,

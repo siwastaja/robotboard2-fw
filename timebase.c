@@ -5,6 +5,8 @@ Timebase: 10kHz handler for running multitasking state machines
 */
 
 #include <stdint.h>
+#include "ext_include/stm32h7xx.h"
+#include "stm32_cmsis_extension.h"
 
 void timebase_handler()
 {

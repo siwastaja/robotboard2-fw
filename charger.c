@@ -76,6 +76,9 @@
 */
 
 #include <stdint.h>
+#include "ext_include/stm32h7xx.h"
+#include "stm32_cmsis_extension.h"
+#include "misc.h"
 
 #define CHARGER_CURRENT_COMPARATOR_HYSTERESIS (1UL)  // 1 (low), 2 (medium) or 3 (high)
 
@@ -105,7 +108,7 @@ static inline void infet_chargepump_1() { HI(GPIOE, 10); }
 static inline void pulseout_0() { LO(GPIOE, 11); }
 static inline void pulseout_1() { HI(GPIOE, 11); }
 
-#define CURRLIM_DAC DAC_DHR12R1
+#define CURRLIM_DAC DAC1->DHR12R1
 
 void charger_init()
 {
@@ -130,16 +133,16 @@ void charger_init()
 	// We expect that the ADC is already configured.
 
 	// DAC1: Current setpoint (don't touch channel 2, beware: configuration registers are shared)
-	DAC->MCR |= 0b011UL<<0 /*Channel 1: Connected to on-chip peripherals only, with buffer disabled*/;
+	DAC1->MCR |= 0b011UL<<0 /*Channel 1: Connected to on-chip peripherals only, with buffer disabled*/;
 	CURRLIM_DAC = 1000;
-	DAC->CR |= 1UL<<0; // Enable channel 1
+	DAC1->CR |= 1UL<<0; // Enable channel 1
 
 	// Comparator 1: PHA current
-	COMP_CFGR1 = 0UL<<24 /*blanking source*/ | 0UL<<20 /*in+ = PB0*/ | 0b100UL<<16 /*in- = DAC1*/ |
+	COMP1->CFGR = 0UL<<24 /*blanking source*/ | 0UL<<20 /*in+ = PB0*/ | 0b100UL<<16 /*in- = DAC1*/ |
 		CHARGER_CURRENT_COMPARATOR_HYSTERESIS<<8 | 1UL /* enable the thing!*/;
 
 	// Comparator 2: PHB current
-	COMP_CFGR2 = 0UL<<24 /*blanking source*/ | 0UL<<20 /*in+ = PE9*/ | 0b100UL<<16 /*in- = DAC1*/ |
+	COMP2->CFGR = 0UL<<24 /*blanking source*/ | 0UL<<20 /*in+ = PE9*/ | 0b100UL<<16 /*in- = DAC1*/ |
 		CHARGER_CURRENT_COMPARATOR_HYSTERESIS<<8 | 1UL /* enable the thing!*/;
 
 	// The HRTIM peripheral controls the gate signals:
@@ -153,12 +156,12 @@ void charger_init()
 	HRTIM1->HRTIM_COMMON.DLLCR = 0b1110UL; // Turn on calibration every 14 us as recommended in HRTIM cookbook.
 #endif
 
-#define HRTIM_MASTER HRTIM1->HRTIM_MASTER
-#define HRTIM_CHA    HRTIM1->HRTIM_TIMERx[0]
-#define HRTIM_CHB    HRTIM1->HRTIM_TIMERx[1]
-#define HRTIM_CHC    HRTIM1->HRTIM_TIMERx[2]
-#define HRTIM_CHD    HRTIM1->HRTIM_TIMERx[3]
-#define HRTIM_CHE    HRTIM1->HRTIM_TIMERx[4]
+#define HRTIM_MASTER HRTIM1->sMasterRegs
+#define HRTIM_CHA    HRTIM1->sTimerxRegs[0]
+#define HRTIM_CHB    HRTIM1->sTimerxRegs[1]
+#define HRTIM_CHC    HRTIM1->sTimerxRegs[2]
+#define HRTIM_CHD    HRTIM1->sTimerxRegs[3]
+#define HRTIM_CHE    HRTIM1->sTimerxRegs[4]
 
 	HRTIM_CHE.PERxR = CHARGER_OFFTIME;  // PHA = CHE
 	HRTIM_CHD.PERxR = CHARGER_OFFTIME;
@@ -187,10 +190,10 @@ void charger_deinit()
 	IO_TO_GPI(GPIOA, 11);
 	IO_TO_GPI(GPIOA, 12);
 
-	COMP_CFGR1 = 0;
-	COMP_CFGR2 = 0;
+	COMP1->CFGR = 0;
+	COMP2->CFGR = 0;
 
-	DAC->CR &= ~(1UL<<0); // Disable DAC channel 1, without touching channel 2
+	DAC1->CR &= ~(1UL<<0); // Disable DAC channel 1, without touching channel 2
 
 	RCC->APB2ENR &= ~(1UL<<29); // HRTIM clock
 	RCC->APB4ENR &= ~(1UL<<14); // COMP1,2 clock

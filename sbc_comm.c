@@ -1,6 +1,13 @@
 #include <stdint.h>
+#include "ext_include/stm32h7xx.h"
+#include "stm32_cmsis_extension.h"
+#include "misc.h"
 
 enum {RASPI=0, ODROID=1} sbc_iface;
+
+volatile uint8_t raspi_tx[32768] __attribute__((aligned(4)));
+volatile uint8_t raspi_rx[32768] __attribute__((aligned(4)));
+
 
 static void wait_detect_sbc()
 {
@@ -46,14 +53,14 @@ static void wait_detect_sbc()
 	IO_PULLUPDOWN_OFF(GPIOA, 15);
 }
 
-volatile int spi_test_cnt;
+volatile int spi_test_cnt2;
 
 void sbc_spi_eot_inthandler()
 {
 	SPI1->IFCR = 1UL<<3; // clear the intflag
-	spi_test_cnt++;
+	__DSB();
+	spi_test_cnt2++;
 }
-
 
 /*
 	Since the STM32 SPI slave doesn't support delimiting transfer end with the nCS signal (go figure!), and we need variable-length messages,
@@ -84,7 +91,6 @@ void sbc_spi_tserf_inthandler()
 }
 #endif
 
-#if 0
 /*
 	Okay, so STM32 SPI _still_ doesn't _actually_ support any kind of nSS pin hardware management in slave mode, even when they are talking about
 	it like that.
@@ -112,82 +118,117 @@ void sbc_spi_tserf_inthandler()
 	wasting any CPU time. The same works on the RASPI side - we don't even need to look at those 4 bytes if we don't have time to do that.
 */
 
-int spi_test_cnt;
-int new_rx;
-int new_rx_len;
+volatile int spi_test_cnt;
+volatile int new_rx;
+volatile int new_rx_len;
 
-void sbc_spi_xfer_end_inthandler()
+volatile int spi_dbg1, spi_dbg2;
+
+void sbc_spi_cs_end_inthandler()
 {
+	spi_dbg1 = DMA1_Stream0->NDTR;
+	spi_dbg2 = DMA1_Stream1->NDTR;
 	// Triggered when cs goes high
 
 	// Clear the EXTI interrupt pending bit:
 	if(sbc_iface == ODROID)
-		EXTI->CPUPR1 = 1UL<<15;
+		EXTI_D1->PR1 = 1UL<<15;
 	else // RASPI
-		EXTI->CPUPR1 = 1UL<<10;
+		EXTI_D1->PR1 = 1UL<<10;
+
+	__DSB(); // interrupt double-fires without. Must finish memory transaciton to the PR1 register before going on.
 
 	spi_test_cnt++;
 
+//	new_rx_len = 65528 - ((SPI1->SR&0xffff0000)>>16);
+
+	__DSB();
+	SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
+#ifdef SPI_DMA_1BYTE_AT_TIME
+	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
+#else
+	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
+#endif
+	__DSB();
+
 	// Disable the DMAs:
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+		#ifdef SPI_DMA_1BYTE_AT_TIME
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+		#else
+			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+		#endif
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
 
 	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+		#ifdef SPI_DMA_1BYTE_AT_TIME
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+		#else
+			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+		#endif
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
 	while(DMA1_Stream0->CR & 1UL) ;
 	while(DMA1_Stream1->CR & 1UL) ;
 
 	new_rx = 1;
-	new_rx_len = sizeof(raspi_rx) - DMA1_Stream1->NDTR;
 
 
 	// Check if there is the maintenance magic code:
 
-	if(*((volatile uint32_t*)&raspi_rx[0]) == 0x9876fedb)
-	{
-		run_flasher();
-	}
-
-	// Hard-reset SPI - the only way to empty TXFIFO! (Go figure.)
-
-	RCC->APB1RSTR = 1UL<<14;
-	__asm__ __volatile__ ("nop");
-	RCC->APB1RSTR = 0;
-			
-	// Re-enable:
-
-	SPI2->CR2 = 0b0111UL<<8 /*8-bit data*/ | 1UL<<0 /*RX DMA ena*/ | 1UL<<12 /*Don't Reject The Last Byte*/;
+//	if(*((volatile uint32_t*)&raspi_rx[0]) == 0x9876fedb)
+//	{
+//		run_flasher();
+//	}
 
 	// TX DMA
-	DMA1_Stream4->NDTR = sizeof(raspi_tx);
-	DMA_CLEAR_INTFLAGS(DMA1, 4);
-	DMA1_Stream4->CR |= 1; // Enable DMA
+	#ifdef SPI_DMA_1BYTE_AT_TIME
+		DMA1_Stream0->NDTR = sizeof(raspi_tx);
+	#else
+		DMA1_Stream0->NDTR = sizeof(raspi_tx)/4;
+	#endif
+
+	DMA_CLEAR_INTFLAGS(DMA1, 0);
+	DMA1_Stream0->CR |= 1; // Enable DMA
 
 	// RX DMA
 
-	DMA1_Stream3->NDTR = sizeof(raspi_rx);
-	DMA_CLEAR_INTFLAGS(DMA1, 3);
-	DMA1_Stream3->CR |= 1; // Enable DMA
+	#ifdef SPI_DMA_1BYTE_AT_TIME
+		new_rx_len = sizeof(raspi_rx) - DMA1_Stream1->NDTR;
+		__DSB();
+		DMA1_Stream1->NDTR = sizeof(raspi_rx);
+	#else
+		new_rx_len = sizeof(raspi_rx) - DMA1_Stream1->NDTR*4;
+		__DSB();
+		DMA1_Stream1->NDTR = sizeof(raspi_rx)/4;
+	#endif
+	__DSB();
+	DMA_CLEAR_INTFLAGS(DMA1, 1);
+	DMA1_Stream1->CR |= 1; // Enable DMA
 
-	SPI2->CR2 |= 1UL<<1 /*TX DMA ena*/; // not earlier!
+	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier!
 
-	SPI2->CR1 = 1UL<<6; // Enable in slave mode
+//	SPI1->TSIZE = 65528;
+
+	SPI1->CR1 = 1UL; // Enable in slave mode
+	__DSB();
 
 }
-#endif
 
 
 void init_sbc_comm()
 {
 
+	uint8_t tmp = 0x42;
+	for(int i=0; i<sizeof(raspi_tx); i++)
+		raspi_tx[i] = tmp++;
+
+	RCC->APB2ENR |= 1UL<<12; // SPI1
 //	wait_detect_sbc();
 	sbc_iface = RASPI;
 
 	if(sbc_iface == ODROID)
-	
+	{
 		IO_ALTFUNC(GPIOB,5,  5);
 		IO_ALTFUNC(GPIOB,4,  5);
 		IO_ALTFUNC(GPIOB,3,  5);
@@ -209,7 +250,11 @@ void init_sbc_comm()
 
 
 	// Initialization order from reference manual:
+#ifdef SPI_DMA_1BYTE_AT_TIME
 	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
+#else
+	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
+#endif
 	// SPI1->CFG2 defaults good
 
 	// SPI1->CR2 zero - transfer length unknown
@@ -218,9 +263,18 @@ void init_sbc_comm()
 	DMA1_Stream0->PAR = (uint32_t)&(SPI1->TXDR);
 	DMA1_Stream0->M0AR = (uint32_t)&raspi_tx;
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+		#ifdef SPI_DMA_1BYTE_AT_TIME
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+		#else
+			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+		#endif
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
-	DMA1_Stream0->NDTR = sizeof(raspi_tx);
+
+	#ifdef SPI_DMA_1BYTE_AT_TIME
+		DMA1_Stream0->NDTR = sizeof(raspi_tx);
+	#else
+		DMA1_Stream0->NDTR = sizeof(raspi_tx)/4;
+	#endif
 	DMAMUX1_Channel0->CCR = 38;
 	DMA_CLEAR_INTFLAGS(DMA1, 0);
 	DMA1_Stream0->CR |= 1; // Enable TX DMA
@@ -230,35 +284,49 @@ void init_sbc_comm()
 	DMA1_Stream1->PAR = (uint32_t)&(SPI1->RXDR);
 	DMA1_Stream1->M0AR = (uint32_t)(raspi_rx);
 	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+		#ifdef SPI_DMA_1BYTE_AT_TIME
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+		#else
+			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+		#endif
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
-	DMA1_Stream1->NDTR = sizeof(raspi_rx);
+
+	#ifdef SPI_DMA_1BYTE_AT_TIME
+		DMA1_Stream1->NDTR = sizeof(raspi_rx);
+	#else
+		DMA1_Stream1->NDTR = sizeof(raspi_rx)/4;
+	#endif
 	DMAMUX1_Channel1->CCR = 37;
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
-	DMA1_Stream2->CR |= 1; // Enable RX DMA
+	DMA1_Stream1->CR |= 1; // Enable RX DMA
 
-	SPI1->CR2 |= 1UL<<1 /*TX DMA ena*/; // not earlier!
+	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier!
 
+//	SPI1->IER |= 1UL<<3; // EOT,SUSP,TXC interrupt enable
+//	NVIC_SetPriority(SPI1_IRQn, 2);
+//	NVIC_EnableIRQ(SPI1_IRQn);
+
+//	SPI1->TSIZE = 65528;
 	SPI1->CR1 = 1UL; // Enable in slave mode
 
 
 	// Chip select is hardware managed for rx start - but ending must be handled by software. We use EXTI for that.
 	// Maybe we won't use nCS to delimit the packet end, since it clearly isn't supported properly in the HW
 	// For now, let's not use EXTI. The code is here, anyway:
-#if 0
+
 	if(sbc_iface == ODROID)
 	{
 		// nCS is PA15, so EXTI15 must be used.
 		REG_WRITE_PART(SYSCFG->EXTICR[/*refman idx:*/4   -1], 12, 0b1111UL, 0b0000UL);
 		EXTI->RTSR1 |= 1UL<<15; // Get the rising edge interrupt
-		EXTI->CPUIMR1 |= 1UL<<15; // Enable CPU interrupt
+		EXTI_D1->IMR1 |= 1UL<<15; // Enable CPU interrupt
 	}
 	else // RASPI
 	{
 		// nCS is PG10, so EXTI10 must be used.
 		REG_WRITE_PART(SYSCFG->EXTICR[/*refman idx:*/3   -1], 8, 0b1111UL, 0b0110UL);
 		EXTI->RTSR1 |= 1UL<<10; // Get the rising edge interrupt
-		EXTI->CPUIMR1 |= 1UL<<10; // Enable CPU interrupt
+		EXTI_D1->IMR1 |= 1UL<<10; // Enable CPU interrupt
 	}
 
 	// The interrupt priority must be fairly high, to quickly reconfigure the DMA so that if the master pulls CSn low
@@ -267,22 +335,21 @@ void init_sbc_comm()
 	// Both RASPI (EXTI10) and ODROID (EXTI15) happen to coincide to the same multiplexed EXTI interrupt group (15,14,13,12,11,10).
 	NVIC_SetPriority(EXTI15_10_IRQn, 2);
 	NVIC_EnableIRQ(EXTI15_10_IRQn);
-#endif
 
 }
 
 void deinit_sbc_comm()
 {
-	IO_TO_GPI(GPIOB,5,  5);
-	IO_TO_GPI(GPIOB,4,  5);
-	IO_TO_GPI(GPIOB,3,  5);
-	IO_TO_GPI(GPIOA,15, 5);
+	IO_TO_GPI(GPIOB,5);
+	IO_TO_GPI(GPIOB,4);
+	IO_TO_GPI(GPIOB,3);
+	IO_TO_GPI(GPIOA,15);
 	IO_TO_GPI(GPIOG,9);
 	IO_TO_GPI(GPIOD,7);
 	IO_TO_GPI(GPIOG,11);
 	IO_TO_GPI(GPIOG,10);
 
-	EXTI->RTSR1 &= ~(1UL<<15 | 1UL<<10);
-	EXTI->CPUIMR1 &= ~(1UL<<15 | 1UL<<10);
+//	EXTI->RTSR1 &= ~(1UL<<15 | 1UL<<10);
+//	EXTI_D1->IMR1 &= ~(1UL<<15 | 1UL<<10);
 
 }

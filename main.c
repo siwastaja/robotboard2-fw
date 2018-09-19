@@ -137,29 +137,21 @@ void main()
 	RCC->D2CFGR = 0b100UL<<8 /*D2PPRE2 = 2*/ | 0b100UL<<4 /*D2PPRE1 = 2*/;
 	RCC->D3CFGR = 0b100UL<<4 /*D3PPRE = 2*/;
 
+	RCC->AHB1ENR |= 1UL<<1 /*DMA2*/ | 1UL<<0 /*DMA1*/;
+
+
 	while(!(RCC->CR & 1UL<<25)) ; // Wait for PLL1 ready
 
 	RCC->CFGR |= 0b011; // Change PLL to system clock
-	while((RCC->CFGR & (0b111UL<<3)) != (0b011UL<<2)) ; // Wait for switchover to PLL.
-
+	while((RCC->CFGR & (0b111UL<<3)) != (0b011UL<<3)) ; // Wait for switchover to PLL.
 
 	RCC->CR |= 1UL<<26; // PLL2 on
 	while(!(RCC->CR & 1UL<<27)) ; // Wait for PLL2 ready
 
-//	RCC->CR |= 1UL<<28; // PLL2 on
-//	while(!(RCC->CR & 1UL<<29)) ; // Wait for PLL2 ready
+//	RCC->CR |= 1UL<<28; // PLL3 on
+//	while(!(RCC->CR & 1UL<<29)) ; // Wait for PLL3 ready
 
 	
-
-	while(1) // temporary code to approximately calibrate delay_us()
-	{
-		LED_ON();
-		delay_ms(500);
-		LED_OFF();
-		delay_ms(500);
-	}
-
-
 	#ifdef DBG_UART
 
 		/*
@@ -197,16 +189,26 @@ void main()
 
 	init_sbc_comm();
 
+	uart_print_string_blocking("Sommoro\r\n\r\n"); 
 	while(1)
 	{
 
 		char printbuf[128];
 
-		extern int spi_test_cnt;
-		uart_print_string_blocking("SPI SR = "); o_utoa16(SPI1->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		extern volatile int spi_test_cnt;
+		extern volatile int spi_test_cnt2;
+		extern volatile int spi_dbg1, spi_dbg2;
+		extern volatile int new_rx_len;
+
+		uart_print_string_blocking("SPI SR = "); o_btoa16_fixed(SPI1->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("SPI TSIZE = "); o_utoa16(SPI1->TSIZE, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		uart_print_string_blocking("tx NDTR = "); o_utoa16(DMA1_Stream0->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		uart_print_string_blocking("rx NDTR = "); o_utoa16(DMA1_Stream1->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		uart_print_string_blocking("spi_test_cnt = "); o_utoa16(spi_test_cnt, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("spi_test_cnt2 = "); o_utoa16(spi_test_cnt2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("spi_dbg1 = "); o_utoa16(spi_dbg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("spi_dbg2 = "); o_utoa16(spi_dbg2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("rx_len = "); o_utoa16(new_rx_len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 		uart_print_string_blocking("\r\n\r\n");
 		delay_ms(100);		

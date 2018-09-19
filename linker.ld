@@ -39,7 +39,7 @@ SECTIONS
     .nvic_vector : /* Interrupt vector */
     {
         *(.nvic_vector)
-    } >rom
+    } >rom_b1s0
 
     . = ALIGN(8);
 
@@ -72,7 +72,7 @@ SECTIONS
         *(.data)
         *(.data.*)        
         _DATA_END = .;
-    } >ram_axi AT>rom
+    } >ram_axi AT>rom_b1s0
 
     . = ALIGN(8);
 
@@ -94,7 +94,7 @@ SECTIONS
         *(.dtcm_data)
         *(.dtcm_data.*)        
         _DTCM_DATA_END = .;
-    } >ram_dtcm AT>rom
+    } >ram_dtcm AT>rom_b1s0
 
     . = ALIGN(8);
 
@@ -125,7 +125,7 @@ SECTIONS
         *(.sram1_data)
         *(.sram1_data.*)        
         _SRAM1_DATA_END = .;
-    } >ram_sram1 AT>rom
+    } >ram_sram1 AT>rom_b1s0
 
     . = ALIGN(8);
 
@@ -154,7 +154,7 @@ SECTIONS
         *(.sram2_data)
         *(.sram2_data.*)        
         _SRAM2_DATA_END = .;
-    } >ram_sram2 AT>rom
+    } >ram_sram2 AT>rom_b1s0
 
     . = ALIGN(8);
 
@@ -180,7 +180,7 @@ SECTIONS
         *(.sram3_data)
         *(.sram3_data.*)        
         _SRAM3_DATA_END = .;
-    } >ram_sram3 AT>rom
+    } >ram_sram3 AT>rom_b1s0
 
     . = ALIGN(8);
 
@@ -206,7 +206,7 @@ SECTIONS
         *(.sram4_data)
         *(.sram4_data.*)        
         _SRAM4_DATA_END = .;
-    } >ram_sram4 AT>rom
+    } >ram_sram4 AT>rom_b1s0
 
     . = ALIGN(8);
 
@@ -231,7 +231,7 @@ SECTIONS
         *(.ram_backup_data)
         *(.ram_backup_data.*)        
         _RAM_BACKUP_DATA_END = .;
-    } >ram_backup AT>rom
+    } >ram_backup AT>rom_b1s0
 
     . = ALIGN(8);
 
@@ -251,7 +251,7 @@ SECTIONS
     .heap :
     {
         _HEAP = .;
-    } >ram_main
+    } >ram_axi
 
     .stack :
     {
