@@ -3,6 +3,7 @@
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
 #include "flash.h"
+#include "own_std.h"
 
 /*
 define SPI_DMA_1BYTE_AT_TIME to force the SPI communication peripheral & DMA use 8-bit transfers. 
@@ -18,10 +19,95 @@ by the DMA.
 */
 //#define SPI_DMA_1BYTE_AT_TIME
 
-enum {RASPI=0, ODROID=1} sbc_iface;
+/*
 
-volatile uint8_t raspi_tx[32768] __attribute__((aligned(4)));
-volatile uint8_t raspi_rx[32768] __attribute__((aligned(4)));
+Communication with the Single-Board Computer:
+
+Using SPI:
+There is a FIFO here, so that the SBC host software won't be timing critical (it'll run standard linux, and I
+want to keep software development easier, so that some blocking 50ms processing loop there won't kill everything).
+
+Due to the symmetry in SPI, there is always a concurrent TX packet sent to the SBC, and an RX packet from the SBC.
+
+One packet contains a certain set of data structures. Which data, can be configured run-time. Due to both limited RAM,
+and limited transfer speed on SPI, there is a (quite limiting) fixed max packet size, which limits the number
+of concurrent subscribtions.
+
+RX packets are usually shorter than TX packets; excess bits are ignored, the master runs the clock to get the TX.
+
+FIFO works like this:
+* Initially, wr and rd index are the same. No data can be read out.
+* When the processing loop decides that the data is "ready" to be sent out, wr index is incremented (wrapped)
+* When the master reads, if the wr and rd indeces are different, the slave is sent the data pointed to by rd.
+* When the read is finished, the rd index is incremented. If wr==rd, the data output DMA is set to give a "no data avail" message.
+* If the "processing finished" event detects that wr after increment would become == rd, this is an overrun condition. The overrun
+  counter is incremented. The wr pointer is NOT incremented, so the previous packet is fully overwritten. Packets are always intact.
+
+From the command perspective (rx data, coming from the SBC):
+rx data (commands, audio data, etc.) are processed in sync with tx data generation. When the master gets a "no data avail" response,
+it can assume that the rx data was ignored as well, and resend it the next time.
+
+Peeking for status:
+rd index is not incremented if the transfer length is 16 bytes or less. This way, status can be peeked at.
+
+An example:
+
+wr	rd	explanation
+0	0	initial state
+0	0	processing loop is writing data to 0
+0	0	master tries to read out; get's "no data avail"
+1	0	processing loop was finished (to 0)
+1	0	master tries to read out; starts getting data from 0 (writes commands to 0)
+1	0	processing loop is writing data to 1
+1	1	master finished reading out from 0. rd is set to 1.
+1	1	processing loop is still writing data to 1.
+2	1	processing loop was finished (to 1), starts writing to 2
+2	1	master reads out, starts getting data from 1
+2	2	master finished reading out 1
+2	2	processing loop is still writing to 2
+3	2	processing loop finished, starts writing to 3
+0	2	processing loop finished, starts writing to 0
+0	2	master reads out, starts getting data from 2
+1	2	processing loop finished, starts writing to 1
+1	3	master finished reading 2
+2	3	processing finished, starts writing to 2
+2	3	processing (to 2) finished, would start writing to 3; overrun detected. keeps wr at 2 instead of expected 3.
+
+
+Comment on nomenclature:
+
+tx means data direction: MCU -> SBC
+rx means data direction: SBC -> MCU
+
+Both tx and rx always happen at the same time.
+
+SBC is the master. Only the SBC can initialize the transfer.
+
+wr counter refers to the actions of storing data (measurements, sensor data etc.) from the robot
+rd counter refers to the master's reading action. This means, rd counter is related to WRITING rx data, as well.
+
+*/
+
+#define SBC_SPI_FIFO_DEPTH  4
+#define SBC_SPI_TX_MAX_LEN 55000
+#define SBC_SPI_RX_MAX_LEN 8192
+
+#if (SBC_SPI_TX_MAX_LEN%4 != 0 || SBC_SPI_RX_MAX_LEN%4 != 0)
+	#error "SPI max transfer lengths must be multiples of 4"
+#endif
+
+static volatile uint8_t tx_fifo[SBC_SPI_FIFO_DEPTH][SBC_SPI_TX_MAX_LEN] __attribute__((aligned(4)));
+static volatile uint8_t rx_fifo[SBC_SPI_FIFO_DEPTH][SBC_SPI_RX_MAX_LEN] __attribute__((aligned(4)));
+
+static volatile int tx_fifo_cpu = 0;
+static volatile int tx_fifo_spi = 0;
+
+static volatile int rx_fifo_cpu = 0;
+static volatile int rx_fifo_spi = 0;
+
+uint8_t no_data_msg[8] = {0x22,0x23,0x22,0x22,0x22,0x22,0x22,0x22};
+
+enum {RASPI=0, ODROID=1} sbc_iface;
 
 #if !defined(SBC_RASPI) && !defined(SBC_ODROID) && !defined(SBC_AUTODETECT)
 	#error "You need to define SBC_RASPI, SBC_ODROID or SBC_AUTODETECT"
@@ -169,36 +255,73 @@ void sbc_spi_cs_end_inthandler()
 
 	new_rx = 1;
 
+	#ifdef SPI_DMA_1BYTE_AT_TIME
+	int len = SBC_SPI_RX_MAX_LEN - DMA1_Stream1->NDTR;
+	#else
+	int len = SBC_SPI_RX_MAX_LEN - DMA1_Stream1->NDTR*4;
+	#endif
+
 
 	// Check if there is the maintenance magic code:
-
-	if(*((volatile uint32_t*)&raspi_rx[0]) == 0x9876fedb)
+	if(*((volatile uint32_t*)&rx_fifo[rx_fifo_spi]) == 0x9876fedb)
 	{
 		run_flasher();
 	}
 
+
+	if(len >= 16)
+	{
+		if(tx_fifo_cpu != tx_fifo_spi)
+		{
+			tx_fifo_spi++;
+			if(tx_fifo_spi >= SBC_SPI_FIFO_DEPTH) tx_fifo_spi = 0;
+		}
+
+//		if(rx_fifo_cpu != rx_fifo_spi)
+		{
+			rx_fifo_spi++;
+			if(rx_fifo_spi >= SBC_SPI_FIFO_DEPTH) rx_fifo_spi = 0;
+		}
+	}
+
 	// TX DMA
-	#ifdef SPI_DMA_1BYTE_AT_TIME
-		DMA1_Stream0->NDTR = sizeof(raspi_tx);
-	#else
-		DMA1_Stream0->NDTR = sizeof(raspi_tx)/4;
-	#endif
+	if(tx_fifo_cpu == tx_fifo_spi)
+	{
+		DMA1_Stream0->M0AR = (uint32_t)no_data_msg;
+		#ifdef SPI_DMA_1BYTE_AT_TIME
+			DMA1_Stream0->NDTR = sizeof(no_data_msg);
+		#else
+			DMA1_Stream0->NDTR = sizeof(no_data_msg)/4;
+		#endif
+
+	}
+	else
+	{
+		DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
+		#ifdef SPI_DMA_1BYTE_AT_TIME
+			DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN;
+		#else
+			DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
+		#endif
+	}
 
 	DMA_CLEAR_INTFLAGS(DMA1, 0);
-	DMA1_Stream0->CR |= 1; // Enable DMA
+	DMA1_Stream0->CR |= 1; // Enable TX DMA
 
 	// RX DMA
 
-	#ifdef SPI_DMA_1BYTE_AT_TIME
-		new_rx_len = sizeof(raspi_rx) - DMA1_Stream1->NDTR;
-		DMA1_Stream1->NDTR = sizeof(raspi_rx);
-	#else
-		new_rx_len = sizeof(raspi_rx) - DMA1_Stream1->NDTR*4;
-		DMA1_Stream1->NDTR = sizeof(raspi_rx)/4;
-	#endif
+	{
+		DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
+		#ifdef SPI_DMA_1BYTE_AT_TIME
+			DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN;
+		#else
+			DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN/4;
+		#endif
+	}
+
 	__DSB();
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
-	DMA1_Stream1->CR |= 1; // Enable DMA
+	DMA1_Stream1->CR |= 1; // Enable RX DMA
 
 //	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier, if you want to follow the refman advice
 
@@ -207,13 +330,117 @@ void sbc_spi_cs_end_inthandler()
 	__DSB();
 }
 
+void sbc_comm_test()
+{
+	char printbuf[128];
+	uint8_t data = 0x42;
+	int cnt = 0;
+	while(1)
+	{
+		delay_ms(1000);
+
+		cnt++;
+
+		if(cnt==5)
+		{
+			cnt=0;
+			data++;
+
+			int next_tx_fifo_cpu = tx_fifo_cpu+1; if(next_tx_fifo_cpu >= SBC_SPI_FIFO_DEPTH) next_tx_fifo_cpu = 0;
+
+			if(next_tx_fifo_cpu == tx_fifo_spi)
+			{
+				uart_print_string_blocking("\r\nTX buffer overrun! Not generating data\r\n"); 
+			}
+			else
+			{
+				tx_fifo[next_tx_fifo_cpu][0] = 0x11;
+				tx_fifo[next_tx_fifo_cpu][1] = tx_fifo_cpu;
+				tx_fifo[next_tx_fifo_cpu][2] = tx_fifo_spi;
+				tx_fifo[next_tx_fifo_cpu][3] = rx_fifo_cpu;
+				tx_fifo[next_tx_fifo_cpu][4] = rx_fifo_spi;
+				for(int i=5; i<64; i++)
+					tx_fifo[next_tx_fifo_cpu][i] = data;
+
+
+				DIS_IRQ();
+				tx_fifo_cpu = next_tx_fifo_cpu;
+
+				// Now there's certainly something to send:
+				if(IN(GPIOG, 10)) // CS high - no transfer going on - reconfigure the TX DMA address
+				{
+					SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
+
+					__DSB();
+
+					// Disable the DMAs:
+					DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+						#ifdef SPI_DMA_1BYTE_AT_TIME
+							   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+						#else
+							   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+						#endif
+							   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
+
+					DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+						#ifdef SPI_DMA_1BYTE_AT_TIME
+							   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+						#else
+							   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+						#endif
+							   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
+
+					__DSB();
+
+					DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
+					#ifdef SPI_DMA_1BYTE_AT_TIME
+						DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN;
+					#else
+						DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
+					#endif
+
+					DMA_CLEAR_INTFLAGS(DMA1, 0);
+					DMA1_Stream0->CR |= 1; // Enable TX DMA
+
+					// RX DMA
+
+					{
+						DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
+						#ifdef SPI_DMA_1BYTE_AT_TIME
+							DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN;
+						#else
+							DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN/4;
+						#endif
+					}
+
+					__DSB();
+					DMA_CLEAR_INTFLAGS(DMA1, 1);
+					DMA1_Stream1->CR |= 1; // Enable RX DMA
+
+				//	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier, if you want to follow the refman advice
+
+
+					SPI1->CR1 = 1UL; // Enable in slave mode
+					__DSB();
+
+
+				} // else: CS is low, and is guaranteed to go high, which is guaranteed to cause the interrupt, which will assign the next DMA transfer.
+				ENA_IRQ();
+
+				uart_print_string_blocking("\r\nNew tx generated\r\n"); 
+			}
+		}
+
+		uart_print_string_blocking("tx_cpu="); o_utoa16(tx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+		uart_print_string_blocking("tx_spi="); o_utoa16(tx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+		uart_print_string_blocking("rx_cpu="); o_utoa16(rx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+		uart_print_string_blocking("rx_spi="); o_utoa16(rx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		
+	}
+}
 
 void init_sbc_comm()
 {
-
-	uint8_t tmp = 0x42;
-	for(int i=0; i<sizeof(raspi_tx); i++)
-		raspi_tx[i] = tmp++;
 
 	RCC->APB2ENR |= 1UL<<12; // SPI1
 
@@ -263,7 +490,7 @@ void init_sbc_comm()
 
 	// TX DMA
 	DMA1_Stream0->PAR = (uint32_t)&(SPI1->TXDR);
-	DMA1_Stream0->M0AR = (uint32_t)&raspi_tx;
+	DMA1_Stream0->M0AR = (uint32_t)no_data_msg;
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 		#ifdef SPI_DMA_1BYTE_AT_TIME
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
@@ -273,9 +500,9 @@ void init_sbc_comm()
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
-		DMA1_Stream0->NDTR = sizeof(raspi_tx);
+		DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN;
 	#else
-		DMA1_Stream0->NDTR = sizeof(raspi_tx)/4;
+		DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
 	#endif
 	DMAMUX1_Channel0->CCR = 38;
 	DMA_CLEAR_INTFLAGS(DMA1, 0);
@@ -284,7 +511,7 @@ void init_sbc_comm()
 	// RX DMA
 
 	DMA1_Stream1->PAR = (uint32_t)&(SPI1->RXDR);
-	DMA1_Stream1->M0AR = (uint32_t)(raspi_rx);
+	DMA1_Stream1->M0AR = DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
 	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 		#ifdef SPI_DMA_1BYTE_AT_TIME
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
@@ -294,9 +521,9 @@ void init_sbc_comm()
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
-		DMA1_Stream1->NDTR = sizeof(raspi_rx);
+		DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN;
 	#else
-		DMA1_Stream1->NDTR = sizeof(raspi_rx)/4;
+		DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN/4;
 	#endif
 	DMAMUX1_Channel1->CCR = 37;
 	DMA_CLEAR_INTFLAGS(DMA1, 1);

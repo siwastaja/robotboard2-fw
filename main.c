@@ -59,6 +59,8 @@ void delay_ms(uint32_t i)
 	}
 }
 
+void sbc_comm_test();
+
 void main()
 {
 
@@ -190,7 +192,8 @@ void main()
 	init_sbc_comm();
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
-	while(1)
+	sbc_comm_test();
+/*	while(1)
 	{
 
 		char printbuf[128];
@@ -212,6 +215,6 @@ void main()
 
 		uart_print_string_blocking("\r\n\r\n");
 		delay_ms(100);		
-	}
+	}*/
 
 }

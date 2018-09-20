@@ -216,14 +216,14 @@ extern unsigned int _SRAM1_DATA_I_BEGIN;
 extern unsigned int _SRAM1_BSS_BEGIN;
 extern unsigned int _SRAM1_BSS_END;
 
-
+/*
 extern unsigned int _SRAM2_DATA_BEGIN;
 extern unsigned int _SRAM2_DATA_END;
 extern unsigned int _SRAM2_DATA_I_BEGIN;
 
 extern unsigned int _SRAM2_BSS_BEGIN;
 extern unsigned int _SRAM2_BSS_END;
-
+*/
 
 extern unsigned int _SRAM3_DATA_BEGIN;
 extern unsigned int _SRAM3_DATA_END;
@@ -379,7 +379,7 @@ void stm32init(void)
 	}
 
 
-
+/*
 	uint32_t* sram2_data_begin  = (uint32_t*)&_SRAM2_DATA_BEGIN;
 	uint32_t* sram2_data_end    = (uint32_t*)&_SRAM2_DATA_END;
 	uint32_t* sram2_data_i_begin = (uint32_t*)&_SRAM2_DATA_I_BEGIN;
@@ -398,7 +398,7 @@ void stm32init(void)
 		*sram2_bss_begin = 0;
 		sram2_bss_begin++;
 	}
-
+*/
 
 
 

@@ -8,14 +8,18 @@
 	SRAM4: 64k, 32-bit  (domain D3)
 
 	Backup SRAM: 4k  (always powered by battery)
+
+	SRAM1,SRAM2,SRAM3 form a contiguous, linear address space, so they
+	can be joined together for simple usage
 */
 
 MEMORY
 {
 
   ram_axi    (rwx)      : ORIGIN = 0x24000000, LENGTH = 512K
-  ram_sram1  (rwx)      : ORIGIN = 0x30000000, LENGTH = 128K
-  ram_sram2  (rwx)      : ORIGIN = 0x30020000, LENGTH = 128K
+/*  ram_sram1  (rwx)      : ORIGIN = 0x30000000, LENGTH = 128K
+  ram_sram2  (rwx)      : ORIGIN = 0x30020000, LENGTH = 128K */
+  ram_sram12 (rwx)      : ORIGIN = 0x30000000, LENGTH = 256K
   ram_sram3  (rwx)      : ORIGIN = 0x30040000, LENGTH = 32K
   ram_sram4  (rwx)      : ORIGIN = 0x38000000, LENGTH = 64K
   ram_dtcm   (rwx)      : ORIGIN = 0x20000000, LENGTH = 128K
@@ -113,7 +117,7 @@ SECTIONS
 
 
 
-
+/* SRAM1&SRAM2 are joined together as .sram1_data and .sram1_bss */
 
     . = ALIGN(8);
 
@@ -125,7 +129,7 @@ SECTIONS
         *(.sram1_data)
         *(.sram1_data.*)        
         _SRAM1_DATA_END = .;
-    } >ram_sram1 AT>rom_b1s0
+    } >ram_sram12 AT>rom_b1s0
 
     . = ALIGN(8);
 
@@ -135,13 +139,13 @@ SECTIONS
         *(.sram1_bss)
         *(.sram1_bss.*)
         _SRAM1_BSS_END = .;
-    } >ram_sram1
+    } >ram_sram12
 
 
 
 
 
-
+/*
 
 
     . = ALIGN(8);
@@ -167,7 +171,7 @@ SECTIONS
     } >ram_sram2
 
 
-
+*/
 
 
     . = ALIGN(8);
