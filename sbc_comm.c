@@ -2,13 +2,40 @@
 #include "ext_include/stm32h7xx.h"
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
+#include "flash.h"
+
+/*
+define SPI_DMA_1BYTE_AT_TIME to force the SPI communication peripheral & DMA use 8-bit transfers. 
+Bus bandwidth usage will be 4 times more, but transfer sizes not multiples of four will work
+perfectly.
+
+If not defined, 32-bit accessess will be used. For maximized simplicity, message sizes need to be
+multiplies of four bytes, in this case. Nothing dramatic will happen with non-conforming messages,
+but the reported rx length is rounded down %4. Overindexing of the buffers may happen if you are
+not careful, in this case. For example, if the transfer length is 5, 8 bytes will be transferred
+by the DMA.
+
+*/
+//#define SPI_DMA_1BYTE_AT_TIME
 
 enum {RASPI=0, ODROID=1} sbc_iface;
 
 volatile uint8_t raspi_tx[32768] __attribute__((aligned(4)));
 volatile uint8_t raspi_rx[32768] __attribute__((aligned(4)));
 
+#if !defined(SBC_RASPI) && !defined(SBC_ODROID) && !defined(SBC_AUTODETECT)
+	#error "You need to define SBC_RASPI, SBC_ODROID or SBC_AUTODETECT"
+#endif
 
+#if defined(SBC_RASPI) && defined(SBC_ODROID)
+	#error "Define either SBC_RASPI or SBC_ODROID, not both"
+#endif
+
+#if defined(SBC_AUTODETECT) && (defined(SBC_RASPI) || defined(SBC_ODROID))
+	#error "With SBC_AUTODETECT defined, don't define SBC_RASPI or SBC_ODROID"
+#endif
+
+#ifdef SBC_AUTODETECT
 static void wait_detect_sbc()
 {
 	// Chip select signals are pulled down:
@@ -52,6 +79,7 @@ static void wait_detect_sbc()
 	IO_PULLUPDOWN_OFF(GPIOG, 10);
 	IO_PULLUPDOWN_OFF(GPIOA, 15);
 }
+#endif
 
 volatile int spi_test_cnt2;
 
@@ -63,59 +91,26 @@ void sbc_spi_eot_inthandler()
 }
 
 /*
-	Since the STM32 SPI slave doesn't support delimiting transfer end with the nCS signal (go figure!), and we need variable-length messages,
-	and we don't want to create a complex kludge to overcome the HW limitation (like we did before in pulutof1-fw), we use a protocol with
-	a size field, and utilize the new SPI feature of being able to tell the SPI device the message length, and better, to update that length
-	on the fly!
-
-	The incoming SPI frame is like this:
-
-	HEADER - 4 bytes
-		* 2 bytes: payload size
-		* 2 bytes: dummy (reserved for future use)
-	PAYLOAD - n bytes
-
-	The SPI is configured with TSIZE=2 and TSER=2. This means, after 2 bytes (the payload size field), we'll get a TSERF interrupt. At
-	this point, the SPI can still go on for 2 bytes of the header, but we can write a new value to the TSER, which will be for the
-	payload. In the TSERF ISR, we quickly write TSER = payload size. This has to be high priority, because it needs to happen before
-	the transmission of the header (remaining 2 bytes) is over. We could increase the header size to give more timing margin, but really,
-	it's not a problem, since the ISR is very simple&short and hence can use high priority without interfering with other interrupts.
-*/
-
-#if 0
-void sbc_spi_tserf_inthandler()
-{
-	// intflag is cleared by writing to TSER
-
-	SPI1->TSER = sbc_rx_buf->
-}
-#endif
-
-/*
 	Okay, so STM32 SPI _still_ doesn't _actually_ support any kind of nSS pin hardware management in slave mode, even when they are talking about
 	it like that.
 
 	This was the case with the previous incarnation of the SPI - now they have made it more complex, added a separate event/interrupt
 	source exactly to signify end-of-transfer in slave mode as well - but for some reason, they still don't delimit the transfer by nCS
-	(which is exactly designed for this purpose), go figure. Instead, you need to know the transfer size beforehand, and a counter is
+	(which is exactly designed for this purpose!), go figure. Instead, you need to know the transfer size beforehand, and a counter is
 	used to give the interrupt. Of course, with our variable-length messaging, this isn't going to work.
 
-	This is why we use a simple EXTI interrupt from the nCS pin going high, and we still need to circumvent the whole SPI/DMA transfer
+	This is why we still use a simple EXTI interrupt from the nCS pin going high, and we still need to circumvent the whole SPI/DMA transfer
 	management.
+
+	They have fixed something - now you don't need to reset the SPI through the RCC registers anymore. Disabling SPI through the SPE bit
+	flushes the FIFOs and resets the internal logic. Great!
 	
 
 
-	When the SPI is enabled with DMA, it always generates 3 DMA requests right away to fill its TX fifo with 3 bytes. When the
-	nSS is asserted half a year later, the first 3 bytes are from half a year ago, rest is DMA'ed from the memory at that point.
+	When the SPI is enabled with DMA, it always generates DMA requests right away to fill its TX fifo. When the
+	nSS is asserted half a year later, the first data are from half a year ago, rest is DMA'ed from the memory at that point.
+	With our communication FIFO scheme, this isn't a problem, but do remember this.
 
-	To fix this, we would need interrupt logic also from the falling nSS edge, quickly setting up the SPI and DMA. But maybe we don't need to
-	do that:
-
-	The type of the data packet we are going to send has been decided even before the nSS edge - so we'll apply a 4-byte header telling
-	about the data type (or anything else that doesn't need to be recent).
-
-	This has the advantage that there is one urgent ISR less to handle very quickly. DMA and SPI will happily crunch 4 extra bytes without
-	wasting any CPU time. The same works on the RASPI side - we don't even need to look at those 4 bytes if we don't have time to do that.
 */
 
 volatile int spi_test_cnt;
@@ -136,19 +131,18 @@ void sbc_spi_cs_end_inthandler()
 	else // RASPI
 		EXTI_D1->PR1 = 1UL<<10;
 
-	__DSB(); // interrupt double-fires without. Must finish memory transaciton to the PR1 register before going on.
-
 	spi_test_cnt++;
 
-//	new_rx_len = 65528 - ((SPI1->SR&0xffff0000)>>16);
-
-	__DSB();
 	SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
-#ifdef SPI_DMA_1BYTE_AT_TIME
-	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
-#else
-	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
-#endif
+
+	// Reference manual wants us to keep TX DMA EN bit disabled, and enable it at the precise moment (see below).
+	// Zero problems so far doing it just at once (in init). But if you are having issues such as excess TX DMA events,
+	// this is a possible cause.
+//#ifdef SPI_DMA_1BYTE_AT_TIME
+//	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
+//#else
+//	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
+//#endif
 	__DSB();
 
 	// Disable the DMAs:
@@ -168,6 +162,8 @@ void sbc_spi_cs_end_inthandler()
 		#endif
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
+	__DSB();
+
 	while(DMA1_Stream0->CR & 1UL) ;
 	while(DMA1_Stream1->CR & 1UL) ;
 
@@ -176,10 +172,10 @@ void sbc_spi_cs_end_inthandler()
 
 	// Check if there is the maintenance magic code:
 
-//	if(*((volatile uint32_t*)&raspi_rx[0]) == 0x9876fedb)
-//	{
-//		run_flasher();
-//	}
+	if(*((volatile uint32_t*)&raspi_rx[0]) == 0x9876fedb)
+	{
+		run_flasher();
+	}
 
 	// TX DMA
 	#ifdef SPI_DMA_1BYTE_AT_TIME
@@ -195,24 +191,20 @@ void sbc_spi_cs_end_inthandler()
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
 		new_rx_len = sizeof(raspi_rx) - DMA1_Stream1->NDTR;
-		__DSB();
 		DMA1_Stream1->NDTR = sizeof(raspi_rx);
 	#else
 		new_rx_len = sizeof(raspi_rx) - DMA1_Stream1->NDTR*4;
-		__DSB();
 		DMA1_Stream1->NDTR = sizeof(raspi_rx)/4;
 	#endif
 	__DSB();
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
 	DMA1_Stream1->CR |= 1; // Enable DMA
 
-	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier!
+//	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier, if you want to follow the refman advice
 
-//	SPI1->TSIZE = 65528;
 
 	SPI1->CR1 = 1UL; // Enable in slave mode
 	__DSB();
-
 }
 
 
@@ -224,8 +216,18 @@ void init_sbc_comm()
 		raspi_tx[i] = tmp++;
 
 	RCC->APB2ENR |= 1UL<<12; // SPI1
-//	wait_detect_sbc();
-	sbc_iface = RASPI;
+
+	#ifdef SBC_AUTODETECT
+		wait_detect_sbc();
+	#endif
+
+	#ifdef SBC_ODROID
+		sbc_iface = ODROID;
+	#endif
+
+	#ifdef SBC_RASPI
+		sbc_iface = RASPI;
+	#endif
 
 	if(sbc_iface == ODROID)
 	{
@@ -349,7 +351,7 @@ void deinit_sbc_comm()
 	IO_TO_GPI(GPIOG,11);
 	IO_TO_GPI(GPIOG,10);
 
-//	EXTI->RTSR1 &= ~(1UL<<15 | 1UL<<10);
-//	EXTI_D1->IMR1 &= ~(1UL<<15 | 1UL<<10);
+	EXTI->RTSR1 &= ~(1UL<<15 | 1UL<<10);
+	EXTI_D1->IMR1 &= ~(1UL<<15 | 1UL<<10);
 
 }

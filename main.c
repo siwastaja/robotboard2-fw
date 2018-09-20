@@ -24,7 +24,7 @@
 #define DBG_UART
 
 #ifdef DBG_UART
-static void uart_print_string_blocking(const char *buf)
+void uart_print_string_blocking(const char *buf)
 {
 	while(buf[0] != 0)
 	{
@@ -189,7 +189,7 @@ void main()
 
 	init_sbc_comm();
 
-	uart_print_string_blocking("Sommoro\r\n\r\n"); 
+	uart_print_string_blocking("No terse\r\n\r\n"); 
 	while(1)
 	{
 

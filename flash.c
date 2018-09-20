@@ -21,6 +21,8 @@
 #include "stm32_cmsis_extension.h"
 
 #include "flash.h"
+#include "misc.h"
+#include "own_std.h"
 
 #define FLASH_OFFSET 0x08000000
 
@@ -175,44 +177,50 @@ To reset:
 	You have to reset. There's no other way going back to the application.
 */
 
-#define FLASHER_BUF_ADDR 0x30000000
+#define FLASHER_BUF_ADDR 0x30000000  // SRAM1,SRAM2,SRAM3 form a contiguous 128K+128K+32K buffer
 #define FLASHER_DMA_SIZE 65535
 
 #define FLASHER_REPLY_BUF_SIZE 5
 volatile uint8_t flasher_reply_buf[FLASHER_REPLY_BUF_SIZE] __attribute__((aligned(4)));
 
 
-static void ena_tx_dma() __attribute__((section(".text_itcm")));
-static void ena_tx_dma()
+static void ena_tx_dma_for_reply() __attribute__((section(".text_itcm")));
+static void ena_tx_dma_for_reply()
 {
-	DMA1_Stream0->PAR = (uint32_t)&(SPI2->DR);
-	DMA1_Stream0->M0AR = flasher_reply_buf;
+
+	DMA1_Stream0->PAR = (uint32_t)&(SPI1->TXDR);
+	DMA1_Stream0->M0AR = (uint32_t)flasher_reply_buf;
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
 	DMA1_Stream0->NDTR = FLASHER_REPLY_BUF_SIZE;
+	DMAMUX1_Channel0->CCR = 38;
 	DMA_CLEAR_INTFLAGS(DMA1, 0);
 	DMA1_Stream0->CR |= 1; // Enable TX DMA
-	SPI2->CFG1 |= 1UL<<15 /*TX DMA ena*/;
+	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/;
 }
 
 static void ena_tx_dma_for_flash_read(int offset) __attribute__((section(".text_itcm")));
 static void ena_tx_dma_for_flash_read(int offset)
 {
-	DMA1_Stream1->PAR = (uint32_t)&(SPI2->DR);
-	DMA1_Stream1->M0AR = FLASH_OFFSET + offset; // FLASH on AXIM interface
-	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+	DMA1_Stream0->PAR = (uint32_t)&(SPI1->TXDR);
+	DMA1_Stream0->M0AR = FLASH_OFFSET + offset; // FLASH on AXIM interface
+	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
-	DMA1_Stream1->NDTR = FLASHER_DMA_SIZE;
-	DMA_CLEAR_INTFLAGS(DMA1, 1);
-	DMA1_Stream1->CR |= 1; // Enable TX DMA
-	SPI2->CFG1 |= 1UL<<15 /*TX DMA ena*/;
+	DMA1_Stream0->NDTR = FLASHER_DMA_SIZE;
+	DMAMUX1_Channel0->CCR = 38;
+	DMA_CLEAR_INTFLAGS(DMA1, 0);
+	DMA1_Stream0->CR |= 1; // Enable TX DMA
+	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/;
 }
 
-static void reset_spi() __attribute__((section(".text_itcm")));
-static void reset_spi()
+static void reset_spi(int rxbuf_offset) __attribute__((section(".text_itcm")));
+static void reset_spi(int rxbuf_offset)
 {
+	SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
+	SPI1->CFG1 &= ~(1UL<<15); // Remove TX DMA
+	__DSB();
 	// Disable the DMAs:
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
@@ -221,66 +229,24 @@ static void reset_spi()
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
+	__DSB();
 	while(DMA1_Stream0->CR & 1UL) ;
 	while(DMA1_Stream1->CR & 1UL) ;
 
-	// Hard-reset SPI - the only way to empty TXFIFO! (Go figure.)
-
-	RCC->APB1RSTR = 1UL<<14;
-	__asm__ __volatile__ ("nop");
-	RCC->APB1RSTR = 0;
 			
 	// Re-enable:
 
-	SPI2->CR2 = 0b0111UL<<8 /*8-bit data*/ | 1UL<<0 /*RX DMA ena*/  | 1UL<<12 /*Don't Reject The Last Byte*/;
-
 	// RX DMA
-	DMA1_Stream3->M0AR = FLASHER_BUF_ADDR;
+	DMA1_Stream1->M0AR = FLASHER_BUF_ADDR+rxbuf_offset;
 
-	DMA1_Stream3->NDTR = FLASHER_DMA_SIZE;
-	DMA_CLEAR_INTFLAGS(DMA1, 3);
-	DMA1_Stream3->CR |= 1; // Enable DMA
+	DMA1_Stream1->NDTR = FLASHER_DMA_SIZE;
+	DMA_CLEAR_INTFLAGS(DMA1, 1);
+	DMA1_Stream1->CR |= 1; // Enable DMA
 
-	SPI2->CR1 = 1UL<<6; // Enable in slave mode
+	SPI1->CR1 = 1UL; // Enable in slave mode
+	__DSB();
 
 }
-
-static void reset_spi_with_rxbuf_offset(int offset) __attribute__((section(".text_itcm")));
-static void reset_spi_with_rxbuf_offset(int offset)
-{
-	// Disable the DMAs:
-	DMA1_Stream4->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
-			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
-	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
-	DMA1_Stream3->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
-			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
-	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
-
-	while(DMA1_Stream4->CR & 1UL) ;
-	while(DMA1_Stream3->CR & 1UL) ;
-
-	// Hard-reset SPI - the only way to empty TXFIFO! (Go figure.)
-
-	RCC->APB1RSTR = 1UL<<14;
-	__asm__ __volatile__ ("nop");
-	RCC->APB1RSTR = 0;
-			
-	// Re-enable:
-
-	SPI2->CR2 = 0b0111UL<<8 /*8-bit data*/ | 1UL<<0 /*RX DMA ena*/  | 1UL<<12 /*Don't Reject The Last Byte*/;
-
-	// RX DMA
-
-	DMA1_Stream3->M0AR = FLASHER_BUF_ADDR+offset;
-
-	DMA1_Stream3->NDTR = FLASHER_DMA_SIZE;
-	DMA_CLEAR_INTFLAGS(DMA1, 3);
-	DMA1_Stream3->CR |= 1; // Enable DMA
-
-	SPI2->CR1 = 1UL<<6; // Enable in slave mode
-
-}
-
 
 #define CRC_INITIAL_REMAINDER 0x00
 #define CRC_POLYNOMIAL 0x07 // As per CRC-8-CCITT
@@ -301,6 +267,8 @@ static void reset_spi_with_rxbuf_offset(int offset)
 static uint8_t do_program(int bank, int sector, uint8_t expected_crc) __attribute__((section(".text_itcm")));
 static uint8_t do_program(int bank, int sector, uint8_t expected_crc)
 {
+//		char printbuf[128];
+
 	__DSB(); __ISB();
 
 	uint8_t chk = CRC_INITIAL_REMAINDER;
@@ -315,7 +283,7 @@ static uint8_t do_program(int bank, int sector, uint8_t expected_crc)
 		return 6;
 	}
 
-	unlock_flash();
+	unlock_flash(bank);
 
 	flash_erase_sector(bank, sector);
 
@@ -331,8 +299,9 @@ static uint8_t do_program(int bank, int sector, uint8_t expected_crc)
 		FLASH->CR2 |= 0b11UL<<4 /*64-bit parallelism*/ | 1UL<<1 /*misleadingly named write command*/;
 	}
 
+	__DSB();
 
-	volatile uint64_t* p_flash = (uint64_t*)(FLASH_OFFSET + (bank*8+sector)*128*1024));
+	volatile uint64_t* p_flash = (uint64_t*)(FLASH_OFFSET + ((bank-1)*8+sector)*128*1024);
 	volatile uint64_t* p_ram = (volatile uint64_t* volatile)(FLASHER_BUF_ADDR);
 
 	for(int i=0; i<SECTOR_LEN/8; i++)
@@ -342,7 +311,7 @@ static uint8_t do_program(int bank, int sector, uint8_t expected_crc)
 		else
 			POLL_QW_BANK2();
 
-		*p_flash = *p_ram;
+		*p_flash = *p_ram; //0x12345678abcdef12ULL;
 		p_flash++;
 		p_ram++;
 		__DSB(); __ISB();
@@ -361,30 +330,41 @@ static uint8_t do_program(int bank, int sector, uint8_t expected_crc)
 
 	lock_flash();
 
+
+//	uart_print_string_blocking("deep shit: "); o_utoa32_hex(*((uint32_t*)(FLASH_OFFSET + ((bank-1)*8+sector)*128*1024)), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//	uart_print_string_blocking("deep shit: "); o_utoa32_hex(*((uint32_t*)(4+FLASH_OFFSET + ((bank-1)*8+sector)*128*1024)), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//	uart_print_string_blocking("deep shit: "); o_utoa32_hex(*((uint32_t*)(1000+FLASH_OFFSET + ((bank-1)*8+sector)*128*1024)), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+
+
 	return 123; // The magical success code.
 }
 
-static void wait_nss_low()
-{
-	while(GPIOB->IDR & (1UL<<12));
-}
+#ifdef SBC_ODROID
+	#define wait_nss_low() do{while(GPIOA->IDR & (1UL<<15));}while(0)
+	#define wait_nss_high() do{while(!(GPIOA->IDR & (1UL<<15)));}while(0)
+#endif
+#ifdef SBC_RASPI
+	#define wait_nss_low() do{while(GPIOG->IDR & (1UL<<10));}while(0)
+	#define wait_nss_high() do{while(!(GPIOG->IDR & (1UL<<10)));}while(0)
+#endif
 
-static void wait_nss_high()
-{
-	while(!(GPIOB->IDR & (1UL<<12))) ;
-}
-
+#ifdef SBC_AUTODETECT
+	#error "Sorry, SBC_AUTODETECT mode not implemented in flasher"
+#endif
 
 void flasher() __attribute__((section(".text_itcm")));
 void flasher()
 {
 	while(1)
 	{
-		while(GPIOB->IDR & (1UL<<12)); // Wait for nSS->low
+//		char printbuf[128];
+		wait_nss_low();
 		delay_us(1);
-		while(!(GPIOB->IDR & (1UL<<12))) ; // Wait for nSS->high again
-		int xfer_len = FLASHER_DMA_SIZE - DMA1_Stream3->NDTR; // let's see how many bytes were subtracted from the DMA remaining length value.
-		reset_spi();
+		wait_nss_high();
+		int xfer_len = FLASHER_DMA_SIZE - DMA1_Stream1->NDTR; // let's see how many bytes were subtracted from the DMA remaining length value.
+		__DSB();
+		reset_spi(0);
 
 		uint32_t cmd = *((volatile uint32_t*)FLASHER_BUF_ADDR);
 
@@ -392,42 +372,54 @@ void flasher()
 		{
 			case 0xabba1337: // PROGRAM
 			{
-				if(xfer_len != 9)
+				if(xfer_len != 7)
 				{
-					USART3->TDR = 'x';
-					reset_spi();
+//					USART1->TDR = 'x';
+					reset_spi(0);
 					break;
 				}
+//				else
+//					USART1->TDR = 'k';
 
-				uint32_t fw_len = *((volatile uint32_t*)(FLASHER_BUF_ADDR+4));
-				uint8_t expected_crc = *((volatile uint8_t*)(FLASHER_BUF_ADDR+8));
+
+				uint8_t bank = *((volatile uint8_t*)(FLASHER_BUF_ADDR+4));
+				uint8_t sector = *((volatile uint8_t*)(FLASHER_BUF_ADDR+5));
+				uint8_t expected_crc = *((volatile uint8_t*)(FLASHER_BUF_ADDR+6));
 
 				int got_bytes = 0;
-				while(got_bytes < fw_len)
+				while(got_bytes < SECTOR_LEN)
 				{
-					while(GPIOB->IDR & (1UL<<12)) ; // Wait for nSS->low
+					wait_nss_low();
 					delay_us(1);
-					while(!(GPIOB->IDR & (1UL<<12))) ; // Wait for nSS->high again
-					int this_len = FLASHER_DMA_SIZE - DMA1_Stream3->NDTR;
+					wait_nss_high();
+					__DSB();
+					int this_len = FLASHER_DMA_SIZE - DMA1_Stream1->NDTR;
+//					uart_print_string_blocking("SR="); o_btoa16_fixed(SPI1->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//					uart_print_string_blocking("len = "); o_utoa16(this_len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 					got_bytes += this_len;
-					reset_spi_with_rxbuf_offset(got_bytes);
+					reset_spi(got_bytes);
 				}
 
 
 				LED_OFF();
-				int ret = do_program(fw_len, expected_crc);
+				int ret = do_program(bank, sector, expected_crc);
+
+//				uart_print_string_blocking("wrote to "); o_utoa16(bank, printbuf); uart_print_string_blocking(printbuf); o_utoa16(sector, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//				uart_print_string_blocking("which is at "); o_utoa32_hex(FLASH_OFFSET + ((bank-1)*8+sector)*128*1024, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+
 				LED_ON();
 				// Done programming. Master will be polling. Wait for the on-going poll operation to end first.
-				while(!(GPIOB->IDR & (1UL<<12))) ; // Wait for nSS->high again
-				reset_spi();
-				*((volatile uint32_t*)FLASHER_REPLY_BUF_ADDR) = 0xacdc3579;
-				*((volatile uint8_t*)(FLASHER_REPLY_BUF_ADDR+4)) = ret;
-				__DSB(); __ISB();
-				ena_tx_dma();
-				while(GPIOB->IDR & (1UL<<12)) ; // Wait for nSS->low: DMA will do the job.
+				wait_nss_high();
+				reset_spi(0);
+				*((volatile uint32_t*)flasher_reply_buf) = 0xacdc3579;
+				*((volatile uint8_t*)(flasher_reply_buf+4)) = ret;
+				__DSB();
+				ena_tx_dma_for_reply();
+				wait_nss_low(); // DMA will do the job
 				delay_us(10);
-				while(!(GPIOB->IDR & (1UL<<12))) ; // Wait for nSS->high again
-				reset_spi();
+				wait_nss_high();
+				reset_spi(0);
 			}
 			break;
 
@@ -438,10 +430,14 @@ void flasher()
 				// After 8-byte long READ message, we can accept SPI clocks right away!
 
 				ena_tx_dma_for_flash_read(offset);
-				while(GPIOB->IDR & (1UL<<12)) ; // Wait for nSS->low: DMA will do the job then
+				wait_nss_low(); // DMA will do the job
 				delay_us(10);
-				while(!(GPIOB->IDR & (1UL<<12))) ; // Wait for nSS->high again
-				reset_spi();
+				wait_nss_high();
+				reset_spi(0);
+
+//				uart_print_string_blocking("read from "); o_utoa32(offset, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//				uart_print_string_blocking("which is at "); o_utoa32_hex(FLASH_OFFSET + offset, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
 			}
 			break;
 
@@ -482,47 +478,66 @@ void run_flasher()
 {
 	__disable_irq();
 
-	ADC1->CR2 = 0; // Disable ADC
-	DMA2_Stream0->CR = 0; // Disable ADC DMA, so that it doesn't write stuff in our buffer
+	// Disable all other DMAs so they can't mess up our buffers
+	DMA1_Stream0->CR = 0;
+	DMA1_Stream1->CR = 0;
+	DMA1_Stream2->CR = 0;
+	DMA1_Stream3->CR = 0;
+	DMA1_Stream4->CR = 0;
+	DMA1_Stream5->CR = 0;
+	DMA1_Stream6->CR = 0;
+	DMA1_Stream7->CR = 0;
+	DMA2_Stream0->CR = 0;
+	DMA2_Stream1->CR = 0;
+	DMA2_Stream2->CR = 0;
+	DMA2_Stream3->CR = 0;
+	DMA2_Stream4->CR = 0;
+	DMA2_Stream5->CR = 0;
+	DMA2_Stream6->CR = 0;
+	DMA2_Stream7->CR = 0;
 
+	RCC->APB2ENR |= 1UL<<12; // Make sure SPI1 is on
+	__DSB();
 
-	// Hard-reset SPI - the only way to empty TXFIFO!
+	// Hard-reset SPI1, just to be sure.
 
-	RCC->APB1RSTR = 1UL<<14;
-	__asm__ __volatile__ ("nop");
-	RCC->APB1RSTR = 0;
+	RCC->APB2RSTR = 1UL<<12;
+	__DSB();
+	delay();
+	RCC->APB2RSTR = 0;
+	__DSB();
 
-	delay_ms(200);
+	delay_ms(200); // At this time, master may still be sending some crap while flushing buffers. Hard-reset the SPI once more after this:
 
-	// Do it again just to be sure...
-	RCC->APB1RSTR = 1UL<<14;
-	__asm__ __volatile__ ("nop");
-	RCC->APB1RSTR = 0;
-	__asm__ __volatile__ ("nop");
+	RCC->APB2RSTR = 1UL<<12;
+	__DSB();
+	delay();
+	RCC->APB2RSTR = 0;
+	__DSB();
 
 	// Reconf SPI
 	
-	SPI2->CR2 = 0b0111UL<<8 /*8-bit data*/ | 1UL<<0 /*RX DMA ena*/ | 1UL<<12 /*Don't Reject The Last Byte*/;
+	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
 
 	// RX DMA
 
-	DMA1_Stream3->PAR = (uint32_t)&(SPI2->DR);
-	DMA1_Stream3->M0AR = FLASHER_BUF_ADDR;
-	DMA1_Stream3->CR = 0UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
+	DMA1_Stream1->PAR = (uint32_t)&(SPI1->RXDR);
+	DMA1_Stream1->M0AR = FLASHER_BUF_ADDR;
+	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
-	DMA1_Stream3->NDTR = FLASHER_DMA_SIZE;
-	DMA_CLEAR_INTFLAGS(DMA1, 3);
-	DMA1_Stream3->CR |= 1; // Enable RX DMA
+	DMA1_Stream1->NDTR = FLASHER_DMA_SIZE;
+	DMAMUX1_Channel1->CCR = 37;
+	DMA_CLEAR_INTFLAGS(DMA1, 1);
+	DMA1_Stream1->CR |= 1; // Enable RX DMA
 
 
-	SPI2->CR1 = 1UL<<6; // Enable in slave mode
+	SPI1->CR1 = 1UL; // Enable in slave mode
 
-	// nCS is PB12 - use it manually. Remove EXTI config:
-	EXTI->IMR = 0;
-	EXTI->RTSR = 0;
-
-	//SPI2->DR = 0x11;
+	// Remove all EXTI config. Use nCS manually.
+	EXTI_D1->IMR1 = 0;
+	EXTI_D1->IMR2 = 0;
+	EXTI_D1->IMR3 = 0;
 
 	LED_ON();
 	flasher();

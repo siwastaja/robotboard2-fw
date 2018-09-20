@@ -1,13 +1,18 @@
 # This makefile is made to work with the toolchain downloadable at https://launchpad.net/gcc-arm-embedded
 
+DEVIP = 192.168.1.6
+
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
 SIZE = arm-none-eabi-size
 OBJCOPY = arm-none-eabi-objcopy
 
-OBJ = stm32init.o main.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o micronavi.o adcs.o pwrswitch.o charger.o imu.o audio.o sbc_comm.o timebase.o
+OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o micronavi.o adcs.o pwrswitch.o charger.o imu.o audio.o sbc_comm.o timebase.o
 
 CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
+
+CFLAGS += -DSBC_RASPI
+
 ASMFLAGS = -S -fverbose-asm
 LDFLAGS = -mcpu=cortex-m7 -mthumb -nostartfiles -mfloat-abi=hard -mfpu=fpv5-d16 -specs=nano.specs
 
@@ -32,6 +37,13 @@ main.bin: $(OBJ)
 # causing the binary file to extend to the address space of the totally wrong (meaningless) "load address", generating 500 megabyte binary.
 # Since bss sections have nothing to do in the binary, we can just as well remove them from the output file.
 # .settings is also removed - this makes the binary small, and keeps the old settings through reflash process
+
+ff: main.bin
+	scp main_full.bin $(DEVIP):~/main_full.bin
+	ssh $(DEVIP) ~/spiprog r 10 main_full.bin
+
+fr:
+	ssh $(DEVIP) ~/spiprog r
 
 f: main.bin
 	scp main_full.bin pulu@$(robot):~/main_full.bin
