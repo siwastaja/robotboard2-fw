@@ -327,8 +327,12 @@ void sbc_spi_cs_end_inthandler()
 
 void check_rx_test()
 {
+	char printbuf[128];
+
 	if(rx_fifo_spi != rx_fifo_cpu)
 	{
+		uart_print_string_blocking("rx pop:"); o_utoa32_hex(*(uint32_t*)rx_fifo[rx_fifo_cpu], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("...\r\n");
+
 		rx_fifo_cpu++; if(rx_fifo_cpu >= SBC_SPI_RX_FIFO_DEPTH) rx_fifo_cpu = 0;
 	}
 	__DSB();
@@ -343,42 +347,18 @@ void sbc_comm_test()
 	int delays[13] = {50, 20, 70, 4, 17, 200, 40, 4, 15, 45, 4, 4, 4};
 	while(1)
 	{
-		delay_ms(delays[cnt]/4);
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-
-		delay_ms(delays[cnt]/4);
-
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-
-		delay_ms(delays[cnt]/4);
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-
-		delay_ms(delays[cnt]/4);
-
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-		check_rx_test();
-
+//		delay_ms(delays[cnt]);
+		for(int i = 0; i<1; i++)
+		{
+			delay_ms(1000);
+			check_rx_test();
+		}
 
 		cnt++;
-		if(cnt > 12) cnt = 0;
+//		if(cnt > 12) cnt = 0;
 
 
-//		if(cnt==5)
+		if(cnt==5)
 		{
 			cnt=0;
 
@@ -386,7 +366,7 @@ void sbc_comm_test()
 
 			if(next_tx_fifo_cpu == tx_fifo_spi)
 			{
-//				uart_print_string_blocking("\r\nTX buffer overrun! Not generating data\r\n"); 
+				uart_print_string_blocking("\r\nTX buffer overrun! Not generating data\r\n"); 
 			}
 			else
 			{
@@ -406,14 +386,14 @@ void sbc_comm_test()
 
 				ENA_IRQ();
 
-//				uart_print_string_blocking("\r\nNew tx generated\r\n"); 
+				uart_print_string_blocking("\r\nNew tx generated\r\n"); 
 			}
 		}
 
-//		uart_print_string_blocking("tx_cpu="); o_utoa16(tx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
-//		uart_print_string_blocking("tx_spi="); o_utoa16(tx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
-//		uart_print_string_blocking("rx_cpu="); o_utoa16(rx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
-//		uart_print_string_blocking("rx_spi="); o_utoa16(rx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("tx_cpu="); o_utoa16(tx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+		uart_print_string_blocking("tx_spi="); o_utoa16(tx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+		uart_print_string_blocking("rx_cpu="); o_utoa16(rx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+		uart_print_string_blocking("rx_spi="); o_utoa16(rx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		
 	}
 }
