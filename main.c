@@ -38,7 +38,34 @@ void uart_print_string_blocking(const char *buf)
 
 void error(int code)
 {
-	while(1);
+	__disable_irq();
+	// Disable all other interrupts, but leave the one required for handling reflashing SPI message.
+	__enable_irq();
+
+	int i = 0;
+	int o = 0;
+	while(1)
+	{
+		LED_ON();
+		delay_ms(120);
+		LED_OFF();
+		delay_ms(120);
+
+		i++;
+		if(i >= code)
+		{
+			i = 0;
+			delay_ms(600);
+			o++;
+
+			if(o > 10)
+			{
+				NVIC_SystemReset();
+				while(1);
+			}
+		}
+
+	}
 }
 
 void delay_us(uint32_t i) __attribute__((section(".text_itcm")));

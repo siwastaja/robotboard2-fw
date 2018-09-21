@@ -88,16 +88,17 @@ rd counter refers to the master's reading action. This means, rd counter is rela
 
 */
 
-#define SBC_SPI_FIFO_DEPTH  4
+#define SBC_SPI_TX_FIFO_DEPTH  4
+#define SBC_SPI_RX_FIFO_DEPTH  6
 #define SBC_SPI_TX_MAX_LEN 55000
-#define SBC_SPI_RX_MAX_LEN 8192
+#define SBC_SPI_RX_MAX_LEN 6000
 
 #if (SBC_SPI_TX_MAX_LEN%4 != 0 || SBC_SPI_RX_MAX_LEN%4 != 0)
 	#error "SPI max transfer lengths must be multiples of 4"
 #endif
 
-static volatile uint8_t tx_fifo[SBC_SPI_FIFO_DEPTH][SBC_SPI_TX_MAX_LEN] __attribute__((aligned(4)));
-static volatile uint8_t rx_fifo[SBC_SPI_FIFO_DEPTH][SBC_SPI_RX_MAX_LEN] __attribute__((aligned(4)));
+static volatile uint8_t tx_fifo[SBC_SPI_TX_FIFO_DEPTH][SBC_SPI_TX_MAX_LEN] __attribute__((aligned(4)));
+static volatile uint8_t rx_fifo[SBC_SPI_RX_FIFO_DEPTH][SBC_SPI_RX_MAX_LEN] __attribute__((aligned(4)));
 
 static volatile int tx_fifo_cpu = 0;
 static volatile int tx_fifo_spi = 0;
@@ -207,8 +208,8 @@ volatile int spi_dbg1, spi_dbg2;
 
 void sbc_spi_cs_end_inthandler()
 {
-	spi_dbg1 = DMA1_Stream0->NDTR;
-	spi_dbg2 = DMA1_Stream1->NDTR;
+//	spi_dbg1 = DMA1_Stream0->NDTR;
+//	spi_dbg2 = DMA1_Stream1->NDTR;
 	// Triggered when cs goes high
 
 	// Clear the EXTI interrupt pending bit:
@@ -221,9 +222,7 @@ void sbc_spi_cs_end_inthandler()
 
 	SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
 
-	// Reference manual wants us to keep TX DMA EN bit disabled, and enable it at the precise moment (see below).
-	// Zero problems so far doing it just at once (in init). But if you are having issues such as excess TX DMA events,
-	// this is a possible cause.
+	// Turn TX DMA bit off (by rewriting the whole register to save time):
 #ifdef SPI_DMA_1BYTE_AT_TIME
 	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
 #else
@@ -231,7 +230,7 @@ void sbc_spi_cs_end_inthandler()
 #endif
 	__DSB();
 
-	// Disable the DMAs:
+	// Disable the DMAs (but keep the configuration):
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 		#ifdef SPI_DMA_1BYTE_AT_TIME
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
@@ -250,6 +249,7 @@ void sbc_spi_cs_end_inthandler()
 
 	__DSB();
 
+	// Poll DMA enable bits to make sure they are disabled before re-enabling them:
 	while(DMA1_Stream0->CR & 1UL) ;
 	while(DMA1_Stream1->CR & 1UL) ;
 
@@ -268,49 +268,21 @@ void sbc_spi_cs_end_inthandler()
 		run_flasher();
 	}
 
-/*
-	if(len >= 16)
-	{
-		if(tx_fifo_cpu != tx_fifo_spi)
-		{
-			tx_fifo_spi++;
-			if(tx_fifo_spi >= SBC_SPI_FIFO_DEPTH) tx_fifo_spi = 0;
-		}
-
-//		if(rx_fifo_cpu != rx_fifo_spi)
-		{
-			rx_fifo_spi++;
-			if(rx_fifo_spi >= SBC_SPI_FIFO_DEPTH) rx_fifo_spi = 0;
-		}
-	}
-*/
 	// TX DMA
 	if(tx_fifo_cpu == tx_fifo_spi)
 	{
-//		DMA1_Stream0->M0AR = (uint32_t)no_data_msg;
-//		#ifdef SPI_DMA_1BYTE_AT_TIME
-//			DMA1_Stream0->NDTR = sizeof(no_data_msg);
-//		#else
-//			DMA1_Stream0->NDTR = sizeof(no_data_msg)/4;
-//		#endif
+		// No data to send.
 		// Don't enable TX DMA, let the SPI send the content of the "underrun register"
-
 	}
 	else
 	{
-
 		if(len >= 16)
 		{
 			tx_fifo_spi++;
-			if(tx_fifo_spi >= SBC_SPI_FIFO_DEPTH) tx_fifo_spi = 0;
+			if(tx_fifo_spi >= SBC_SPI_TX_FIFO_DEPTH) tx_fifo_spi = 0;
 		}
 
 		DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
-		#ifdef SPI_DMA_1BYTE_AT_TIME
-			DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN;
-		#else
-			DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
-		#endif
 
 		DMA_CLEAR_INTFLAGS(DMA1, 0);
 		DMA1_Stream0->CR |= 1; // Enable TX DMA
@@ -320,22 +292,45 @@ void sbc_spi_cs_end_inthandler()
 
 	// RX DMA
 
+	if(len >= 16)
 	{
-		DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
-		#ifdef SPI_DMA_1BYTE_AT_TIME
-			DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN;
-		#else
-			DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN/4;
-		#endif
+		int next_rx_fifo_spi = rx_fifo_spi+1;
+		if(next_rx_fifo_spi >= SBC_SPI_RX_FIFO_DEPTH)
+			next_rx_fifo_spi = 0;
+
+		if(next_rx_fifo_spi == rx_fifo_cpu)
+		{
+			// RX fifo full - overrun. Considered catastrophic condition.
+			error(4);
+		}
+		else
+		{
+			rx_fifo_spi = next_rx_fifo_spi;
+		}
 	}
+	else
+	{
+		// Just re-enable the DMA so the next operation writes to the same place.
+	}	
+
+	DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
 
 	__DSB();
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
 	DMA1_Stream1->CR |= 1; // Enable RX DMA
-
+	__DSB();
 
 
 	SPI1->CR1 = 1UL; // Enable in slave mode
+	__DSB();
+}
+
+void check_rx_test()
+{
+	if(rx_fifo_spi != rx_fifo_cpu)
+	{
+		rx_fifo_cpu++; if(rx_fifo_cpu >= SBC_SPI_RX_FIFO_DEPTH) rx_fifo_cpu = 0;
+	}
 	__DSB();
 }
 
@@ -345,18 +340,49 @@ void sbc_comm_test()
 	uint8_t data = 0x42;
 	int cnt = 0;
 
-	int delays[13] = {50, 20, 70, 2, 17, 200, 40, 1, 15, 45, 1, 1, 1};
+	int delays[13] = {50, 20, 70, 4, 17, 200, 40, 4, 15, 45, 4, 4, 4};
 	while(1)
 	{
-		delay_ms(delays[cnt]);
+		delay_ms(delays[cnt]/4);
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+
+		delay_ms(delays[cnt]/4);
+
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+
+		delay_ms(delays[cnt]/4);
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+
+		delay_ms(delays[cnt]/4);
+
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+		check_rx_test();
+
+
 		cnt++;
 		if(cnt > 12) cnt = 0;
+
 
 //		if(cnt==5)
 		{
 			cnt=0;
 
-			int next_tx_fifo_cpu = tx_fifo_cpu+1; if(next_tx_fifo_cpu >= SBC_SPI_FIFO_DEPTH) next_tx_fifo_cpu = 0;
+			int next_tx_fifo_cpu = tx_fifo_cpu+1; if(next_tx_fifo_cpu >= SBC_SPI_TX_FIFO_DEPTH) next_tx_fifo_cpu = 0;
 
 			if(next_tx_fifo_cpu == tx_fifo_spi)
 			{
@@ -378,65 +404,6 @@ void sbc_comm_test()
 				DIS_IRQ();
 				tx_fifo_cpu = next_tx_fifo_cpu;
 
-				// Now there's certainly something to send:
-				if(0) //IN(GPIOG, 10)) // CS high - no transfer going on - reconfigure the TX DMA address
-				{
-					SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
-
-					__DSB();
-
-					// Disable the DMAs:
-					DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
-						#ifdef SPI_DMA_1BYTE_AT_TIME
-							   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
-						#else
-							   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
-						#endif
-							   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
-
-					DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
-						#ifdef SPI_DMA_1BYTE_AT_TIME
-							   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
-						#else
-							   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
-						#endif
-							   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
-
-					__DSB();
-
-					DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
-					#ifdef SPI_DMA_1BYTE_AT_TIME
-						DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN;
-					#else
-						DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
-					#endif
-
-					DMA_CLEAR_INTFLAGS(DMA1, 0);
-					DMA1_Stream0->CR |= 1; // Enable TX DMA
-
-					// RX DMA
-
-					{
-						DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
-						#ifdef SPI_DMA_1BYTE_AT_TIME
-							DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN;
-						#else
-							DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN/4;
-						#endif
-					}
-
-					__DSB();
-					DMA_CLEAR_INTFLAGS(DMA1, 1);
-					DMA1_Stream1->CR |= 1; // Enable RX DMA
-
-				//	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier, if you want to follow the refman advice
-
-
-					SPI1->CR1 = 1UL; // Enable in slave mode
-					__DSB();
-
-
-				} // else: CS is low, and is guaranteed to go high, which is guaranteed to cause the interrupt, which will assign the next DMA transfer.
 				ENA_IRQ();
 
 //				uart_print_string_blocking("\r\nNew tx generated\r\n"); 
@@ -502,9 +469,8 @@ void init_sbc_comm()
 
 	// SPI1->CR2 zero - transfer length unknown
 
-	// TX DMA
+	// TX DMA - keep it off, but configure what we can.
 	DMA1_Stream0->PAR = (uint32_t)&(SPI1->TXDR);
-	DMA1_Stream0->M0AR = (uint32_t)no_data_msg;
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 		#ifdef SPI_DMA_1BYTE_AT_TIME
 			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
@@ -519,8 +485,6 @@ void init_sbc_comm()
 		DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
 	#endif
 	DMAMUX1_Channel0->CCR = 38;
-//	DMA_CLEAR_INTFLAGS(DMA1, 0);
-//	DMA1_Stream0->CR |= 1; // Enable TX DMA
 
 	// RX DMA
 
@@ -542,14 +506,7 @@ void init_sbc_comm()
 	DMAMUX1_Channel1->CCR = 37;
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
 	DMA1_Stream1->CR |= 1; // Enable RX DMA
-
-//	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier!
-
-//	SPI1->IER |= 1UL<<3; // EOT,SUSP,TXC interrupt enable
-//	NVIC_SetPriority(SPI1_IRQn, 2);
-//	NVIC_EnableIRQ(SPI1_IRQn);
-
-//	SPI1->TSIZE = 65528;
+	__DSB();
 	SPI1->CR1 = 1UL; // Enable in slave mode
 
 
