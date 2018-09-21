@@ -224,11 +224,11 @@ void sbc_spi_cs_end_inthandler()
 	// Reference manual wants us to keep TX DMA EN bit disabled, and enable it at the precise moment (see below).
 	// Zero problems so far doing it just at once (in init). But if you are having issues such as excess TX DMA events,
 	// this is a possible cause.
-//#ifdef SPI_DMA_1BYTE_AT_TIME
-//	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
-//#else
-//	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
-//#endif
+#ifdef SPI_DMA_1BYTE_AT_TIME
+	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
+#else
+	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
+#endif
 	__DSB();
 
 	// Disable the DMAs:
@@ -268,7 +268,7 @@ void sbc_spi_cs_end_inthandler()
 		run_flasher();
 	}
 
-
+/*
 	if(len >= 16)
 	{
 		if(tx_fifo_cpu != tx_fifo_spi)
@@ -283,30 +283,40 @@ void sbc_spi_cs_end_inthandler()
 			if(rx_fifo_spi >= SBC_SPI_FIFO_DEPTH) rx_fifo_spi = 0;
 		}
 	}
-
+*/
 	// TX DMA
 	if(tx_fifo_cpu == tx_fifo_spi)
 	{
-		DMA1_Stream0->M0AR = (uint32_t)no_data_msg;
-		#ifdef SPI_DMA_1BYTE_AT_TIME
-			DMA1_Stream0->NDTR = sizeof(no_data_msg);
-		#else
-			DMA1_Stream0->NDTR = sizeof(no_data_msg)/4;
-		#endif
+//		DMA1_Stream0->M0AR = (uint32_t)no_data_msg;
+//		#ifdef SPI_DMA_1BYTE_AT_TIME
+//			DMA1_Stream0->NDTR = sizeof(no_data_msg);
+//		#else
+//			DMA1_Stream0->NDTR = sizeof(no_data_msg)/4;
+//		#endif
+		// Don't enable TX DMA, let the SPI send the content of the "underrun register"
 
 	}
 	else
 	{
+
+		if(len >= 16)
+		{
+			tx_fifo_spi++;
+			if(tx_fifo_spi >= SBC_SPI_FIFO_DEPTH) tx_fifo_spi = 0;
+		}
+
 		DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
 		#ifdef SPI_DMA_1BYTE_AT_TIME
 			DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN;
 		#else
 			DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
 		#endif
+
+		DMA_CLEAR_INTFLAGS(DMA1, 0);
+		DMA1_Stream0->CR |= 1; // Enable TX DMA
+		SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier, if you want to follow the refman advice
 	}
 
-	DMA_CLEAR_INTFLAGS(DMA1, 0);
-	DMA1_Stream0->CR |= 1; // Enable TX DMA
 
 	// RX DMA
 
@@ -323,7 +333,6 @@ void sbc_spi_cs_end_inthandler()
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
 	DMA1_Stream1->CR |= 1; // Enable RX DMA
 
-//	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier, if you want to follow the refman advice
 
 
 	SPI1->CR1 = 1UL; // Enable in slave mode
@@ -335,25 +344,28 @@ void sbc_comm_test()
 	char printbuf[128];
 	uint8_t data = 0x42;
 	int cnt = 0;
+
+	int delays[13] = {50, 20, 70, 2, 17, 200, 40, 1, 15, 45, 1, 1, 1};
 	while(1)
 	{
-		delay_ms(1000);
-
+		delay_ms(delays[cnt]);
 		cnt++;
+		if(cnt > 12) cnt = 0;
 
-		if(cnt==5)
+//		if(cnt==5)
 		{
 			cnt=0;
-			data++;
 
 			int next_tx_fifo_cpu = tx_fifo_cpu+1; if(next_tx_fifo_cpu >= SBC_SPI_FIFO_DEPTH) next_tx_fifo_cpu = 0;
 
 			if(next_tx_fifo_cpu == tx_fifo_spi)
 			{
-				uart_print_string_blocking("\r\nTX buffer overrun! Not generating data\r\n"); 
+//				uart_print_string_blocking("\r\nTX buffer overrun! Not generating data\r\n"); 
 			}
 			else
 			{
+				data++;
+
 				tx_fifo[next_tx_fifo_cpu][0] = 0x11;
 				tx_fifo[next_tx_fifo_cpu][1] = tx_fifo_cpu;
 				tx_fifo[next_tx_fifo_cpu][2] = tx_fifo_spi;
@@ -367,7 +379,7 @@ void sbc_comm_test()
 				tx_fifo_cpu = next_tx_fifo_cpu;
 
 				// Now there's certainly something to send:
-				if(IN(GPIOG, 10)) // CS high - no transfer going on - reconfigure the TX DMA address
+				if(0) //IN(GPIOG, 10)) // CS high - no transfer going on - reconfigure the TX DMA address
 				{
 					SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
 
@@ -427,14 +439,14 @@ void sbc_comm_test()
 				} // else: CS is low, and is guaranteed to go high, which is guaranteed to cause the interrupt, which will assign the next DMA transfer.
 				ENA_IRQ();
 
-				uart_print_string_blocking("\r\nNew tx generated\r\n"); 
+//				uart_print_string_blocking("\r\nNew tx generated\r\n"); 
 			}
 		}
 
-		uart_print_string_blocking("tx_cpu="); o_utoa16(tx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
-		uart_print_string_blocking("tx_spi="); o_utoa16(tx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
-		uart_print_string_blocking("rx_cpu="); o_utoa16(rx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
-		uart_print_string_blocking("rx_spi="); o_utoa16(rx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//		uart_print_string_blocking("tx_cpu="); o_utoa16(tx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+//		uart_print_string_blocking("tx_spi="); o_utoa16(tx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+//		uart_print_string_blocking("rx_cpu="); o_utoa16(rx_fifo_cpu, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("  ");
+//		uart_print_string_blocking("rx_spi="); o_utoa16(rx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		
 	}
 }
@@ -484,6 +496,8 @@ void init_sbc_comm()
 #else
 	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
 #endif
+
+	SPI1->UDRDR = 0x22222222;
 	// SPI1->CFG2 defaults good
 
 	// SPI1->CR2 zero - transfer length unknown
@@ -505,8 +519,8 @@ void init_sbc_comm()
 		DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
 	#endif
 	DMAMUX1_Channel0->CCR = 38;
-	DMA_CLEAR_INTFLAGS(DMA1, 0);
-	DMA1_Stream0->CR |= 1; // Enable TX DMA
+//	DMA_CLEAR_INTFLAGS(DMA1, 0);
+//	DMA1_Stream0->CR |= 1; // Enable TX DMA
 
 	// RX DMA
 
@@ -529,7 +543,7 @@ void init_sbc_comm()
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
 	DMA1_Stream1->CR |= 1; // Enable RX DMA
 
-	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier!
+//	SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier!
 
 //	SPI1->IER |= 1UL<<3; // EOT,SUSP,TXC interrupt enable
 //	NVIC_SetPriority(SPI1_IRQn, 2);
