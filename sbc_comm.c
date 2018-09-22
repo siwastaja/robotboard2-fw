@@ -1,9 +1,12 @@
 #include <stdint.h>
+#include <string.h>
 #include "ext_include/stm32h7xx.h"
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
 #include "flash.h"
 #include "own_std.h"
+
+#include "../robotsoft/api_board_to_soft.h"
 
 /*
 define SPI_DMA_1BYTE_AT_TIME to force the SPI communication peripheral & DMA use 8-bit transfers. 
@@ -43,36 +46,9 @@ FIFO works like this:
 * If the "processing finished" event detects that wr after increment would become == rd, this is an overrun condition. The overrun
   counter is incremented. The wr pointer is NOT incremented, so the previous packet is fully overwritten. Packets are always intact.
 
-From the command perspective (rx data, coming from the SBC):
-rx data (commands, audio data, etc.) are processed in sync with tx data generation. When the master gets a "no data avail" response,
-it can assume that the rx data was ignored as well, and resend it the next time.
 
 Peeking for status:
-rd index is not incremented if the transfer length is 16 bytes or less. This way, status can be peeked at.
-
-An example:
-
-wr	rd	explanation
-0	0	initial state
-0	0	processing loop is writing data to 0
-0	0	master tries to read out; get's "no data avail"
-1	0	processing loop was finished (to 0)
-1	0	master tries to read out; starts getting data from 0 (writes commands to 0)
-1	0	processing loop is writing data to 1
-1	1	master finished reading out from 0. rd is set to 1.
-1	1	processing loop is still writing data to 1.
-2	1	processing loop was finished (to 1), starts writing to 2
-2	1	master reads out, starts getting data from 1
-2	2	master finished reading out 1
-2	2	processing loop is still writing to 2
-3	2	processing loop finished, starts writing to 3
-0	2	processing loop finished, starts writing to 0
-0	2	master reads out, starts getting data from 2
-1	2	processing loop finished, starts writing to 1
-1	3	master finished reading 2
-2	3	processing finished, starts writing to 2
-2	3	processing (to 2) finished, would start writing to 3; overrun detected. keeps wr at 2 instead of expected 3.
-
+fifo is not incremented if the transfer length is 16 bytes or less. This way, status can be peeked at with no side effects.
 
 Comment on nomenclature:
 
@@ -83,22 +59,30 @@ Both tx and rx always happen at the same time.
 
 SBC is the master. Only the SBC can initialize the transfer.
 
-wr counter refers to the actions of storing data (measurements, sensor data etc.) from the robot
-rd counter refers to the master's reading action. This means, rd counter is related to WRITING rx data, as well.
+_cpu counters refers to the actions of storing data (measurements, sensor data etc.) from the robot
+_spi counters refers to the master's reading action.
+
+RX and TX fifos are separate.
+
+When TX FIFO overruns, data is not generated. Some kind of overrun flag will be used.
+
+When RX FIFO overruns, this is considered catastrophic failure, and the robot stops is error().
+This is because RX packets may include important commands (for example, stop the robot) and cannot be ignored.
+
 
 */
 
-#define SBC_SPI_TX_FIFO_DEPTH  4
-#define SBC_SPI_RX_FIFO_DEPTH  6
-#define SBC_SPI_TX_MAX_LEN 55000
-#define SBC_SPI_RX_MAX_LEN 6000
+#define TX_FIFO_DEPTH  4
+#define RX_FIFO_DEPTH  6
+#define TX_MAX_LEN 55000
+#define RX_MAX_LEN 6000
 
-#if (SBC_SPI_TX_MAX_LEN%4 != 0 || SBC_SPI_RX_MAX_LEN%4 != 0)
+#if (TX_MAX_LEN%4 != 0 || RX_MAX_LEN%4 != 0)
 	#error "SPI max transfer lengths must be multiples of 4"
 #endif
 
-static volatile uint8_t tx_fifo[SBC_SPI_TX_FIFO_DEPTH][SBC_SPI_TX_MAX_LEN] __attribute__((aligned(4)));
-static volatile uint8_t rx_fifo[SBC_SPI_RX_FIFO_DEPTH][SBC_SPI_RX_MAX_LEN] __attribute__((aligned(4)));
+static volatile uint8_t tx_fifo[TX_FIFO_DEPTH][TX_MAX_LEN] __attribute__((aligned(4)));
+static volatile uint8_t rx_fifo[RX_FIFO_DEPTH][RX_MAX_LEN] __attribute__((aligned(4)));
 
 static volatile int tx_fifo_cpu = 0;
 static volatile int tx_fifo_spi = 0;
@@ -106,7 +90,111 @@ static volatile int tx_fifo_spi = 0;
 static volatile int rx_fifo_cpu = 0;
 static volatile int rx_fifo_spi = 0;
 
-uint8_t no_data_msg[8] = {0x22,0x23,0x22,0x22,0x22,0x22,0x22,0x22};
+
+test_msg1_t* test_msg1;
+test_msg2_t* test_msg2;
+test_msg3_t* test_msg3;
+
+void * * const p_p_tx_msgs[256]  =
+{
+	0,
+	(void**)&test_msg1,
+	(void**)&test_msg2,
+	(void**)&test_msg3,
+	0
+};
+
+uint16_t const tx_msg_sizes[256] =
+{
+	0,
+	sizeof(test_msg1_t),
+	sizeof(test_msg2_t),
+	sizeof(test_msg3_t),
+	0
+};
+
+
+#define MAX_SUBS 32
+uint8_t subs[MAX_SUBS];
+
+#define TX_SUBS_START_OFFSET 16
+#define TX_FOOTER_LEN 4
+
+void update_subs(uint8_t *subs_vector)
+{
+	for(int i=0; i<256; i++)
+	{
+		if(p_p_tx_msgs[i])
+			*p_p_tx_msgs[i] = 0;
+	}
+
+	int offs = TX_SUBS_START_OFFSET;
+
+	for(int i=0; i<MAX_SUBS; i++)
+	{
+		uint8_t s = subs_vector[i];
+
+		if(s == 0)
+			break;
+
+		if(offs + tx_msg_sizes[s] > TX_MAX_LEN-TX_FOOTER_LEN)
+		{
+			// requested subscription doesn't fit: stop adding subscriptions. Mark this in subs_vector so that it's copied reflecting the reality.
+			subs_vector[s] = 0;
+			break;
+		}
+
+		*p_p_tx_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
+
+		offs += tx_msg_sizes[s];		
+	}
+
+	// Write the footer, which stays permanently on the buffers, until new update_subs()
+	for(int i=0; i<TX_FIFO_DEPTH; i++)
+	{
+		for(int o=0; o<TX_FOOTER_LEN; o++)
+		{
+			tx_fifo[i][offs+o] = 0xee;
+		}
+	}
+
+	memcpy(subs, subs_vector, sizeof(subs));
+}
+
+int is_tx_overrun()
+{
+	int next_tx_fifo_cpu = tx_fifo_cpu+1; if(next_tx_fifo_cpu >= TX_FIFO_DEPTH) next_tx_fifo_cpu = 0;
+
+	return (next_tx_fifo_cpu == tx_fifo_spi);
+}
+
+void tx_fifo_push()
+{
+	tx_fifo_cpu++; if(tx_fifo_cpu >= TX_FIFO_DEPTH) tx_fifo_cpu = 0;
+
+	// Increased tx_fifo_cpu tells the SPI procedure that the data won't change anymore, and is OK to send.
+	// Having an SPI interrupt at this point is OK (and optimal).
+
+	// Now, let's make the active data pointers to point to the next TX FIFO block.
+	// This is basically the same offset calculation as in update_subs, but no need to check if the requests fit,
+	// because it's already checked (and subs item zeroed out if necessary).
+
+	int offs = TX_SUBS_START_OFFSET;
+
+	for(int i=0; i<MAX_SUBS; i++)
+	{
+		uint8_t s = subs[i];
+
+		if(s == 0)
+			break;
+
+		*p_p_tx_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
+
+		offs += tx_msg_sizes[s];
+	}
+	
+}
+
 
 enum {RASPI=0, ODROID=1} sbc_iface;
 
@@ -170,15 +258,17 @@ static void wait_detect_sbc()
 
 volatile int spi_test_cnt2;
 
+/*
 void sbc_spi_eot_inthandler()
 {
 	SPI1->IFCR = 1UL<<3; // clear the intflag
 	__DSB();
 	spi_test_cnt2++;
 }
+*/
 
 /*
-	Okay, so STM32 SPI _still_ doesn't _actually_ support any kind of nSS pin hardware management in slave mode, even when they are talking about
+	Okay, so STM32 SPI _still_ doesn't _actually_ support nSS pin hardware management in slave mode, even when they are talking about
 	it like that.
 
 	This was the case with the previous incarnation of the SPI - now they have made it more complex, added a separate event/interrupt
@@ -256,9 +346,9 @@ void sbc_spi_cs_end_inthandler()
 	new_rx = 1;
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
-	int len = SBC_SPI_RX_MAX_LEN - DMA1_Stream1->NDTR;
+	int len = RX_MAX_LEN - DMA1_Stream1->NDTR;
 	#else
-	int len = SBC_SPI_RX_MAX_LEN - DMA1_Stream1->NDTR*4;
+	int len = RX_MAX_LEN - DMA1_Stream1->NDTR*4;
 	#endif
 
 
@@ -279,7 +369,7 @@ void sbc_spi_cs_end_inthandler()
 		if(len >= 16)
 		{
 			tx_fifo_spi++;
-			if(tx_fifo_spi >= SBC_SPI_TX_FIFO_DEPTH) tx_fifo_spi = 0;
+			if(tx_fifo_spi >= TX_FIFO_DEPTH) tx_fifo_spi = 0;
 		}
 
 		DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
@@ -295,7 +385,7 @@ void sbc_spi_cs_end_inthandler()
 	if(len >= 16)
 	{
 		int next_rx_fifo_spi = rx_fifo_spi+1;
-		if(next_rx_fifo_spi >= SBC_SPI_RX_FIFO_DEPTH)
+		if(next_rx_fifo_spi >= RX_FIFO_DEPTH)
 			next_rx_fifo_spi = 0;
 
 		if(next_rx_fifo_spi == rx_fifo_cpu)
@@ -333,7 +423,7 @@ void check_rx_test()
 	{
 		uart_print_string_blocking("rx pop:"); o_utoa32_hex(*(uint32_t*)rx_fifo[rx_fifo_cpu], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("...\r\n");
 
-		rx_fifo_cpu++; if(rx_fifo_cpu >= SBC_SPI_RX_FIFO_DEPTH) rx_fifo_cpu = 0;
+		rx_fifo_cpu++; if(rx_fifo_cpu >= RX_FIFO_DEPTH) rx_fifo_cpu = 0;
 	}
 	__DSB();
 }
@@ -362,7 +452,7 @@ void sbc_comm_test()
 		{
 			cnt=0;
 
-			int next_tx_fifo_cpu = tx_fifo_cpu+1; if(next_tx_fifo_cpu >= SBC_SPI_TX_FIFO_DEPTH) next_tx_fifo_cpu = 0;
+			int next_tx_fifo_cpu = tx_fifo_cpu+1; if(next_tx_fifo_cpu >= TX_FIFO_DEPTH) next_tx_fifo_cpu = 0;
 
 			if(next_tx_fifo_cpu == tx_fifo_spi)
 			{
@@ -396,6 +486,120 @@ void sbc_comm_test()
 		uart_print_string_blocking("rx_spi="); o_utoa16(rx_fifo_spi, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		
 	}
+}
+
+
+void update_subs(uint8_t *subs_vector);
+int is_tx_overrun();
+void tx_fifo_push();
+
+uint8_t subs_test1[4] = {1,2,3,0};
+uint8_t subs_test2[4] = {1,3,2,0};
+uint8_t subs_test3[4] = {3,1,0,0};
+uint8_t subs_test4[4] = {2,2,2,0};
+
+static void gen_some_data1()
+{
+	char printbuf[128];
+	static int cnt = 0;
+	if(!test_msg1)
+	{
+		uart_print_string_blocking("\r\nmsg1 generation turned off\r\n"); 
+	}
+	else
+	{
+		uart_print_string_blocking("\r\nGenerating data1, pointer="); 
+		o_utoa32_hex((uint32_t)test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+		test_msg1->a = 0xacdcabba;
+		test_msg1->b = cnt;
+		test_msg1->c = 0x55;
+		test_msg1->d = cnt;
+	}
+	cnt++;
+}
+
+static void gen_some_data2()
+{
+	char printbuf[128];
+	static int cnt = 0;
+	if(!test_msg2)
+	{
+		uart_print_string_blocking("\r\nmsg2 generation turned off\r\n"); 
+	}
+	else
+	{
+		uart_print_string_blocking("\r\nGenerating data2, pointer="); 
+		o_utoa32_hex((uint32_t)test_msg2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		for(int i=0; i<sizeof(test_msg2->buf); i++)
+			test_msg2->buf[i] = cnt&0xff;
+	}
+	cnt++;
+}
+
+static void gen_some_data3()
+{
+	char printbuf[128];
+	static int cnt = 0;
+	if(!test_msg3)
+	{
+		uart_print_string_blocking("\r\nmsg3 generation turned off\r\n"); 
+	}
+	else
+	{
+		uart_print_string_blocking("\r\nGenerating data3, pointer="); 
+		o_utoa32_hex((uint32_t)test_msg3, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+		for(int i=0; i<sizeof(test_msg3->buf)-2; i+=2)
+		{
+			test_msg3->buf[i] = cnt&0xff;
+			test_msg3->buf[i+1] = 0x88;
+		}
+	}
+	cnt++;
+}
+
+void pointer_system_test()
+{
+	char printbuf[128];
+	int cnt=0;
+	while(1)
+	{
+		for(int i=0; i<50; i++)
+		{
+			uart_print_string_blocking("!");
+			delay_ms(100);
+			check_rx_test();
+		}
+
+		if(is_tx_overrun())
+		{
+			uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
+		}
+		else
+		{
+			gen_some_data1();
+			gen_some_data2();
+			gen_some_data3();
+
+
+			uart_print_string_blocking("\r\nPush!\r\n"); 
+
+			tx_fifo_push();
+			if(cnt == 5)
+				update_subs(subs_test1);
+			if(cnt == 15)
+				update_subs(subs_test2);
+			if(cnt == 25)
+				update_subs(subs_test3);
+			if(cnt == 35)
+				update_subs(subs_test4);
+		}
+
+		cnt++;
+	}
+
+
 }
 
 void init_sbc_comm()
@@ -444,7 +648,7 @@ void init_sbc_comm()
 	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
 #endif
 
-	SPI1->UDRDR = 0x22222222;
+	SPI1->UDRDR = 0;
 	// SPI1->CFG2 defaults good
 
 	// SPI1->CR2 zero - transfer length unknown
@@ -460,9 +664,9 @@ void init_sbc_comm()
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
-		DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN;
+		DMA1_Stream0->NDTR = TX_MAX_LEN;
 	#else
-		DMA1_Stream0->NDTR = SBC_SPI_TX_MAX_LEN/4;
+		DMA1_Stream0->NDTR = TX_MAX_LEN/4;
 	#endif
 	DMAMUX1_Channel0->CCR = 38;
 
@@ -479,9 +683,9 @@ void init_sbc_comm()
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
-		DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN;
+		DMA1_Stream1->NDTR = RX_MAX_LEN;
 	#else
-		DMA1_Stream1->NDTR = SBC_SPI_RX_MAX_LEN/4;
+		DMA1_Stream1->NDTR = RX_MAX_LEN/4;
 	#endif
 	DMAMUX1_Channel1->CCR = 37;
 	DMA_CLEAR_INTFLAGS(DMA1, 1);

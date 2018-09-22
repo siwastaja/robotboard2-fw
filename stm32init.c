@@ -16,7 +16,7 @@ void hardfault_handler();
 extern void error(int code);
 extern void main();
 
-extern void sbc_spi_eot_inthandler();
+//extern void sbc_spi_eot_inthandler();
 extern void sbc_spi_cs_end_inthandler();
 
 extern unsigned int _STACKTOP;
@@ -75,7 +75,7 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00C0                    */ (unsigned int *) invalid_handler,
 /* 0x00C4                    */ (unsigned int *) invalid_handler,
 /* 0x00C8                    */ (unsigned int *) invalid_handler,
-/* 0x00CC SPI1               */ (unsigned int *) sbc_spi_eot_inthandler,
+/* 0x00CC SPI1               */ (unsigned int *) invalid_handler, //sbc_spi_eot_inthandler,
 /* 0x00D0 SPI2               */ (unsigned int *) invalid_handler,
 /* 0x00D4 USART1             */ (unsigned int *) invalid_handler,
 /* 0x00D8 USART2             */ (unsigned int *) invalid_handler,
