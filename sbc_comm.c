@@ -114,13 +114,12 @@ uint16_t const tx_msg_sizes[256] =
 };
 
 
-#define MAX_SUBS 32
-uint8_t subs[MAX_SUBS];
+uint64_t subs[4]; // Enabled subscriptions, 1 bit per message ID, [0] LSb = id0, [0] MSb = id63, [1] LSb = id64, and so on
 
 #define TX_SUBS_START_OFFSET 16
 #define TX_FOOTER_LEN 4
 
-void update_subs(uint8_t *subs_vector)
+void update_subs(uint64_t *subs_vector)
 {
 	for(int i=0; i<256; i++)
 	{
@@ -130,23 +129,27 @@ void update_subs(uint8_t *subs_vector)
 
 	int offs = TX_SUBS_START_OFFSET;
 
-	for(int i=0; i<MAX_SUBS; i++)
+	for(int i=0; i<4; i++)
 	{
-		uint8_t s = subs_vector[i];
-
-		if(s == 0)
-			break;
-
-		if(offs + tx_msg_sizes[s] > TX_MAX_LEN-TX_FOOTER_LEN)
+		subs[i] = 0;
+		uint64_t t = subs_vector[i];
+		for(int s=i*64; s<(i+1)*64; s++)
 		{
-			// requested subscription doesn't fit: stop adding subscriptions. Mark this in subs_vector so that it's copied reflecting the reality.
-			subs_vector[s] = 0;
-			break;
+			if(t & 1)
+			{
+				// id #s is enabled
+				if(offs + tx_msg_sizes[s] > TX_MAX_LEN-TX_FOOTER_LEN)
+				{
+					// requested subscription doesn't fit: stop adding subscriptions.
+					break;
+				}
+
+				subs[i] |= 1ULL<<(s-i*64);
+				*p_p_tx_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
+				offs += tx_msg_sizes[s];
+			}
+			t >>= 1;
 		}
-
-		*p_p_tx_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
-
-		offs += tx_msg_sizes[s];		
 	}
 
 	// Write the footer, which stays permanently on the buffers, until new update_subs()
@@ -157,8 +160,6 @@ void update_subs(uint8_t *subs_vector)
 			tx_fifo[i][offs+o] = 0xee;
 		}
 	}
-
-	memcpy(subs, subs_vector, sizeof(subs));
 }
 
 int is_tx_overrun()
@@ -181,18 +182,20 @@ void tx_fifo_push()
 
 	int offs = TX_SUBS_START_OFFSET;
 
-	for(int i=0; i<MAX_SUBS; i++)
+	for(int i=0; i<4; i++)
 	{
-		uint8_t s = subs[i];
-
-		if(s == 0)
-			break;
-
-		*p_p_tx_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
-
-		offs += tx_msg_sizes[s];
+		uint64_t t = subs[i];
+		for(int s=i*64; s<(i+1)*64; s++)
+		{
+			if(t & 1)
+			{
+				// id #s is enabled
+				*p_p_tx_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
+				offs += tx_msg_sizes[s];
+			}
+			t >>= 1;
+		}
 	}
-	
 }
 
 
@@ -489,14 +492,10 @@ void sbc_comm_test()
 }
 
 
-void update_subs(uint8_t *subs_vector);
-int is_tx_overrun();
-void tx_fifo_push();
-
-uint8_t subs_test1[4] = {1,2,3,0};
-uint8_t subs_test2[4] = {1,3,2,0};
-uint8_t subs_test3[4] = {3,1,0,0};
-uint8_t subs_test4[4] = {2,2,2,0};
+uint64_t subs_test1[4] = {0b1110,0,0,0};
+uint64_t subs_test2[4] = {0b1010,0,0,0};
+uint64_t subs_test3[4] = {0b0000,0,0,0};
+uint64_t subs_test4[4] = {0b0100,0,0,0};
 
 static void gen_some_data1()
 {
@@ -588,11 +587,11 @@ void pointer_system_test()
 			tx_fifo_push();
 			if(cnt == 5)
 				update_subs(subs_test1);
-			if(cnt == 15)
+			if(cnt == 10)
 				update_subs(subs_test2);
-			if(cnt == 25)
+			if(cnt == 15)
 				update_subs(subs_test3);
-			if(cnt == 35)
+			if(cnt == 20)
 				update_subs(subs_test4);
 		}
 
