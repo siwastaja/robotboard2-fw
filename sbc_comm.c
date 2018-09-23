@@ -95,6 +95,19 @@ test_msg1_t* test_msg1;
 test_msg2_t* test_msg2;
 test_msg3_t* test_msg3;
 
+/*
+This table holds pointers to pointers of generated TX data. Index of the table is the message id.
+When the pointer of pointer is 0, the data type is not implemented. When implemented, this
+contains a pointer to the pointer which can be used to write data to. The pointer management system
+automatically adjusts these pointers in tx_fifo_push().
+
+A sensor module (or whatever producing data) only needs to check if this pointer is NULL (meaning
+the subscription is disabled, data is not wanted), and if not, just write the latest data to it.
+You can safely modify the structures as you want before the tx_fifo_push() is finally called.
+
+When tx_fifo_push() is called, the pointers move to the next free slot. Note that the memory content
+is NOT automatically cleared, so old values hang out there.
+*/
 void * * const p_p_tx_msgs[256]  =
 {
 	0,
@@ -114,7 +127,8 @@ uint16_t const tx_msg_sizes[256] =
 };
 
 
-uint64_t subs[4]; // Enabled subscriptions, 1 bit per message ID, [0] LSb = id0, [0] MSb = id63, [1] LSb = id64, and so on
+// Enabled subscriptions, 1 bit per message ID, [0] LSb = id0, [0] MSb = id63, [1] LSb = id64, and so on:
+uint64_t subs[4]; 
 
 #define TX_SUBS_START_OFFSET 16
 #define TX_FOOTER_LEN 4
@@ -162,6 +176,15 @@ void update_subs(uint64_t *subs_vector)
 	}
 }
 
+static void init_tx_fifo_fixed_content()
+{
+	for(int i=0; i<TX_FIFO_DEPTH; i++)
+	{
+		*(uint16_t*)&tx_fifo[i][0] = 0xabcd;
+	}
+
+}
+
 int is_tx_overrun()
 {
 	int next_tx_fifo_cpu = tx_fifo_cpu+1; if(next_tx_fifo_cpu >= TX_FIFO_DEPTH) next_tx_fifo_cpu = 0;
@@ -171,7 +194,12 @@ int is_tx_overrun()
 
 void tx_fifo_push()
 {
+	tx_fifo[tx_fifo_cpu][2] = 0; // Clear the FIFO status byte.
+	__DSB();
+	DIS_IRQ();
 	tx_fifo_cpu++; if(tx_fifo_cpu >= TX_FIFO_DEPTH) tx_fifo_cpu = 0;
+	ENA_IRQ();
+
 
 	// Increased tx_fifo_cpu tells the SPI procedure that the data won't change anymore, and is OK to send.
 	// Having an SPI interrupt at this point is OK (and optimal).
@@ -315,6 +343,9 @@ void sbc_spi_cs_end_inthandler()
 
 	SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
 
+	int tx_dma_was_enabled = DMA1_Stream0->CR & 1UL;
+	__DMB();
+
 	// Turn TX DMA bit off (by rewriting the whole register to save time):
 #ifdef SPI_DMA_1BYTE_AT_TIME
 	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
@@ -361,7 +392,16 @@ void sbc_spi_cs_end_inthandler()
 		run_flasher();
 	}
 
-	// TX DMA
+	if(len >= 16)
+	{
+		if(tx_dma_was_enabled) // data was sent out
+		{
+			tx_fifo_spi++;
+			if(tx_fifo_spi >= TX_FIFO_DEPTH) tx_fifo_spi = 0;
+		}
+	}
+
+	// TX DMA for the next transfer
 	if(tx_fifo_cpu == tx_fifo_spi)
 	{
 		// No data to send.
@@ -369,14 +409,20 @@ void sbc_spi_cs_end_inthandler()
 	}
 	else
 	{
-		if(len >= 16)
+		if(tx_dma_was_enabled)
 		{
-			tx_fifo_spi++;
-			if(tx_fifo_spi >= TX_FIFO_DEPTH) tx_fifo_spi = 0;
+			int nextnext = tx_fifo_spi+1; if(nextnext >= TX_FIFO_DEPTH) nextnext = 0;
+
+			if(nextnext != tx_fifo_cpu)
+			{
+				// there will be even more to send after this: mark this condition in the data.
+				tx_fifo[tx_fifo_spi][2] |= 1;
+				__DSB();
+			}
 		}
 
 		DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
-
+		__DSB();
 		DMA_CLEAR_INTFLAGS(DMA1, 0);
 		DMA1_Stream0->CR |= 1; // Enable TX DMA
 		SPI1->CFG1 |= 1UL<<15 /*TX DMA ena*/; // not earlier, if you want to follow the refman advice
@@ -426,7 +472,9 @@ void check_rx_test()
 	{
 		uart_print_string_blocking("rx pop:"); o_utoa32_hex(*(uint32_t*)rx_fifo[rx_fifo_cpu], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("...\r\n");
 
+		DIS_IRQ();
 		rx_fifo_cpu++; if(rx_fifo_cpu >= RX_FIFO_DEPTH) rx_fifo_cpu = 0;
+		ENA_IRQ();
 	}
 	__DSB();
 }
@@ -562,6 +610,7 @@ void pointer_system_test()
 {
 	char printbuf[128];
 	int cnt=0;
+	uint8_t cnt_u8 = 0;
 	while(1)
 	{
 		for(int i=0; i<50; i++)
@@ -577,6 +626,7 @@ void pointer_system_test()
 		}
 		else
 		{
+			tx_fifo[tx_fifo_cpu][3] = cnt_u8;
 			gen_some_data1();
 			gen_some_data2();
 			gen_some_data3();
@@ -593,6 +643,8 @@ void pointer_system_test()
 				update_subs(subs_test3);
 			if(cnt == 20)
 				update_subs(subs_test4);
+
+			cnt_u8++;
 		}
 
 		cnt++;
@@ -639,6 +691,7 @@ void init_sbc_comm()
 		IO_PULLUP_ON(GPIOG, 10);
 	}
 
+	init_tx_fifo_fixed_content();
 
 	// Initialization order from reference manual:
 #ifdef SPI_DMA_1BYTE_AT_TIME
