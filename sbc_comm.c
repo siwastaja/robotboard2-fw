@@ -6,7 +6,9 @@
 #include "flash.h"
 #include "own_std.h"
 
+#define DEFINE_API_VARIABLES
 #include "../robotsoft/api_board_to_soft.h"
+#undef DEFINE_API_VARIABLES
 
 /*
 define SPI_DMA_1BYTE_AT_TIME to force the SPI communication peripheral & DMA use 8-bit transfers. 
@@ -89,43 +91,6 @@ static volatile int tx_fifo_spi = 0;
 
 static volatile int rx_fifo_cpu = 0;
 static volatile int rx_fifo_spi = 0;
-
-
-test_msg1_t* test_msg1;
-test_msg2_t* test_msg2;
-test_msg3_t* test_msg3;
-
-/*
-This table holds pointers to pointers of generated TX data. Index of the table is the message id.
-When the pointer of pointer is 0, the data type is not implemented. When implemented, this
-contains a pointer to the pointer which can be used to write data to. The pointer management system
-automatically adjusts these pointers in tx_fifo_push().
-
-A sensor module (or whatever producing data) only needs to check if this pointer is NULL (meaning
-the subscription is disabled, data is not wanted), and if not, just write the latest data to it.
-You can safely modify the structures as you want before the tx_fifo_push() is finally called.
-
-When tx_fifo_push() is called, the pointers move to the next free slot. Note that the memory content
-is NOT automatically cleared, so old values hang out there.
-*/
-void * * const p_p_tx_msgs[256]  =
-{
-	0,
-	(void**)&test_msg1,
-	(void**)&test_msg2,
-	(void**)&test_msg3,
-	0
-};
-
-uint16_t const tx_msg_sizes[256] =
-{
-	0,
-	sizeof(test_msg1_t),
-	sizeof(test_msg2_t),
-	sizeof(test_msg3_t),
-	0
-};
-
 
 // Enabled subscriptions, 1 bit per message ID, [0] LSb = id0, [0] MSb = id63, [1] LSb = id64, and so on:
 uint64_t subs[4]; 
