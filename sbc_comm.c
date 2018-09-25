@@ -8,6 +8,7 @@
 
 #define DEFINE_API_VARIABLES
 #include "../robotsoft/api_board_to_soft.h"
+#include "../robotsoft/api_soft_to_board.h"
 #undef DEFINE_API_VARIABLES
 
 /*
@@ -70,21 +71,21 @@ When TX FIFO overruns, data is not generated. Some kind of overrun flag will be 
 
 When RX FIFO overruns, this is considered catastrophic failure, and the robot stops is error().
 This is because RX packets may include important commands (for example, stop the robot) and cannot be ignored.
+Note that on the MCU, we control timing very well and can do RX fifo fetches as frequently as we want - processing
+the commands shouldn't take a lot of time. Also, RX buffer are smaller so we can use a longer fifo.
 
 
 */
 
 #define TX_FIFO_DEPTH  4
 #define RX_FIFO_DEPTH  6
-#define TX_MAX_LEN 55000
-#define RX_MAX_LEN 6000
 
-#if (TX_MAX_LEN%4 != 0 || RX_MAX_LEN%4 != 0)
-	#error "SPI max transfer lengths must be multiples of 4"
+#if (B2S_MAX_LEN%8 != 0 || S2B_MAX_LEN%8 != 0)
+	#error "SPI max transfer lengths must be multiples of 8"
 #endif
 
-static volatile uint8_t tx_fifo[TX_FIFO_DEPTH][TX_MAX_LEN] __attribute__((aligned(4)));
-static volatile uint8_t rx_fifo[RX_FIFO_DEPTH][RX_MAX_LEN] __attribute__((aligned(4)));
+static volatile uint8_t tx_fifo[TX_FIFO_DEPTH][B2S_MAX_LEN] __attribute__((aligned(8)));
+static volatile uint8_t rx_fifo[RX_FIFO_DEPTH][S2B_MAX_LEN] __attribute__((aligned(8)));
 
 static volatile int tx_fifo_cpu = 0;
 static volatile int tx_fifo_spi = 0;
@@ -93,22 +94,20 @@ static volatile int rx_fifo_cpu = 0;
 static volatile int rx_fifo_spi = 0;
 
 // Enabled subscriptions, 1 bit per message ID, [0] LSb = id0, [0] MSb = id63, [1] LSb = id64, and so on:
-uint64_t subs[4]; 
-
-#define TX_SUBS_START_OFFSET 16
-#define TX_FOOTER_LEN 4
+uint64_t subs[B2S_SUBS_U64_ITEMS]; 
 
 void update_subs(uint64_t *subs_vector)
 {
-	for(int i=0; i<256; i++)
+	for(int i=0; i<B2S_MAX_MSGIDS; i++)
 	{
-		if(p_p_tx_msgs[i])
-			*p_p_tx_msgs[i] = 0;
+		if(p_p_b2s_msgs[i])
+			*p_p_b2s_msgs[i] = 0;
 	}
 
-	int offs = TX_SUBS_START_OFFSET;
 
-	for(int i=0; i<4; i++)
+	int offs = MSGS_START_OFFSET;
+
+	for(int i=0; i<B2S_SUBS_U64_ITEMS; i++)
 	{
 		subs[i] = 0;
 		uint64_t t = subs_vector[i];
@@ -117,35 +116,45 @@ void update_subs(uint64_t *subs_vector)
 			if(t & 1)
 			{
 				// id #s is enabled
-				if(offs + tx_msg_sizes[s] > TX_MAX_LEN-TX_FOOTER_LEN)
+				if(offs + b2s_msg_sizes[s] > B2S_MAX_LEN-FOOTER_LEN)
 				{
 					// requested subscription doesn't fit: stop adding subscriptions.
 					break;
 				}
 
 				subs[i] |= 1ULL<<(s-i*64);
-				*p_p_tx_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
-				offs += tx_msg_sizes[s];
+				*p_p_b2s_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
+				offs += b2s_msg_sizes[s];
 			}
 			t >>= 1;
 		}
 	}
 
-	// Write the footer, which stays permanently on the buffers, until new update_subs()
 	for(int i=0; i<TX_FIFO_DEPTH; i++)
 	{
-		for(int o=0; o<TX_FOOTER_LEN; o++)
+		// When the subscription are changed, write the list of subscriptions permanently on all buffers
+		// update_subs() is allowed to be slower than tx_fifo_push:		
+		for(int o=0; o<B2S_SUBS_U64_ITEMS; o++)
+			*(uint64_t*)&tx_fifo[i][SUBLIST_START_OFFSET+o*8] = subs[o];
+
+		// Similarly, write the payload len:
+			((b2s_header_t*)&tx_fifo[i][0])->payload_len = offs-MSGS_START_OFFSET;
+
+		// Write the footer, which stays permanently on the buffers, until new update_subs()
+		for(int o=0; o<FOOTER_LEN; o++)
 		{
 			tx_fifo[i][offs+o] = 0xee;
 		}
 	}
+
+
 }
 
 static void init_tx_fifo_fixed_content()
 {
 	for(int i=0; i<TX_FIFO_DEPTH; i++)
 	{
-		*(uint16_t*)&tx_fifo[i][0] = 0xabcd;
+		((b2s_header_t*)&tx_fifo[i][0])->magic = 0xabcd;
 	}
 
 }
@@ -159,7 +168,7 @@ int is_tx_overrun()
 
 void tx_fifo_push()
 {
-	tx_fifo[tx_fifo_cpu][2] = 0; // Clear the FIFO status byte.
+	((b2s_header_t*)&tx_fifo[tx_fifo_cpu][0])->fifo_status = 0;
 	__DSB();
 	DIS_IRQ();
 	tx_fifo_cpu++; if(tx_fifo_cpu >= TX_FIFO_DEPTH) tx_fifo_cpu = 0;
@@ -173,9 +182,9 @@ void tx_fifo_push()
 	// This is basically the same offset calculation as in update_subs, but no need to check if the requests fit,
 	// because it's already checked (and subs item zeroed out if necessary).
 
-	int offs = TX_SUBS_START_OFFSET;
+	int offs = MSGS_START_OFFSET;
 
-	for(int i=0; i<4; i++)
+	for(int i=0; i<B2S_SUBS_U64_ITEMS; i++)
 	{
 		uint64_t t = subs[i];
 		for(int s=i*64; s<(i+1)*64; s++)
@@ -183,8 +192,8 @@ void tx_fifo_push()
 			if(t & 1)
 			{
 				// id #s is enabled
-				*p_p_tx_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
-				offs += tx_msg_sizes[s];
+				*p_p_b2s_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
+				offs += b2s_msg_sizes[s];
 			}
 			t >>= 1;
 		}
@@ -345,9 +354,9 @@ void sbc_spi_cs_end_inthandler()
 	new_rx = 1;
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
-	int len = RX_MAX_LEN - DMA1_Stream1->NDTR;
+	int len = S2B_MAX_LEN - DMA1_Stream1->NDTR;
 	#else
-	int len = RX_MAX_LEN - DMA1_Stream1->NDTR*4;
+	int len = S2B_MAX_LEN - DMA1_Stream1->NDTR*4;
 	#endif
 
 
@@ -378,10 +387,13 @@ void sbc_spi_cs_end_inthandler()
 		{
 			int nextnext = tx_fifo_spi+1; if(nextnext >= TX_FIFO_DEPTH) nextnext = 0;
 
-			if(nextnext != tx_fifo_cpu)
+			// If there is even more packets to send after the next transaction, indicate this
+			// by setting a bit in fifo_status register, but only if the sizes match (so that it
+			// can be read out with the same length transaction)
+			if(nextnext != tx_fifo_cpu && 
+			  ((b2s_header_t*)&tx_fifo[tx_fifo_spi][0])->payload_len == ((b2s_header_t*)&tx_fifo[nextnext][0])->payload_len)
 			{
-				// there will be even more to send after this: mark this condition in the data.
-				tx_fifo[tx_fifo_spi][2] |= 1;
+				((b2s_header_t*)&tx_fifo[tx_fifo_spi][0])->fifo_status |= 1;
 				__DSB();
 			}
 		}
@@ -396,7 +408,7 @@ void sbc_spi_cs_end_inthandler()
 
 	// RX DMA
 
-	if(len >= 16)
+	if(len >= 16 && ((s2b_header_t*)rx_fifo[rx_fifo_spi])->magic == 0x2345)
 	{
 		int next_rx_fifo_spi = rx_fifo_spi+1;
 		if(next_rx_fifo_spi >= RX_FIFO_DEPTH)
@@ -429,13 +441,62 @@ void sbc_spi_cs_end_inthandler()
 	__DSB();
 }
 
+void parse_rx_packet()
+{
+	s2b_header_t *p_header = (s2b_header_t*)rx_fifo[rx_fifo_cpu];
+
+	int offs = S2B_HEADER_LEN;
+	for(int p = 0; p < p_header->n_cmds; p++)
+	{
+		s2b_cmdheader_t *p_cmdheader = (s2b_cmdheader_t*)&rx_fifo[rx_fifo_cpu][offs];
+		uint8_t *p_data = (uint8_t*)&rx_fifo[rx_fifo_cpu][offs+4];
+		if(offs + p_cmdheader->paylen >= S2B_MAX_LEN)
+		{
+			// Message would overflow
+			// Todo: raise error flag instead
+			error(6);
+			break;
+		}
+
+		if(p_cmdheader->paylen != s2b_msg_sizes[p_cmdheader->msgid])
+		{
+			// Inconsistency in API (or data corruption) - size field doens't match the expected length of the message type.
+			// Todo: raise error flag instead
+			error(7);
+			break;
+		}
+
+		switch(p_cmdheader->msgid)
+		{
+			case CMD_SUBSCRIBE:
+			{
+				update_subs((uint64_t*)p_data);
+			}
+			break;
+
+			default:
+			{
+
+			}
+			break;
+		}
+
+		offs += p_cmdheader->paylen;
+	}
+	
+}
+
 void check_rx_test()
 {
 	char printbuf[128];
 
 	if(rx_fifo_spi != rx_fifo_cpu)
 	{
-		uart_print_string_blocking("rx pop:"); o_utoa32_hex(*(uint32_t*)rx_fifo[rx_fifo_cpu], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("...\r\n");
+		uart_print_string_blocking("rx pop:"); o_utoa32_hex(*(uint32_t*)rx_fifo[rx_fifo_cpu], printbuf); uart_print_string_blocking(printbuf); 
+		o_utoa32_hex(*(uint32_t*)&rx_fifo[rx_fifo_cpu][4], printbuf); uart_print_string_blocking(printbuf); 
+		o_utoa32_hex(*(uint32_t*)&rx_fifo[rx_fifo_cpu][8], printbuf); uart_print_string_blocking(printbuf);  uart_print_string_blocking("...\r\n");
+
+		parse_rx_packet();
 
 		DIS_IRQ();
 		rx_fifo_cpu++; if(rx_fifo_cpu >= RX_FIFO_DEPTH) rx_fifo_cpu = 0;
@@ -578,11 +639,11 @@ void pointer_system_test()
 	uint8_t cnt_u8 = 0;
 	while(1)
 	{
-		for(int i=0; i<50; i++)
+		for(int i=0; i<10; i++)
 		{
 			uart_print_string_blocking("!");
 			delay_ms(100);
-			check_rx_test();
+//			check_rx_test();
 		}
 
 		if(is_tx_overrun())
@@ -600,7 +661,7 @@ void pointer_system_test()
 			uart_print_string_blocking("\r\nPush!\r\n"); 
 
 			tx_fifo_push();
-			if(cnt == 5)
+/*			if(cnt == 5)
 				update_subs(subs_test1);
 			if(cnt == 10)
 				update_subs(subs_test2);
@@ -608,9 +669,12 @@ void pointer_system_test()
 				update_subs(subs_test3);
 			if(cnt == 20)
 				update_subs(subs_test4);
+*/
 
 			cnt_u8++;
 		}
+
+		check_rx_test();
 
 		cnt++;
 	}
@@ -681,9 +745,9 @@ void init_sbc_comm()
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
-		DMA1_Stream0->NDTR = TX_MAX_LEN;
+		DMA1_Stream0->NDTR = B2S_MAX_LEN;
 	#else
-		DMA1_Stream0->NDTR = TX_MAX_LEN/4;
+		DMA1_Stream0->NDTR = B2S_MAX_LEN/4;
 	#endif
 	DMAMUX1_Channel0->CCR = 38;
 
@@ -700,9 +764,9 @@ void init_sbc_comm()
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
 	#ifdef SPI_DMA_1BYTE_AT_TIME
-		DMA1_Stream1->NDTR = RX_MAX_LEN;
+		DMA1_Stream1->NDTR = S2B_MAX_LEN;
 	#else
-		DMA1_Stream1->NDTR = RX_MAX_LEN/4;
+		DMA1_Stream1->NDTR = S2B_MAX_LEN/4;
 	#endif
 	DMAMUX1_Channel1->CCR = 37;
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
