@@ -60,7 +60,7 @@ static char printbuf[128];
 #define DCMI_DMA_STREAM_IRQ DMA2_Stream0_IRQn
 
 static const uint8_t i2c_addr = 0b0100000;
-static const uint8_t rgb_addr = 0b1010000;
+static const uint8_t rgb_addr = 0b1101000;
 
 // Temperature sensor readout procedure is weird, and requires storing and restoring some undocumented internal registers to the chip:
 static uint8_t epc_tempsens_regx[N_SENSORS], epc_tempsens_regy[N_SENSORS];
@@ -125,6 +125,8 @@ void epc_i2c_write_dma(uint8_t slave_addr_7b, volatile uint8_t *buf, uint8_t len
 	{
 		if(DMA1->LISR & 1UL<<27)
 			error(8);
+
+		uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 		error(15+init_err_cnt);
 	}
@@ -393,10 +395,17 @@ void epc_dis_leds()
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 }
 
-void epc_ena_leds()
+void epc_ena_wide_leds()
 {
 	epc_wrbuf[0] = 0x90;
-	epc_wrbuf[1] = 0b11101000; // LED2 output on
+	epc_wrbuf[1] = 0b11101000; // "LED2" output on
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
+void epc_ena_narrow_leds()
+{
+	epc_wrbuf[0] = 0x90;
+	epc_wrbuf[1] = 0b11001100; // "LED" output on
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 }
 
@@ -537,13 +546,51 @@ void epc_fix_modulation_table_defaults()
 	while(epc_i2c_is_busy());
 }
 
-void rgb_update(int bright, int r, int g, int b)
+static const uint8_t curr_settings[5] = {0b01000 /*5 mA*/, 0b01000 /*5 mA*/, 0b00100 /*10mA*/, 0b10000 /*17.5mA*/, 0b01100 /*30mA*/};
+void rgb_update(int bright, uint8_t r, uint8_t g, uint8_t b)
 {
-	epc_wrbuf[0] = 0x00;
-	epc_wrbuf[1] = 1<<5 /*EN*/ | 0<<0 /*Software shutdown?*/;
-	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	if(bright < 0) bright = 0;
+	else if(bright > 4) bright = 4;
 
+	if(bright == 0)
+	{
+		epc_wrbuf[0] = 0x00;
+		epc_wrbuf[1] = 0<<5 /*EN*/ | 1<<0 /*Software shutdown?*/;
+		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
+		while(epc_i2c_is_busy());
+	}
+	else
+	{
+		epc_wrbuf[0] = 0x00;
+		epc_wrbuf[1] = 1<<5 /*EN*/ | 0<<0 /*Software shutdown?*/;
+		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
+		while(epc_i2c_is_busy());
+
+		epc_wrbuf[0] = 0x03;
+		epc_wrbuf[1] = curr_settings[bright];
+		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
+		while(epc_i2c_is_busy());
+
+		epc_wrbuf[0] = 0x04;
+		epc_wrbuf[1] = g;
+		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
+		while(epc_i2c_is_busy());
+
+		epc_wrbuf[0] = 0x05;
+		epc_wrbuf[1] = r;
+		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
+		while(epc_i2c_is_busy());
+
+		epc_wrbuf[0] = 0x06;
+		epc_wrbuf[1] = b;
+		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
+		while(epc_i2c_is_busy());
+
+		epc_wrbuf[0] = 0x07; // perform update
+		epc_wrbuf[1] = 0;
+		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
+		while(epc_i2c_is_busy());
+	}
 }
 
 static int err_cnt = 0;
@@ -602,6 +649,8 @@ int poll_capt_with_timeout_complete()
 }
 
 static epc_img_t mono_comp __attribute__((aligned(4)));
+static epc_4dcs_t dcsa __attribute__((aligned(4)));
+
 
 void epc_run()
 {
@@ -615,25 +664,36 @@ void epc_run()
 		epc_clk_div(1);
 		while(epc_i2c_is_busy());
 
-		epc_dis_leds();
+		if(cnt==0)
+			epc_dis_leds();
+		else if(cnt==1)
+			epc_ena_wide_leds();
+		else if(cnt==2)
+			epc_ena_narrow_leds();
+
 		while(epc_i2c_is_busy());
 
-		epc_greyscale(idx);
+		epc_4dcs(idx);
 		while(epc_i2c_is_busy());
 
 		epc_intlen(8, 600);
 		while(epc_i2c_is_busy());
 
-		dcmi_start_dma(&mono_comp, SIZEOF_MONO);
+		dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 		trig();
 		LED_ON();
 		if(poll_capt_with_timeout()) error(8);
 		LED_OFF();
 
-		uart_print_string_blocking("val middle = "); o_utoa16_fixed(mono_comp.img[40*EPC_XS+80], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		delay_ms(100);
+//		uart_print_string_blocking("val middle = "); o_utoa16_fixed(mono_comp.img[40*EPC_XS+80], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		rgb_update(1, 32,  13,   0);
+		delay_ms(100);
+		rgb_update(1,   0,   0,   0);
+		delay_ms(200);
 
-
-		delay_ms(1000);
+		cnt++;
+		if(cnt==3) cnt=0;
 	}
 
 
@@ -664,7 +724,7 @@ void init_sensors()
 	uart_print_string_blocking("Power init done\r\n");
 	delay_ms(100);
 
-	delay_ms(4000);
+//	delay_ms(4000);
 
 
 	epc_i2c_init();
