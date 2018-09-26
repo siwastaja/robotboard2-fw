@@ -244,7 +244,8 @@ void main()
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
 
-	tof_ctrl_init();
+	init_imu();
+//	tof_ctrl_init();
 //	sbc_comm_test();
 //	pointer_system_test();
 /*	while(1)

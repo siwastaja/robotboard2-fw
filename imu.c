@@ -80,9 +80,6 @@ static void init_bmx055_xcel()
 	8 bits    do not care
 	n*8 bits  data from reg_addr, reg_addr+1, and so on
 
-	
-
-
 */
 
 void init_imu()
