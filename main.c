@@ -9,6 +9,7 @@
 #include "flash.h"
 #include "tof_muxing.h"
 #include "tof_process.h"
+#include "tof_ctrl.h"
 #include "micronavi.h"
 #include "adcs.h"
 #include "pwrswitch.h"
@@ -40,6 +41,8 @@ void error(int code)
 {
 	__disable_irq();
 	// Disable all other interrupts, but leave the one required for handling reflashing SPI message.
+	epc_safety_shutdown();
+
 	__enable_irq();
 
 	int i = 0;
@@ -47,9 +50,9 @@ void error(int code)
 	while(1)
 	{
 		LED_ON();
-		delay_ms(120);
+		delay_ms(250);
 		LED_OFF();
-		delay_ms(120);
+		delay_ms(250);
 
 		i++;
 		if(i >= code)
@@ -66,6 +69,14 @@ void error(int code)
 		}
 
 	}
+}
+
+void shutdown_handler()
+{
+	__disable_irq();
+	// Disable all other interrupts, but leave the one required for handling reflashing SPI message.
+	epc_safety_shutdown();
+	while(1);
 }
 
 void delay_us(uint32_t i) __attribute__((section(".text_itcm")));
@@ -217,11 +228,25 @@ void main()
 //	NVIC_EnableIRQ(PVD_IRQn);
 
 
+	PWR->CR1 |= 0b110UL<<5 /*Power Voltage Detector level: 2.85V*/ | 1UL<<4 /*PVD on*/;
+
+	// PVD event is EXTI event #16
+
+	EXTI->RTSR1 |= 1UL<<16; // Get the rising edge interrupt
+	EXTI->FTSR1 |= 1UL<<16; // Also get the falling edge interrupt
+	EXTI_D1->IMR1 |= 1UL<<16; // Enable CPU interrupt
+
+	NVIC_SetPriority(PVD_IRQn, 0);
+	NVIC_EnableIRQ(PVD_IRQn);
+
+
 	init_sbc_comm();
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
+
+	tof_ctrl_init();
 //	sbc_comm_test();
-	pointer_system_test();
+//	pointer_system_test();
 /*	while(1)
 	{
 

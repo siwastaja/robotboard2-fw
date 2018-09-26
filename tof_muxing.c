@@ -2,11 +2,13 @@
 #include "ext_include/stm32h7xx.h"
 #include "stm32_cmsis_extension.h"
 
+#include "tof_muxing.h"
+
 
 #define MUX0S0_PORT GPIOH
-#define MUX0S0_BIT  (10)
+#define MUX0S0_BIT  (11)
 #define MUX0S1_PORT GPIOH
-#define MUX0S1_BIT  (11)
+#define MUX0S1_BIT  (10)
 
 #define MUX1S0_PORT GPIOD
 #define MUX1S0_BIT  (4)
@@ -28,6 +30,8 @@
 
 void tof_mux_init()
 {
+	tof_mux_all_off();
+
 	IO_TO_GPO(MUX0S0_PORT, MUX0S0_BIT);
 	IO_TO_GPO(MUX0S1_PORT, MUX0S1_BIT);
 	IO_TO_GPO(MUX1S0_PORT, MUX1S0_BIT);
@@ -116,13 +120,16 @@ static inline void MUX3_B3()
 }
 
 
-void tof_mux_select(int idx)
+void tof_mux_all_off()
 {
-	// Disconnect everything first by zeroing out all bits.
 	GPIOH->BSRR = (1UL<<(16+10)) | (1UL<<(16+11));
 	GPIOD->BSRR = (1UL<<(16+4)) | (1UL<<(16+5)) | (1UL<<(16+2)) | (1UL<<(16+6));
 	GPIOE->BSRR = (1UL<<(16+3)) | (1UL<<(16+4));
+}
 
+void tof_mux_select(int idx)
+{
+	tof_mux_all_off();
 	// Only set bits to high
 	switch(idx)
 	{

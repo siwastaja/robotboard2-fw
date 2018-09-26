@@ -22,3 +22,31 @@
 
 #pragma once
 #include <stdint.h>
+
+
+#define EPC_XS 160
+#define EPC_YS 60
+
+typedef struct __attribute__((packed))
+{
+	uint16_t start_pad[2];
+	uint16_t img[EPC_XS*EPC_YS];
+} epc_img_t;
+
+typedef struct __attribute__((packed))
+{
+	epc_img_t dcs[4];
+} epc_4dcs_t;
+
+typedef struct __attribute__((packed))
+{
+	epc_img_t dcs[2];
+} epc_2dcs_t;
+
+#define SIZEOF_MONO (sizeof(epc_img_t))  //(EPC_XS*EPC_YS*2)
+#define SIZEOF_2DCS (sizeof(epc_2dcs_t)) //(EPC_XS*EPC_YS*2*2)
+#define SIZEOF_4DCS (sizeof(epc_4dcs_t)) //(EPC_XS*EPC_YS*2*4)
+
+
+void epc_safety_shutdown();
+void tof_ctrl_init();
