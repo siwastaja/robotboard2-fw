@@ -245,7 +245,9 @@ void main()
 	uart_print_string_blocking("No terse\r\n\r\n"); 
 
 	init_imu();
+	uart_print_string_blocking("init ok\r\n"); 
 	extern void imu_test();
+	delay_ms(4000);
 	while(1)
 		imu_test();
 //	tof_ctrl_init();
