@@ -195,6 +195,51 @@ static void init_bmx055_xcel()
 
 static char printbuf[128];
 
+	#define MAGON 0x4b01
+
+void turn_m_on()
+{
+	SEL_IMU024_M();
+	__DSB();
+	delay_us(10);
+	*(uint16_t*)&SPI4->TXDR = MAGON;
+	*(uint16_t*)&SPI6->TXDR = MAGON;
+	*(uint16_t*)&SPI2->TXDR = MAGON;
+	__DSB();
+	delay_ms(1);
+	DESEL_IMU024_M();
+	__DSB();
+
+	// reply: 0x32
+	uint16_t mag0 = *(uint16_t*)&SPI4->RXDR;
+	uint16_t mag2 = *(uint16_t*)&SPI6->RXDR;
+	uint16_t mag4 = *(uint16_t*)&SPI2->RXDR;
+	uart_print_string_blocking("TURN ON REPLY mag0 = "); o_utoa16_hex(mag0, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TURN ON REPLY mag2 = "); o_utoa16_hex(mag2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TURN ON REPLY mag4 = "); o_utoa16_hex(mag4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	delay_ms(1);
+
+	SEL_IMU135_M();
+	__DSB();
+	delay_us(10);
+	*(uint16_t*)&SPI4->TXDR = MAGON;
+	*(uint16_t*)&SPI6->TXDR = MAGON;
+	*(uint16_t*)&SPI2->TXDR = MAGON;
+	__DSB();
+	delay_ms(1);
+	DESEL_IMU135_M();
+	__DSB();
+
+	// reply: 0x32
+	uint16_t mag1 = *(uint16_t*)&SPI4->RXDR;
+	uint16_t mag3 = *(uint16_t*)&SPI6->RXDR;
+	uint16_t mag5 = *(uint16_t*)&SPI2->RXDR;
+	uart_print_string_blocking("TURN ON REPLY mag1 = "); o_utoa16_hex(mag1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TURN ON REPLY mag3 = "); o_utoa16_hex(mag3, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TURN ON REPLY mag5 = "); o_utoa16_hex(mag5, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	delay_ms(1);
+
+}
 
 void imu_test()
 {
@@ -202,56 +247,20 @@ void imu_test()
 
 	uart_print_string_blocking("testings...\r\n"); 
 
-	#define OPER 0x8080
-	#define MAGOPER 0xc0c0
+	#define OPER 0x8000
+	#define MAGOPER 0xc000
 
-	uart_print_string_blocking("SPI4 CTSIZE = "); o_utoa16_fixed((SPI4->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI2 CTSIZE = "); o_utoa16_fixed((SPI2->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI6 CTSIZE = "); o_utoa16_fixed((SPI6->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI4 SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI2 SR = "); o_btoa16_fixed(SPI2->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI6 SR = "); o_btoa16_fixed(SPI6->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-
-	SEL_IMU135_A();
+	SEL_IMU024_A();
 	__DSB();
 	delay_us(10);
 
 	*(uint16_t*)&SPI4->TXDR = OPER;
-	__DSB();
-//	SPI4->TSIZE = 0;
-//	__DSB();
-//	SPI4->CR1 |= 1UL<<9;
-//	__DSB();
 	*(uint16_t*)&SPI2->TXDR = OPER;
-	__DSB();
-//	SPI2->TSIZE = 0;
-//	__DSB();
-//	SPI2->CR1 |= 1UL<<9;
-//	__DSB();
 	*(uint16_t*)&SPI6->TXDR = OPER;
 	__DSB();
-//	SPI6->TSIZE = 0;
-//	__DSB();
-//	SPI6->CR1 |= 1UL<<9;
-//	__DSB();
-
-
 	delay_ms(1);
-	DESEL_IMU135_A();
+	DESEL_IMU024_A();
 	__DSB();
-
-	uart_print_string_blocking("SPI4 CTSIZE = "); o_utoa16_fixed((SPI4->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI2 CTSIZE = "); o_utoa16_fixed((SPI2->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI6 CTSIZE = "); o_utoa16_fixed((SPI6->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI4 SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI2 SR = "); o_btoa16_fixed(SPI2->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI6 SR = "); o_btoa16_fixed(SPI6->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-	if(SPI4->CR1 & (1UL<<9)) uart_print_string_blocking("SPI4 failed to stop\r\n");
-	if(SPI2->CR1 & (1UL<<9)) uart_print_string_blocking("SPI2 failed to stop\r\n");
-	if(SPI6->CR1 & (1UL<<9)) uart_print_string_blocking("SPI6 failed to stop\r\n");
-
 
 	// reply: 0xFA
 	uint16_t acc0 = *(uint16_t*)&SPI4->RXDR;
@@ -264,44 +273,15 @@ void imu_test()
 	uart_print_string_blocking("acc2 = "); o_utoa16_hex(acc2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 	uart_print_string_blocking("acc4 = "); o_utoa16_hex(acc4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
-	delay_us(10);
-
-	uart_print_string_blocking("SPI4 CTSIZE = "); o_utoa16_fixed((SPI4->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI2 CTSIZE = "); o_utoa16_fixed((SPI2->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI6 CTSIZE = "); o_utoa16_fixed((SPI6->SR&0xffff0000)>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI4 SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI2 SR = "); o_btoa16_fixed(SPI2->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI6 SR = "); o_btoa16_fixed(SPI6->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-	if(SPI4->CR1 & (1UL<<9)) uart_print_string_blocking("SPI4 failed to stop\r\n");
-	if(SPI2->CR1 & (1UL<<9)) uart_print_string_blocking("SPI2 failed to stop\r\n");
-	if(SPI6->CR1 & (1UL<<9)) uart_print_string_blocking("SPI6 failed to stop\r\n");
-
-
 	delay_ms(1);
-
 
 	SEL_IMU024_G();
 	__DSB();
 	delay_us(10);
 
 	*(uint16_t*)&SPI4->TXDR = OPER;
-//	__DSB();
-//	SPI4->TSIZE = 1;
-//	__DSB();
-//	SPI4->CR1 |= 1UL<<9;
-	__DSB();
 	*(uint16_t*)&SPI6->TXDR = OPER;
-//	__DSB();
-//	SPI6->TSIZE = 1;
-//	__DSB();
-//	SPI6->CR1 |= 1UL<<9;
-	__DSB();
 	*(uint16_t*)&SPI2->TXDR = OPER;
-//	__DSB();
-//	SPI2->TSIZE = 1;
-//	__DSB();
-//	SPI2->CR1 |= 1UL<<9;
 	__DSB();
 
 	delay_ms(1);
@@ -316,23 +296,13 @@ void imu_test()
 	uart_print_string_blocking("gyr4 = "); o_utoa16_hex(gyr4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 	delay_ms(1);
 
-	uart_print_string_blocking("SPI4 SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI6 SR = "); o_btoa16_fixed(SPI6->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("SPI2 SR = "); o_btoa16_fixed(SPI2->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-
-	while(1);
-
 	SEL_IMU024_M();
 	__DSB();
-
 	delay_us(10);
 	*(uint16_t*)&SPI4->TXDR = MAGOPER;
-	SPI4->CR1 |= 1UL<<9;
 	*(uint16_t*)&SPI6->TXDR = MAGOPER;
-	SPI6->CR1 |= 1UL<<9;
 	*(uint16_t*)&SPI2->TXDR = MAGOPER;
-	SPI2->CR1 |= 1UL<<9;
+	__DSB();
 	delay_ms(1);
 	DESEL_IMU024_M();
 	__DSB();
@@ -354,11 +324,9 @@ void imu_test()
 
 	delay_us(10);
 	*(uint16_t*)&SPI4->TXDR = OPER;
-	SPI4->CR1 |= 1UL<<9;
 	*(uint16_t*)&SPI6->TXDR = OPER;
-	SPI6->CR1 |= 1UL<<9;
 	*(uint16_t*)&SPI2->TXDR = OPER;
-	SPI2->CR1 |= 1UL<<9;
+	__DSB();
 	delay_ms(1);
 	DESEL_IMU135_A();
 	__DSB();
@@ -378,11 +346,9 @@ void imu_test()
 
 	delay_us(10);
 	*(uint16_t*)&SPI4->TXDR = OPER;
-	SPI4->CR1 |= 1UL<<9;
 	*(uint16_t*)&SPI6->TXDR = OPER;
-	SPI6->CR1 |= 1UL<<9;
 	*(uint16_t*)&SPI2->TXDR = OPER;
-	SPI2->CR1 |= 1UL<<9;
+	__DSB();
 	delay_ms(1);
 	DESEL_IMU135_G();
 	__DSB();
@@ -403,11 +369,9 @@ void imu_test()
 
 	delay_us(10);
 	*(uint16_t*)&SPI4->TXDR = MAGOPER;
-	SPI4->CR1 |= 1UL<<9;
 	*(uint16_t*)&SPI6->TXDR = MAGOPER;
-	SPI6->CR1 |= 1UL<<9;
 	*(uint16_t*)&SPI2->TXDR = MAGOPER;
-	SPI2->CR1 |= 1UL<<9;
+	__DSB();
 	delay_ms(1);
 	DESEL_IMU135_M();
 	__DSB();

@@ -248,6 +248,9 @@ void main()
 	uart_print_string_blocking("init ok\r\n"); 
 	extern void imu_test();
 	delay_ms(4000);
+	extern void turn_m_on();
+	turn_m_on();
+	delay_ms(10);
 	while(1)
 		imu_test();
 //	tof_ctrl_init();
