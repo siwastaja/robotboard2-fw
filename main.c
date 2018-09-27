@@ -245,6 +245,9 @@ void main()
 	uart_print_string_blocking("No terse\r\n\r\n"); 
 
 	init_imu();
+	extern void imu_test();
+	while(1)
+		imu_test();
 //	tof_ctrl_init();
 //	sbc_comm_test();
 //	pointer_system_test();
