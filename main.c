@@ -247,7 +247,7 @@ void main()
 	init_imu();
 	uart_print_string_blocking("init ok\r\n"); 
 	extern void timer_test();
-	delay_ms(4000);
+	delay_ms(1000);
 	timer_test();
 	delay_ms(10);
 //	tof_ctrl_init();

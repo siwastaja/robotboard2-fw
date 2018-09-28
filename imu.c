@@ -470,26 +470,6 @@ static const uint16_t a_init_seq[] =
 
 #define NUM_ELEM(_tbl_) (sizeof(_tbl_)/sizeof(_tbl_[0]))
 
-static void send_sensor_init()
-{
-	for(int a=0; a < NUM_ELEM(a_init_seq); a++)
-	{
-		SEL_A024();
-		__DSB();
-		AGM01_WR16 = a_init_seq[a];
-		AGM23_WR16 = a_init_seq[a];
-		AGM45_WR16 = a_init_seq[a];
-		__DSB();
-		delay_ms(6);
-		DESEL_A024();
-		// Clean up the RX fifo of the dummy data:
-		AGM01_RD16;
-		AGM23_RD16;
-		AGM45_RD16;
-		__DSB();
-		delay_ms(4);
-	}
-}
 
 
 #define GYRO_RANGE_2000DPS  0b000
@@ -507,14 +487,12 @@ static void send_sensor_init()
 #define GYRO_ODR2000HZ_BW230HZ 0b0001
 #define GYRO_ODR2000HZ_BW523HZ 0b0000
 
-#if 0
-static const init_item_t gyro_init_seq[] =
+static const uint16_t g_init_seq[] =
 {
-	{0x0f, GYRO_RANGE_1000DPS},
-	{0x10, GYRO_ODR200HZ_BW64HZ},
-	{0x3e, 0b01<<6 /*FIFO mode*/ | 0b00 /*X,Y and Z stored*/}
+	WR_REG(0x0f, GYRO_RANGE_250DPS),
+	WR_REG(0x10, GYRO_ODR100HZ_BW32HZ),
+	WR_REG(0x3e, 0b01<<6 /*FIFO mode*/ | 0b00 /*X,Y and Z stored*/)
 };
-#endif
 
 #define MAGN_ODR_2HZ  (0b001<<3)
 #define MAGN_ODR_6HZ  (0b010<<3)
@@ -541,6 +519,47 @@ static const init_item_t magn_init_seq[] =
 	{0x52, MAGN_NUM_Z_REPETITIONS_REGVAL}
 };
 #endif
+
+static void send_sensor_init()
+{
+	for(int a=0; a < NUM_ELEM(a_init_seq); a++)
+	{
+		SEL_A024();
+		__DSB();
+		AGM01_WR16 = a_init_seq[a];
+		AGM23_WR16 = a_init_seq[a];
+		AGM45_WR16 = a_init_seq[a];
+		__DSB();
+		delay_ms(6);
+		DESEL_A024();
+		// Clean up the RX fifo of the dummy data:
+		AGM01_RD16;
+		AGM23_RD16;
+		AGM45_RD16;
+		__DSB();
+		delay_ms(4);
+	}
+
+	for(int g=0; g < NUM_ELEM(g_init_seq); g++)
+	{
+		SEL_G024();
+		__DSB();
+		AGM01_WR16 = g_init_seq[g];
+		AGM23_WR16 = g_init_seq[g];
+		AGM45_WR16 = g_init_seq[g];
+		__DSB();
+		delay_ms(6);
+		DESEL_G024();
+		// Clean up the RX fifo of the dummy data:
+		AGM01_RD16;
+		AGM23_RD16;
+		AGM45_RD16;
+		__DSB();
+		delay_ms(4);
+	}
+
+}
+
 
 /* 
 
@@ -917,19 +936,27 @@ void timer_test()
 	int cnt = 0;
 //	set_timer(50000);
 
+	int z_int0 = 0;
+	int z_int2 = 0;
+	int z_int4 = 0;
+
+	int z_avg0 = 0;
+	int z_avg2 = 0;
+	int z_avg4 = 0;
+
 		for(;;) //int i = 0; i<40; i++)
 		{
 			cnt++;
 //			uart_print_string_blocking("SPI SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
-			SEL_A024();
+			SEL_G024();
 			__DSB();
 			AGM01_READ_CMD();
 			AGM23_READ_CMD();
 			AGM45_READ_CMD();
 			__DSB();
 			delay_us(20);
-			DESEL_A024();
+			DESEL_G024();
 			__DSB();
 			delay_us(2);
 			__DSB();
@@ -946,25 +973,6 @@ void timer_test()
 			((xyz_in_fifo_t*)&a4)->blocks.second = AGM45_RD32;
 
 			__DSB();
-
-/*
-raw0: 39fe01ff 00406101
-raw2: 61014dff 0040b900
-raw4: 5dff51ff 0040c901
-
-raw0: 21fdf100 00406d01
-raw2: 59013dff 00407900
-raw4: 71ff69ff 0040a901
-
-raw0: 31fe2900 00406501
-raw2: 1d014100 00407500
-raw4: 41ff51ff 00409d01
-
-raw0: 31fe2d00 00405d01
-raw2: 09014d00 0040ad00
-raw4: 09ff5dff 00408101
-
-*/
 
 #define A_REMOVE_STATUS_BITS(_x_) do{((xyz_in_fifo_t*)&(_x_))->blocks.first &= 0xf0fff000; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0x00fff0ff; }while(0)
 
@@ -988,36 +996,70 @@ raw4: 09ff5dff 00408101
 			uart_print_string_blocking("\r\n"); 
 
 */
-			A_REMOVE_STATUS_BITS(a0);
-			A_REMOVE_STATUS_BITS(a2);
-			A_REMOVE_STATUS_BITS(a4);
+//			A_REMOVE_STATUS_BITS(a0);
+//			A_REMOVE_STATUS_BITS(a2);
+//			A_REMOVE_STATUS_BITS(a4);
 			__DSB();
 
-			delay_ms(20);
+			delay_ms(11);
 
 			if(cnt%8!=7) continue;
 
 			uart_print_string_blocking("0: "); 
-			o_itoa16_fixed(a0.coords.x>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a0.coords.x, printbuf); uart_print_string_blocking(printbuf); 
 			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a0.coords.y>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a0.coords.y, printbuf); uart_print_string_blocking(printbuf); 
 			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a0.coords.z>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a0.coords.z, printbuf); uart_print_string_blocking(printbuf); 
 
 			uart_print_string_blocking("\r\n2: "); 
-			o_itoa16_fixed(a2.coords.x>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a2.coords.x, printbuf); uart_print_string_blocking(printbuf); 
 			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a2.coords.y>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a2.coords.y, printbuf); uart_print_string_blocking(printbuf); 
 			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a2.coords.z>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a2.coords.z, printbuf); uart_print_string_blocking(printbuf); 
 
 			uart_print_string_blocking("\r\n4: "); 
-			o_itoa16_fixed(a4.coords.x>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a4.coords.x, printbuf); uart_print_string_blocking(printbuf); 
 			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a4.coords.y>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a4.coords.y, printbuf); uart_print_string_blocking(printbuf); 
 			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a4.coords.z>>4, printbuf); uart_print_string_blocking(printbuf); 
+			o_itoa16_fixed(a4.coords.z, printbuf); uart_print_string_blocking(printbuf); 
 
+			if(a0.coords.z > -60 && a0.coords.z < 60)
+				z_avg0 = (z_avg0*255 + (int)a0.coords.z*256)>>8;
+
+			if(a2.coords.z > -60 && a2.coords.z < 60)
+				z_avg2 = (z_avg2*255 + (int)a2.coords.z*256)>>8;
+
+			if(a4.coords.z > -60 && a4.coords.z < 60)
+				z_avg4 = (z_avg4*255 + (int)a4.coords.z*256)>>8;
+
+			uart_print_string_blocking("\r\nz avg0: "); 
+			o_itoa32(z_avg0>>8, printbuf); uart_print_string_blocking(printbuf); 
+			uart_print_string_blocking("\r\nz avg2: "); 
+			o_itoa32(z_avg2>>8, printbuf); uart_print_string_blocking(printbuf); 
+			uart_print_string_blocking("\r\nz avg6: "); 
+			o_itoa32(z_avg4>>8, printbuf); uart_print_string_blocking(printbuf); 
+
+
+			z_int0 += (a0.coords.z - (z_avg0>>8) )>>2;
+			z_int2 += (a2.coords.z - (z_avg2>>8) )>>2;
+			z_int4 += (a4.coords.z - (z_avg4>>8) )>>2;
+
+			int z_int_avg = (z_int0 + z_int2 + z_int4)/3;
+
+			uart_print_string_blocking("\r\nz integral 0: "); 
+			o_itoa32(z_int0>>5, printbuf); uart_print_string_blocking(printbuf); 
+
+			uart_print_string_blocking("\r\nz integral 2: "); 
+			o_itoa32(z_int2>>5, printbuf); uart_print_string_blocking(printbuf); 
+
+			uart_print_string_blocking("\r\nz integral 4: "); 
+			o_itoa32(z_int4>>5, printbuf); uart_print_string_blocking(printbuf); 
+
+			uart_print_string_blocking("\r\nz integral avg: "); 
+			o_itoa32(z_int_avg>>5, printbuf); uart_print_string_blocking(printbuf); 
 
 			uart_print_string_blocking("\r\n"); 
 			uart_print_string_blocking("\r\n"); 
