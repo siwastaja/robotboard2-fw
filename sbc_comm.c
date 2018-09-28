@@ -100,8 +100,9 @@ void update_subs(uint64_t *subs_vector)
 {
 	for(int i=0; i<B2S_MAX_MSGIDS; i++)
 	{
-		if(p_p_b2s_msgs[i])
-			*p_p_b2s_msgs[i] = 0;
+	   if (b2s_msgs[i].p_accessor != NULL) {
+	      *(b2s_msgs[i].p_accessor) = NULL;
+	   } // if
 	}
 
 
@@ -116,15 +117,15 @@ void update_subs(uint64_t *subs_vector)
 			if(t & 1)
 			{
 				// id #s is enabled
-				if(offs + b2s_msg_sizes[s] > B2S_MAX_LEN-FOOTER_LEN)
+				if(offs + b2s_msgs[s].size > B2S_MAX_LEN-FOOTER_LEN)
 				{
 					// requested subscription doesn't fit: stop adding subscriptions.
 					break;
 				}
 
 				subs[i] |= 1ULL<<(s-i*64);
-				*p_p_b2s_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
-				offs += b2s_msg_sizes[s];
+				*(b2s_msgs[s].p_accessor) = tx_fifo[tx_fifo_cpu] + offs;
+				offs += b2s_msgs[s].size;
 			}
 			t >>= 1;
 		}
@@ -189,12 +190,10 @@ void tx_fifo_push()
 		uint64_t t = subs[i];
 		for(int s=i*64; s<(i+1)*64; s++)
 		{
-			if(t & 1)
-			{
-				// id #s is enabled
-				*p_p_b2s_msgs[s] = tx_fifo[tx_fifo_cpu] + offs;
-				offs += b2s_msg_sizes[s];
-			}
+			if (t & 1) {     // id #s is enabled
+			   *(b2s_msgs[s].p_accessor) = tx_fifo[tx_fifo_cpu] + offs;
+			   offs += b2s_msgs[s].size;
+			} // if
 			t >>= 1;
 		}
 	}
@@ -458,7 +457,7 @@ void parse_rx_packet()
 			break;
 		}
 
-		if(p_cmdheader->paylen != s2b_msg_sizes[p_cmdheader->msgid])
+		if(p_cmdheader->paylen != s2b_msgs[p_cmdheader->msgid].size)
 		{
 			// Inconsistency in API (or data corruption) - size field doens't match the expected length of the message type.
 			// Todo: raise error flag instead
