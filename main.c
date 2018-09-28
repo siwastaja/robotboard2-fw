@@ -246,13 +246,10 @@ void main()
 
 	init_imu();
 	uart_print_string_blocking("init ok\r\n"); 
-	extern void imu_test();
+	extern void timer_test();
 	delay_ms(4000);
-	extern void turn_m_on();
-	turn_m_on();
+	timer_test();
 	delay_ms(10);
-	while(1)
-		imu_test();
 //	tof_ctrl_init();
 //	sbc_comm_test();
 //	pointer_system_test();

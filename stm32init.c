@@ -22,6 +22,7 @@ extern void shutdown_handler();
 extern void epc_rx_dma_inthandler();
 extern void epc_i2c_inthandler();
 extern void epc_dcmi_dma_inthandler();
+extern void imu_fsm_inthandler();
 
 
 extern unsigned int _STACKTOP;
@@ -73,9 +74,9 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00A4                    */ (unsigned int *) invalid_handler,
 /* 0x00A8                    */ (unsigned int *) invalid_handler,
 /* 0x00AC                    */ (unsigned int *) invalid_handler,
-/* 0x00B0                    */ (unsigned int *) invalid_handler,
-/* 0x00B4                    */ (unsigned int *) invalid_handler,
-/* 0x00B8                    */ (unsigned int *) invalid_handler,
+/* 0x00B0 TIM2               */ (unsigned int *) invalid_handler,
+/* 0x00B4 TIM3               */ (unsigned int *) imu_fsm_inthandler,
+/* 0x00B8 TIM4               */ (unsigned int *) invalid_handler,
 /* 0x00BC I2C1 EVENT         */ (unsigned int *) epc_i2c_inthandler,
 /* 0x00C0      ERR           */ (unsigned int *) invalid_handler,
 /* 0x00C4 I2C2 EVENT         */ (unsigned int *) invalid_handler,
@@ -95,12 +96,12 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00FC DMA1 STREAM7       */ (unsigned int *) invalid_handler,
 /* 0x0100                    */ (unsigned int *) invalid_handler,
 /* 0x0104                    */ (unsigned int *) invalid_handler,
-/* 0x0108                    */ (unsigned int *) invalid_handler,
+/* 0x0108 TIM5               */ (unsigned int *) invalid_handler,
 /* 0x010C SPI3               */ (unsigned int *) invalid_handler,
 /* 0x0110 UART4              */ (unsigned int *) invalid_handler,
 /* 0x0114 UART5              */ (unsigned int *) invalid_handler,
-/* 0x0118                    */ (unsigned int *) invalid_handler,
-/* 0x011C                    */ (unsigned int *) invalid_handler,
+/* 0x0118 TIM6&DAC UNDERRUN  */ (unsigned int *) invalid_handler,
+/* 0x011C TIM7               */ (unsigned int *) invalid_handler,
 /* 0x0120 DMA2 STREAM0       */ (unsigned int *) epc_dcmi_dma_inthandler,
 /* 0x0124            1       */ (unsigned int *) invalid_handler,
 /* 0x0128            2       */ (unsigned int *) invalid_handler,
@@ -161,9 +162,9 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0204                    */ (unsigned int *) invalid_handler,
 /* 0x0208                    */ (unsigned int *) invalid_handler,
 /* 0x020C                    */ (unsigned int *) invalid_handler,
-/* 0x0210                    */ (unsigned int *) invalid_handler,
-/* 0x0214                    */ (unsigned int *) invalid_handler,
-/* 0x0218                    */ (unsigned int *) invalid_handler,
+/* 0x0210 TIM15              */ (unsigned int *) invalid_handler,
+/* 0x0214 TIM16              */ (unsigned int *) invalid_handler,
+/* 0x0218 TIM17              */ (unsigned int *) invalid_handler,
 /* 0x021C                    */ (unsigned int *) invalid_handler,
 /* 0x0220                    */ (unsigned int *) invalid_handler,
 /* 0x0224                    */ (unsigned int *) invalid_handler,
