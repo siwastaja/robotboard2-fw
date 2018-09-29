@@ -117,22 +117,6 @@ static void start_a024_read()
 }
 #endif
 
-typedef struct __attribute__((packed))
-{
-	int16_t x;
-	int16_t y;
-	int16_t z;
-
-} xyz_i16i16i16_t;
-
-typedef struct __attribute__((packed))
-{
-	int16_t x;
-	int16_t y;
-	int16_t z;
-	uint16_t rhall;
-} m_dataframe_t;
-
 typedef union __attribute__((packed))
 {
 	struct __attribute__((packed))
@@ -151,28 +135,28 @@ typedef union __attribute__((packed))
 	} blocks;
 } xyz_in_fifo_t;
 
+#define A_REMOVE_STATUS_BITS(_x_) do{((xyz_in_fifo_t*)&(_x_))->blocks.first &= 0xf0fff000; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0x00fff0ff; }while(0)
+
+// Gyro data has no status bits to remove
 
 typedef union __attribute__((packed))
 {
 	struct __attribute__((packed))
 	{
-//		uint8_t dummy1;
 		int16_t x;
 		int16_t y;
 		int16_t z;
 		uint16_t rhall;
-//		uint8_t dummy2;
-//		uint16_t dummy3;
 	} coords;
 
 	struct __attribute__((packed))
 	{
 		uint32_t first;
 		uint32_t second;
-//		uint32_t third;
 	} blocks;
 } m_dataframe_in_fifo_t;
 
+#define M_REMOVE_STATUS_BITS(_x_) do{((m_dataframe_in_fifo_t*)&(_x_))->blocks.first &= 0xfff8fff8; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0xfffcfffe; }while(0)
 
 
 volatile xyz_in_fifo_t latest_a[6];
@@ -287,7 +271,7 @@ enum
 #define M23_READ_CMD_PART2() do{AGM23_WR8 = 0x00; __DMB();}while(0)
 #define M45_READ_CMD_PART2() do{AGM45_WR8 = 0x00; __DMB();}while(0)
 
-#define STATUS_FILL_LEVEL_MASK (0x007f)
+#define STATUS_FILL_LEVEL_MASK (0x7f00)
 
 static inline void set_timer(uint16_t tenth_us)
 {
@@ -381,9 +365,9 @@ void imu_fsm_inthandler()
 		{
 			SEL_A024();
 			__DSB();
-			AGM01_WR16 = 0x8e00;
-			AGM23_WR16 = 0x8e00;
-			AGM45_WR16 = 0x8e00;
+			AGM01_WR16 = 0x008e;
+			AGM23_WR16 = 0x008e;
+			AGM45_WR16 = 0x008e;
 			set_timer(STATUS_READ_WAIT_TIME);
 			cur_state++;
 		} break;
@@ -1079,10 +1063,12 @@ void init_imu()
 	TIM3->DIER |= 1UL; // Update interrupt
 	TIM3->PSC = 20;
 
+	send_sensor_init();
+
+	delay_ms(1);
+
 	NVIC_SetPriority(TIM3_IRQn, 5);
 	NVIC_EnableIRQ(TIM3_IRQn);
-
-	send_sensor_init();
 
 }
 
@@ -1091,316 +1077,13 @@ void init_imu()
 void timer_test()
 {
 	int cnt = 0;
-//	set_timer(50000);
-
-
-	while(1)
-	{
-		uart_print_string_blocking("SPI0 SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("SPI2 SR = "); o_btoa16_fixed(SPI6->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("SPI4 SR = "); o_btoa16_fixed(SPI2->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-		// TX and RX are 9 bytes. Only SPI2 has 16-byte FIFO. SPI4 and SPI6 have 8-byte FIFO. We want to ditch the first byte anyway. So we do an extra 8-bit read.
-
-		SEL_M024();
-		__DSB();
-		M01_READ_CMD_PART1();
-		M23_READ_CMD_PART1();
-		M45_READ_CMD_PART1();
-		__DSB();
-		delay_us(5); // 1 doensn't work, 2 tested to work. No upper limit; with excess delays, SCLK clock generation might stop temporarily, but that doesn't upset the sensor.
-		AGM01_RD8;
-		AGM23_RD8;
-		AGM45_RD8;
-		M01_READ_CMD_PART2();
-		M23_READ_CMD_PART2();
-		M45_READ_CMD_PART2();
-
-		__DSB();
-
-/*
-		LED_ON();
-		while(!(SPI4->SR & 1)) ;
-		AGM01_RD8;
-		while(!(SPI6->SR & 1)) ;
-		AGM23_RD8;
-		while(!(SPI2->SR & 1)) ;
-		AGM45_RD8;
-		LED_OFF();
-		__DSB();
-
-*/
-		delay_us(20);
-		DESEL_M024();
-		__DSB();
-
-		m_dataframe_in_fifo_t m0;
-		m0.blocks.first  = AGM01_RD32; __DMB();
-		m0.blocks.second = AGM01_RD32; __DMB();
-//		m0.blocks.third  = AGM01_RD32;
-
-		m_dataframe_in_fifo_t m2;
-		m2.blocks.first  = AGM23_RD32; __DMB();
-		m2.blocks.second = AGM23_RD32; __DMB();
-//		m2.blocks.third  = AGM23_RD32;
-
-		m_dataframe_in_fifo_t m4;
-		m4.blocks.first  = AGM45_RD32; __DMB();
-		m4.blocks.second = AGM45_RD32; __DMB();
-//		m4.blocks.third  = AGM45_RD32;
-
-		__DSB();
-
-
-#define M_REMOVE_STATUS_BITS(_x_) do{((m_dataframe_in_fifo_t*)&(_x_))->blocks.first &= 0xfff8fff8; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0xfffcfffe; }while(0)
-
-
-		uart_print_string_blocking("raw0: "); 
-		o_utoa32_hex(m0.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking(" "); 
-		o_utoa32_hex(m0.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("\r\nraw2: "); 
-		o_utoa32_hex(m2.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking(" "); 
-		o_utoa32_hex(m2.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("\r\nraw4: "); 
-		o_utoa32_hex(m4.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking(" "); 
-		o_utoa32_hex(m4.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
-
-		M_REMOVE_STATUS_BITS(m0.blocks.first);
-		M_REMOVE_STATUS_BITS(m0.blocks.second);
-		__DSB();
-
-		uart_print_string_blocking("\r\n0: "); 
-		o_itoa16_fixed(m0.coords.x>>3, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_itoa16_fixed(m0.coords.y>>3, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_itoa16_fixed(m0.coords.z>>1, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_utoa16_fixed(m0.coords.rhall>>2, printbuf); uart_print_string_blocking(printbuf); 
-
-		uart_print_string_blocking("\r\n2: "); 
-		o_itoa16_fixed(m2.coords.x>>3, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_itoa16_fixed(m2.coords.y>>3, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_itoa16_fixed(m2.coords.z>>1, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_utoa16_fixed(m2.coords.rhall>>2, printbuf); uart_print_string_blocking(printbuf); 
-
-		uart_print_string_blocking("\r\n4: "); 
-		o_itoa16_fixed(m4.coords.x>>3, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_itoa16_fixed(m4.coords.y>>3, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_itoa16_fixed(m4.coords.z>>1, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  "); 
-		o_utoa16_fixed(m4.coords.rhall>>2, printbuf); uart_print_string_blocking(printbuf); 
-
-
-
-		uart_print_string_blocking("\r\n\r\n"); 
-
-		delay_ms(200);
-//		delay_us(M_CONV_TIME_US);
-//		SEL_M024();
-//		AGM01_WR32
-//		DESEL_M024();
-
-//		if(cnt++ > 5)
-//			while(1) ;
-	}
-
-	int z_int0 = 0;
-	int z_int2 = 0;
-	int z_int4 = 0;
-
-	int z_avg0 = 0;
-	int z_avg2 = 0;
-	int z_avg4 = 0;
-
-		for(;;) //int i = 0; i<40; i++)
-		{
-			cnt++;
-//			uart_print_string_blocking("SPI SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-			SEL_G024();
-			__DSB();
-			AG01_READ_CMD();
-			AG23_READ_CMD();
-			AG45_READ_CMD();
-			__DSB();
-			delay_us(20);
-			DESEL_G024();
-			__DSB();
-			delay_us(2);
-			__DSB();
-
-			xyz_in_fifo_t a0;
-			xyz_in_fifo_t a2;
-			xyz_in_fifo_t a4;
-
-			((xyz_in_fifo_t*)&a0)->blocks.first  = AGM01_RD32; __DMB();
-			((xyz_in_fifo_t*)&a0)->blocks.second = AGM01_RD32; __DMB();
-			((xyz_in_fifo_t*)&a2)->blocks.first  = AGM23_RD32; __DMB();
-			((xyz_in_fifo_t*)&a2)->blocks.second = AGM23_RD32; __DMB();
-			((xyz_in_fifo_t*)&a4)->blocks.first  = AGM45_RD32; __DMB();
-			((xyz_in_fifo_t*)&a4)->blocks.second = AGM45_RD32;
-
-			__DSB();
-
-#define A_REMOVE_STATUS_BITS(_x_) do{((xyz_in_fifo_t*)&(_x_))->blocks.first &= 0xf0fff000; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0x00fff0ff; }while(0)
-
-//			uart_print_string_blocking("\r\n"); 
-/*
-			uart_print_string_blocking("raw0: "); 
-			o_utoa32_hex(a0.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking(" "); 
-			o_utoa32_hex(a0.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\nraw2: "); 
-			o_utoa32_hex(a2.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking(" "); 
-			o_utoa32_hex(a2.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\nraw4: "); 
-			o_utoa32_hex(a4.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking(" "); 
-			o_utoa32_hex(a4.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\n"); 
-
-*/
-//			A_REMOVE_STATUS_BITS(a0);
-//			A_REMOVE_STATUS_BITS(a2);
-//			A_REMOVE_STATUS_BITS(a4);
-			__DSB();
-
-			delay_ms(11);
-
-			if(cnt%8!=7) continue;
-
-			uart_print_string_blocking("0: "); 
-			o_itoa16_fixed(a0.coords.x, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a0.coords.y, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a0.coords.z, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\n2: "); 
-			o_itoa16_fixed(a2.coords.x, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a2.coords.y, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a2.coords.z, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\n4: "); 
-			o_itoa16_fixed(a4.coords.x, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a4.coords.y, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking("  "); 
-			o_itoa16_fixed(a4.coords.z, printbuf); uart_print_string_blocking(printbuf); 
-
-			if(a0.coords.z > -60 && a0.coords.z < 60)
-				z_avg0 = (z_avg0*255 + (int)a0.coords.z*256)>>8;
-
-			if(a2.coords.z > -60 && a2.coords.z < 60)
-				z_avg2 = (z_avg2*255 + (int)a2.coords.z*256)>>8;
-
-			if(a4.coords.z > -60 && a4.coords.z < 60)
-				z_avg4 = (z_avg4*255 + (int)a4.coords.z*256)>>8;
-
-			uart_print_string_blocking("\r\nz avg0: "); 
-			o_itoa32(z_avg0>>8, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking("\r\nz avg2: "); 
-			o_itoa32(z_avg2>>8, printbuf); uart_print_string_blocking(printbuf); 
-			uart_print_string_blocking("\r\nz avg6: "); 
-			o_itoa32(z_avg4>>8, printbuf); uart_print_string_blocking(printbuf); 
-
-
-			z_int0 += (a0.coords.z - (z_avg0>>8) )>>2;
-			z_int2 += (a2.coords.z - (z_avg2>>8) )>>2;
-			z_int4 += (a4.coords.z - (z_avg4>>8) )>>2;
-
-			int z_int_avg = (z_int0 + z_int2 + z_int4)/3;
-
-			uart_print_string_blocking("\r\nz integral 0: "); 
-			o_itoa32(z_int0>>5, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\nz integral 2: "); 
-			o_itoa32(z_int2>>5, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\nz integral 4: "); 
-			o_itoa32(z_int4>>5, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\nz integral avg: "); 
-			o_itoa32(z_int_avg>>5, printbuf); uart_print_string_blocking(printbuf); 
-
-			uart_print_string_blocking("\r\n"); 
-			uart_print_string_blocking("\r\n"); 
-
-
-//			uart_print_string_blocking("SPI SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-
-
-/*
-			AGM01_RD32; __DMB();
-			AGM01_RD16; __DMB();
-			AGM01_RD8;
-
-			AGM23_RD32; __DMB();
-			AGM23_RD16; __DMB();
-			AGM23_RD8;
-
-			AGM45_RD32; __DMB();
-			AGM45_RD16; __DMB();
-			AGM45_RD8;
-*/
-		}
+	set_timer(50000);
 
 	while(1)
 	{
-//		printings();
-//		uart_print_string_blocking("SPI SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		printings();
 
-		SEL_A024();
-		__DSB();
-#define JOO 0x008e
-//#define JOO 0xbe00
-//#define JOO 0x0080
-		AGM01_WR16 = JOO;
-		AGM23_WR16 = JOO;
-		AGM45_WR16 = JOO;
-		__DSB();
-		delay_us(6);
-		DESEL_A024();
-		__DSB();
-		delay_us(2);
-
-		__DSB();
-		uint16_t status0 = AGM01_RD16;
-		uint16_t status2 = AGM23_RD16;
-		uint16_t status4 = AGM45_RD16;
-		__DSB();
-
-//		uart_print_string_blocking("SPI SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-		uart_print_string_blocking("0: "); 
-		o_utoa16_hex(status0, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("\r\n2: "); 
-		o_utoa16_hex(status2, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("\r\n4: "); 
-		o_utoa16_hex(status4, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("\r\n\r\n"); 
-
-//		uart_print_string_blocking("SPI SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-//		if(++cnt == 12)
-//			while(1);
-
+		delay_ms(100);
 	}
 }
 
