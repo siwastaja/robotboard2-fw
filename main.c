@@ -241,13 +241,13 @@ void main()
 
 
 	init_sbc_comm();
+	delay_ms(2000);
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
 
 	init_imu();
 	uart_print_string_blocking("init ok\r\n"); 
 	extern void timer_test();
-	delay_ms(1000);
 	timer_test();
 	delay_ms(10);
 //	tof_ctrl_init();

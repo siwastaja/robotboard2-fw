@@ -125,6 +125,14 @@ typedef struct __attribute__((packed))
 
 } xyz_i16i16i16_t;
 
+typedef struct __attribute__((packed))
+{
+	int16_t x;
+	int16_t y;
+	int16_t z;
+	uint16_t rhall;
+} m_dataframe_t;
+
 typedef union __attribute__((packed))
 {
 	struct __attribute__((packed))
@@ -143,7 +151,31 @@ typedef union __attribute__((packed))
 	} blocks;
 } xyz_in_fifo_t;
 
-volatile xyz_i16i16i16_t latest_a[6];
+
+typedef union __attribute__((packed))
+{
+	struct __attribute__((packed))
+	{
+//		uint8_t dummy1;
+		int16_t x;
+		int16_t y;
+		int16_t z;
+		uint16_t rhall;
+//		uint8_t dummy2;
+//		uint16_t dummy3;
+	} coords;
+
+	struct __attribute__((packed))
+	{
+		uint32_t first;
+		uint32_t second;
+//		uint32_t third;
+	} blocks;
+} m_dataframe_in_fifo_t;
+
+
+
+volatile xyz_in_fifo_t latest_a[6];
 
 #if 0
 volatile int a024_spis_remaining;
@@ -243,9 +275,17 @@ enum
 #define AGM23_RD8 (*(volatile uint8_t*)&SPI6->RXDR)
 #define AGM45_RD8 (*(volatile uint8_t*)&SPI2->RXDR)
 
-#define AGM01_READ_CMD() do{AGM01_WR32 = 0x000000bf; __DMB(); AGM01_WR16 = 0x0000; AGM01_WR8 = 0x00; __DMB();}while(0)
-#define AGM23_READ_CMD() do{AGM23_WR32 = 0x000000bf; __DMB(); AGM23_WR16 = 0x0000; AGM23_WR8 = 0x00; __DMB();}while(0)
-#define AGM45_READ_CMD() do{AGM45_WR32 = 0x000000bf; __DMB(); AGM45_WR16 = 0x0000; AGM45_WR8 = 0x00; __DMB();}while(0)
+#define AG01_READ_CMD() do{AGM01_WR32 = 0x000000bf; __DMB(); AGM01_WR16 = 0x0000; __DMB(); AGM01_WR8 = 0x00; __DMB();}while(0)
+#define AG23_READ_CMD() do{AGM23_WR32 = 0x000000bf; __DMB(); AGM23_WR16 = 0x0000; __DMB(); AGM23_WR8 = 0x00; __DMB();}while(0)
+#define AG45_READ_CMD() do{AGM45_WR32 = 0x000000bf; __DMB(); AGM45_WR16 = 0x0000; __DMB(); AGM45_WR8 = 0x00; __DMB();}while(0)
+
+#define M01_READ_CMD_PART1() do{AGM01_WR32 = 0x000000c2; __DMB(); AGM01_WR32 = 0x0000; __DMB();}while(0)
+#define M23_READ_CMD_PART1() do{AGM23_WR32 = 0x000000c2; __DMB(); AGM23_WR32 = 0x0000; __DMB();}while(0)
+#define M45_READ_CMD_PART1() do{AGM45_WR32 = 0x000000c2; __DMB(); AGM45_WR32 = 0x0000; __DMB();}while(0)
+
+#define M01_READ_CMD_PART2() do{AGM01_WR8 = 0x00; __DMB();}while(0)
+#define M23_READ_CMD_PART2() do{AGM23_WR8 = 0x00; __DMB();}while(0)
+#define M45_READ_CMD_PART2() do{AGM45_WR8 = 0x00; __DMB();}while(0)
 
 #define STATUS_FILL_LEVEL_MASK (0x007f)
 
@@ -274,15 +314,15 @@ static void printings()
 	int a0n = a_nonstatus_cnt[0];
 	int a2n = a_nonstatus_cnt[2];
 	int a4n = a_nonstatus_cnt[4];
-	int a0x = latest_a[0].x;
-	int a0y = latest_a[0].y;
-	int a0z = latest_a[0].z;
-	int a2x = latest_a[2].x;
-	int a2y = latest_a[2].y;
-	int a2z = latest_a[2].z;
-	int a4x = latest_a[4].x;
-	int a4y = latest_a[4].y;
-	int a4z = latest_a[4].z;
+	int a0x = latest_a[0].coords.x;
+	int a0y = latest_a[0].coords.y;
+	int a0z = latest_a[0].coords.z;
+	int a2x = latest_a[2].coords.x;
+	int a2y = latest_a[2].coords.y;
+	int a2z = latest_a[2].coords.z;
+	int a4x = latest_a[4].coords.x;
+	int a4y = latest_a[4].coords.y;
+	int a4z = latest_a[4].coords.z;
 	ENA_IRQ();
 
 	uart_print_string_blocking("a0: "); 
@@ -354,8 +394,6 @@ void imu_fsm_inthandler()
 			uint16_t status2 = AGM23_RD16;
 			uint16_t status4 = AGM45_RD16;
 
-			dbg = status0;
-
 			SEL_A024();
 			__DSB();
 			reading0 = reading1 = reading2 = 0;
@@ -363,7 +401,7 @@ void imu_fsm_inthandler()
 			{
 				a_status_cnt[0]++;
 				reading0 = 1;
-				AGM01_READ_CMD();
+				AG01_READ_CMD();
 			}
 			else
 				a_nonstatus_cnt[0]++;
@@ -372,7 +410,7 @@ void imu_fsm_inthandler()
 			{
 				a_status_cnt[2]++;
 				reading1 = 1;
-				AGM23_READ_CMD();
+				AG23_READ_CMD();
 			}
 			else
 				a_nonstatus_cnt[2]++;
@@ -381,7 +419,7 @@ void imu_fsm_inthandler()
 			{
 				a_status_cnt[4]++;
 				reading2 = 1;
-				AGM45_READ_CMD();
+				AG45_READ_CMD();
 			}
 			else
 				a_nonstatus_cnt[4]++;
@@ -394,18 +432,21 @@ void imu_fsm_inthandler()
 		{
 			if(reading0)
 			{
-//				((xyz_in_fifo_t*)&latest_a[0])->first  = AGM01_RD32; __DMB();
-//				((xyz_in_fifo_t*)&latest_a[0])->second = AGM01_RD16;
+				latest_a[0].blocks.first  = AGM01_RD32; __DMB();
+				latest_a[0].blocks.second = AGM01_RD32;
+				A_REMOVE_STATUS_BITS(latest_a[0]);
 			}
 			if(reading1)
 			{
-//				((xyz_in_fifo_t*)&latest_a[2])->first  = AGM23_RD32; __DMB();
-//				((xyz_in_fifo_t*)&latest_a[2])->second = AGM23_RD16;
+				latest_a[2].blocks.first  = AGM23_RD32; __DMB();
+				latest_a[2].blocks.second = AGM23_RD32;
+				A_REMOVE_STATUS_BITS(latest_a[2]);
 			}
 			if(reading2)
 			{
-//				((xyz_in_fifo_t*)&latest_a[4])->first  = AGM45_RD32; __DMB();
-//				((xyz_in_fifo_t*)&latest_a[4])->second = AGM45_RD16;
+				latest_a[4].blocks.first  = AGM45_RD32; __DMB();
+				latest_a[4].blocks.second = AGM45_RD32;
+				A_REMOVE_STATUS_BITS(latest_a[4]);
 			}
 
 			set_timer(FINAL_WAIT_TIME);
@@ -494,34 +535,71 @@ static const uint16_t g_init_seq[] =
 	WR_REG(0x3e, 0b01<<6 /*FIFO mode*/ | 0b00 /*X,Y and Z stored*/)
 };
 
-#define MAGN_ODR_2HZ  (0b001<<3)
-#define MAGN_ODR_6HZ  (0b010<<3)
-#define MAGN_ODR_8HZ  (0b011<<3)
-#define MAGN_ODR_10HZ (0b000<<3)
-#define MAGN_ODR_15HZ (0b100<<3)
-#define MAGN_ODR_20HZ (0b101<<3)
-#define MAGN_ODR_25HZ (0b110<<3)
-#define MAGN_ODR_30HZ (0b111<<3)
+#define M_ODR_2HZ  (0b001<<3)
+#define M_ODR_6HZ  (0b010<<3)
+#define M_ODR_8HZ  (0b011<<3)
+#define M_ODR_10HZ (0b000<<3)
+#define M_ODR_15HZ (0b100<<3)
+#define M_ODR_20HZ (0b101<<3)
+#define M_ODR_25HZ (0b110<<3)
+#define M_ODR_30HZ (0b111<<3)
 
-#define MAGN_OP_NORMAL (0b00<<1)
-#define MAGN_OP_FORCED (0b01<<1)
-#define MAGN_OP_SLEEP  (0b11<<1)
+#define M_OP_NORMAL (0b00<<1)
+#define M_OP_FORCED (0b01<<1)
+#define M_OP_SLEEP  (0b11<<1)
 
-#define MAGN_NUM_XY_REPETITIONS_REGVAL 10
-#define MAGN_NUM_Z_REPETITIONS_REGVAL 10
+// 0 = BOSCH regular preset: 0.5 mA
+// 1 = BOSCH enhanced regular preset: 0.8 mA
+// 2 = midway between 1 and 3: around 2.5 mA
+// 3 = BOSCH high accuracy preset: 4.9 mA
+#define M_ACCURACY 1
 
-#if 0
-static const init_item_t magn_init_seq[] =
-{
-	{0x4b, 1 /*Enable power*/},
-	{0x4c, MAGN_ODR_10HZ | MAGN_OP_NORMAL},
-	{0x51, MAGN_NUM_XY_REPETITIONS_REGVAL},
-	{0x52, MAGN_NUM_Z_REPETITIONS_REGVAL}
-};
+#if M_ACCURACY == 0
+#define M_NUM_XY_REPETITIONS 9
+#define M_NUM_Z_REPETITIONS  15
+#define M_INTERVAL_MS 100
 #endif
+
+#if M_ACCURACY == 1
+#define M_NUM_XY_REPETITIONS 15
+#define M_NUM_Z_REPETITIONS  27
+#define M_INTERVAL_MS 100
+#endif
+
+#if M_ACCURACY == 2
+#define M_NUM_XY_REPETITIONS 31
+#define M_NUM_Z_REPETITIONS  55
+#define M_INTERVAL_MS 75
+#endif
+
+#if M_ACCURACY == 3
+#define M_NUM_XY_REPETITIONS 47
+#define M_NUM_Z_REPETITIONS  83
+#define M_INTERVAL_MS 50
+#endif
+
+
+#define M_CONV_TIME_US (145*M_NUM_XY_REPETITIONS + 500*M_NUM_Z_REPETITIONS + 980 + 100 /*a bit extra on our own*/)
+
+#define M_NUM_XY_REPETITIONS_REGVAL ((M_NUM_XY_REPETITIONS-1)/2)
+#define M_NUM_Z_REPETITIONS_REGVAL  (M_NUM_Z_REPETITIONS-1)
+
+static const uint16_t m_init_seq[] =
+{
+	WR_REG(0x4b, 1 /*Enable power*/),
+	WR_REG(0x4c, M_ODR_10HZ | M_OP_NORMAL),
+	WR_REG(0x51, M_NUM_XY_REPETITIONS_REGVAL),
+	WR_REG(0x52, M_NUM_Z_REPETITIONS_REGVAL)
+};
+
+
+#include "imu_m_compensation.c"
 
 static void send_sensor_init()
 {
+
+//	uart_print_string_blocking("a ");
+
 	for(int a=0; a < NUM_ELEM(a_init_seq); a++)
 	{
 		SEL_A024();
@@ -530,15 +608,17 @@ static void send_sensor_init()
 		AGM23_WR16 = a_init_seq[a];
 		AGM45_WR16 = a_init_seq[a];
 		__DSB();
-		delay_ms(6);
+		delay_us(6);
 		DESEL_A024();
 		// Clean up the RX fifo of the dummy data:
 		AGM01_RD16;
 		AGM23_RD16;
 		AGM45_RD16;
 		__DSB();
-		delay_ms(4);
+		delay_us(4);
 	}
+
+//	uart_print_string_blocking("b ");
 
 	for(int g=0; g < NUM_ELEM(g_init_seq); g++)
 	{
@@ -548,15 +628,92 @@ static void send_sensor_init()
 		AGM23_WR16 = g_init_seq[g];
 		AGM45_WR16 = g_init_seq[g];
 		__DSB();
-		delay_ms(6);
+		delay_us(6);
 		DESEL_G024();
 		// Clean up the RX fifo of the dummy data:
 		AGM01_RD16;
 		AGM23_RD16;
 		AGM45_RD16;
 		__DSB();
-		delay_ms(4);
+		delay_us(4);
 	}
+
+//	uart_print_string_blocking("c ");
+
+	for(int m=0; m < NUM_ELEM(m_init_seq); m++)
+	{
+		SEL_M024();
+		__DSB();
+		AGM01_WR16 = m_init_seq[m];
+		AGM23_WR16 = m_init_seq[m];
+		AGM45_WR16 = m_init_seq[m];
+		__DSB();
+		delay_us(6);
+		DESEL_M024();
+		// Clean up the RX fifo of the dummy data:
+		AGM01_RD16;
+		AGM23_RD16;
+		AGM45_RD16;
+		__DSB();
+		delay_us(4);
+		if(m==0)
+			delay_ms(5); // Extra delay after the turn-on command (startup time in datasheet: 3ms)
+	}
+
+	// Fetch calibration data from the magnetometer:
+
+	SEL_M024();
+	AGM01_WR8 = 0x80 | M_CALIB_START_ADDR;
+	AGM23_WR8 = 0x80 | M_CALIB_START_ADDR;
+	AGM45_WR8 = 0x80 | M_CALIB_START_ADDR;
+	__DSB();
+	while(!(SPI4->SR & 1)) ;
+	while(!(SPI6->SR & 1)) ;
+	while(!(SPI2->SR & 1)) ;
+	__DSB();
+
+	AGM01_RD8;
+	AGM23_RD8;
+	AGM45_RD8;
+	__DSB();
+
+	for(int m=0; m < sizeof(m_calib[0]); m++)
+	{
+		AGM01_WR8 = 0;
+		AGM23_WR8 = 0;
+		AGM45_WR8 = 0;
+		__DSB();
+
+		while(!(SPI4->SR & 1)) ;
+		while(!(SPI6->SR & 1)) ;
+		while(!(SPI2->SR & 1)) ;
+		__DSB();
+
+		*(((uint8_t*)&m_calib[0])+m) = AGM01_RD8; __DSB();
+		*(((uint8_t*)&m_calib[2])+m) = AGM23_RD8; __DSB();
+		*(((uint8_t*)&m_calib[4])+m) = AGM45_RD8; __DSB();
+		__DSB();
+	}
+	DESEL_M024();
+
+	for(int i=0; i<6; i+=2)
+	{
+		uart_print_string_blocking("\r\nsensor "); o_itoa16(i, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("x1="); o_itoa16(m_calib[i].x1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("y1="); o_itoa16(m_calib[i].y1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("z4="); o_itoa16(m_calib[i].z4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("x2="); o_itoa16(m_calib[i].x2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("y2="); o_itoa16(m_calib[i].y2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("z2="); o_itoa16(m_calib[i].z2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("z1="); o_utoa16(m_calib[i].z1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("xyz1="); o_utoa16(m_calib[i].xyz1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("z3="); o_itoa16(m_calib[i].z3, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("xy2="); o_itoa16(m_calib[i].xy2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("xy1="); o_utoa16(m_calib[i].xy1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("\r\n");
+	}
+
+	
 
 }
 
@@ -936,6 +1093,126 @@ void timer_test()
 	int cnt = 0;
 //	set_timer(50000);
 
+
+	while(1)
+	{
+		uart_print_string_blocking("SPI0 SR = "); o_btoa16_fixed(SPI4->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("SPI2 SR = "); o_btoa16_fixed(SPI6->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("SPI4 SR = "); o_btoa16_fixed(SPI2->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+		// TX and RX are 9 bytes. Only SPI2 has 16-byte FIFO. SPI4 and SPI6 have 8-byte FIFO. We want to ditch the first byte anyway. So we do an extra 8-bit read.
+
+		SEL_M024();
+		__DSB();
+		M01_READ_CMD_PART1();
+		M23_READ_CMD_PART1();
+		M45_READ_CMD_PART1();
+		__DSB();
+		delay_us(5); // 1 doensn't work, 2 tested to work. No upper limit; with excess delays, SCLK clock generation might stop temporarily, but that doesn't upset the sensor.
+		AGM01_RD8;
+		AGM23_RD8;
+		AGM45_RD8;
+		M01_READ_CMD_PART2();
+		M23_READ_CMD_PART2();
+		M45_READ_CMD_PART2();
+
+		__DSB();
+
+/*
+		LED_ON();
+		while(!(SPI4->SR & 1)) ;
+		AGM01_RD8;
+		while(!(SPI6->SR & 1)) ;
+		AGM23_RD8;
+		while(!(SPI2->SR & 1)) ;
+		AGM45_RD8;
+		LED_OFF();
+		__DSB();
+
+*/
+		delay_us(20);
+		DESEL_M024();
+		__DSB();
+
+		m_dataframe_in_fifo_t m0;
+		m0.blocks.first  = AGM01_RD32; __DMB();
+		m0.blocks.second = AGM01_RD32; __DMB();
+//		m0.blocks.third  = AGM01_RD32;
+
+		m_dataframe_in_fifo_t m2;
+		m2.blocks.first  = AGM23_RD32; __DMB();
+		m2.blocks.second = AGM23_RD32; __DMB();
+//		m2.blocks.third  = AGM23_RD32;
+
+		m_dataframe_in_fifo_t m4;
+		m4.blocks.first  = AGM45_RD32; __DMB();
+		m4.blocks.second = AGM45_RD32; __DMB();
+//		m4.blocks.third  = AGM45_RD32;
+
+		__DSB();
+
+
+#define M_REMOVE_STATUS_BITS(_x_) do{((m_dataframe_in_fifo_t*)&(_x_))->blocks.first &= 0xfff8fff8; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0xfffcfffe; }while(0)
+
+
+		uart_print_string_blocking("raw0: "); 
+		o_utoa32_hex(m0.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" "); 
+		o_utoa32_hex(m0.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("\r\nraw2: "); 
+		o_utoa32_hex(m2.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" "); 
+		o_utoa32_hex(m2.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("\r\nraw4: "); 
+		o_utoa32_hex(m4.blocks.first, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" "); 
+		o_utoa32_hex(m4.blocks.second, printbuf); uart_print_string_blocking(printbuf); 
+
+		M_REMOVE_STATUS_BITS(m0.blocks.first);
+		M_REMOVE_STATUS_BITS(m0.blocks.second);
+		__DSB();
+
+		uart_print_string_blocking("\r\n0: "); 
+		o_itoa16_fixed(m0.coords.x>>3, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_itoa16_fixed(m0.coords.y>>3, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_itoa16_fixed(m0.coords.z>>1, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_utoa16_fixed(m0.coords.rhall>>2, printbuf); uart_print_string_blocking(printbuf); 
+
+		uart_print_string_blocking("\r\n2: "); 
+		o_itoa16_fixed(m2.coords.x>>3, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_itoa16_fixed(m2.coords.y>>3, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_itoa16_fixed(m2.coords.z>>1, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_utoa16_fixed(m2.coords.rhall>>2, printbuf); uart_print_string_blocking(printbuf); 
+
+		uart_print_string_blocking("\r\n4: "); 
+		o_itoa16_fixed(m4.coords.x>>3, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_itoa16_fixed(m4.coords.y>>3, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_itoa16_fixed(m4.coords.z>>1, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  "); 
+		o_utoa16_fixed(m4.coords.rhall>>2, printbuf); uart_print_string_blocking(printbuf); 
+
+
+
+		uart_print_string_blocking("\r\n\r\n"); 
+
+		delay_ms(200);
+//		delay_us(M_CONV_TIME_US);
+//		SEL_M024();
+//		AGM01_WR32
+//		DESEL_M024();
+
+//		if(cnt++ > 5)
+//			while(1) ;
+	}
+
 	int z_int0 = 0;
 	int z_int2 = 0;
 	int z_int4 = 0;
@@ -951,9 +1228,9 @@ void timer_test()
 
 			SEL_G024();
 			__DSB();
-			AGM01_READ_CMD();
-			AGM23_READ_CMD();
-			AGM45_READ_CMD();
+			AG01_READ_CMD();
+			AG23_READ_CMD();
+			AG45_READ_CMD();
 			__DSB();
 			delay_us(20);
 			DESEL_G024();
