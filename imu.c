@@ -289,70 +289,6 @@ volatile int a_nonstatus_cnt[6];
 
 volatile int dbg;
 
-static void printings()
-{
-	DIS_IRQ();
-	int a0s = a_status_cnt[0];
-	int a2s = a_status_cnt[2];
-	int a4s = a_status_cnt[4];
-	int a0n = a_nonstatus_cnt[0];
-	int a2n = a_nonstatus_cnt[2];
-	int a4n = a_nonstatus_cnt[4];
-	int a0x = latest_a[0].coords.x;
-	int a0y = latest_a[0].coords.y;
-	int a0z = latest_a[0].coords.z;
-	int a2x = latest_a[2].coords.x;
-	int a2y = latest_a[2].coords.y;
-	int a2z = latest_a[2].coords.z;
-	int a4x = latest_a[4].coords.x;
-	int a4y = latest_a[4].coords.y;
-	int a4z = latest_a[4].coords.z;
-	ENA_IRQ();
-
-	uart_print_string_blocking("a0: "); 
-	o_utoa16_fixed(a0s, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking(" / "); 
-	o_utoa16_fixed(a0n, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  x="); 
-	o_itoa16_fixed(a0x, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  y="); 
-	o_itoa16_fixed(a0y, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  z="); 
-	o_itoa16_fixed(a0z, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\n");
-
-	uart_print_string_blocking("a2: "); 
-	o_utoa16_fixed(a2s, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking(" / "); 
-	o_utoa16_fixed(a2n, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  x="); 
-	o_itoa16_fixed(a2x, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  y="); 
-	o_itoa16_fixed(a2y, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  z="); 
-	o_itoa16_fixed(a2z, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\n");
-
-	uart_print_string_blocking("a4: "); 
-	o_utoa16_fixed(a4s, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking(" / "); 
-	o_utoa16_fixed(a4n, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  x="); 
-	o_itoa16_fixed(a4x, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  y="); 
-	o_itoa16_fixed(a4y, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  z="); 
-	o_itoa16_fixed(a4z, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\n");
-
-	uart_print_string_blocking("dbg = "); 
-	o_utoa32_hex(dbg, printbuf); uart_print_string_blocking(printbuf); 
-
-	uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("\r\n");
-	
-}
-
 
 void imu_fsm_inthandler()
 {
@@ -457,23 +393,69 @@ void imu_fsm_inthandler()
 }
 
 
-
-#if 0
-void imu_fsm()
+static void printings()
 {
-	static uint32_t a_cnt = 0;
+	DIS_IRQ();
+	int a0s = a_status_cnt[0];
+	int a2s = a_status_cnt[2];
+	int a4s = a_status_cnt[4];
+	int a0n = a_nonstatus_cnt[0];
+	int a2n = a_nonstatus_cnt[2];
+	int a4n = a_nonstatus_cnt[4];
+	int a0x = latest_a[0].coords.x;
+	int a0y = latest_a[0].coords.y;
+	int a0z = latest_a[0].coords.z;
+	int a2x = latest_a[2].coords.x;
+	int a2y = latest_a[2].coords.y;
+	int a2z = latest_a[2].coords.z;
+	int a4x = latest_a[4].coords.x;
+	int a4y = latest_a[4].coords.y;
+	int a4z = latest_a[4].coords.z;
+	ENA_IRQ();
 
-	a_cnt++;
+	uart_print_string_blocking("a0: "); 
+	o_utoa16_fixed(a0s, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking(" / "); 
+	o_utoa16_fixed(a0n, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  x="); 
+	o_itoa16_fixed(a0x, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  y="); 
+	o_itoa16_fixed(a0y, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  z="); 
+	o_itoa16_fixed(a0z, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
 
-	if(a_cnt > (a_interval>>8))
-	{
-		a_cnt=0;
-		start_a_read();
-	}
+	uart_print_string_blocking("a2: "); 
+	o_utoa16_fixed(a2s, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking(" / "); 
+	o_utoa16_fixed(a2n, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  x="); 
+	o_itoa16_fixed(a2x, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  y="); 
+	o_itoa16_fixed(a2y, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  z="); 
+	o_itoa16_fixed(a2z, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
 
+	uart_print_string_blocking("a4: "); 
+	o_utoa16_fixed(a4s, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking(" / "); 
+	o_utoa16_fixed(a4n, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  x="); 
+	o_itoa16_fixed(a4x, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  y="); 
+	o_itoa16_fixed(a4y, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("  z="); 
+	o_itoa16_fixed(a4z, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("dbg = "); 
+	o_utoa32_hex(dbg, printbuf); uart_print_string_blocking(printbuf); 
+
+	uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("\r\n");
+	
 }
-#endif
-
 
 #define XCEL_RANGE_2G  0b0011
 #define XCEL_RANGE_4G  0b0101
@@ -581,9 +563,6 @@ static const uint16_t m_init_seq[] =
 
 static void send_sensor_init()
 {
-
-//	uart_print_string_blocking("a ");
-
 	for(int a=0; a < NUM_ELEM(a_init_seq); a++)
 	{
 		SEL_A024();
@@ -602,8 +581,6 @@ static void send_sensor_init()
 		delay_us(4);
 	}
 
-//	uart_print_string_blocking("b ");
-
 	for(int g=0; g < NUM_ELEM(g_init_seq); g++)
 	{
 		SEL_G024();
@@ -621,8 +598,6 @@ static void send_sensor_init()
 		__DSB();
 		delay_us(4);
 	}
-
-//	uart_print_string_blocking("c ");
 
 	for(int m=0; m < NUM_ELEM(m_init_seq); m++)
 	{
@@ -754,197 +729,6 @@ static void send_sensor_init()
 */
 
 
-	#define MAGON 0x4b01
-
-#if 0
-void imu_test()
-{
-	delay_ms(100);
-
-	uart_print_string_blocking("testings...\r\n"); 
-
-	#define OPER1 0x8700
-
-	SEL_IMU024_A();
-	__DSB();
-	delay_us(10);
-
-	*(uint16_t*)&SPI4->TXDR = OPER1;
-	*(uint16_t*)&SPI6->TXDR = OPER1;
-	*(uint16_t*)&SPI2->TXDR = OPER1;
-	__DSB();
-
-	delay_ms(2);
-	DESEL_IMU024_A();
-	__DSB();
-	uint16_t gyr0msb = (*(uint16_t*)&SPI4->RXDR);
-	uint16_t gyr2msb = (*(uint16_t*)&SPI6->RXDR);
-	uint16_t gyr4msb = (*(uint16_t*)&SPI2->RXDR);
-	__DSB();
-
-	int8_t z0 = (gyr0msb&0xff);
-	int8_t z2 = (gyr2msb&0xff);
-	int8_t z4 = (gyr4msb&0xff);
-
-	uart_print_string_blocking("acc0 = "); o_itoa16(z0, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("acc2 = "); o_itoa16(z2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("acc4 = "); o_itoa16(z4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-	delay_ms(100);
-}
-
-#endif
-
-#if 0
-void imu_test()
-{
-	delay_ms(100);
-
-	uart_print_string_blocking("testings...\r\n"); 
-
-	#define OPER 0x8000
-	#define MAGOPER 0xc000
-
-	SEL_IMU024_A();
-	__DSB();
-	delay_us(10);
-
-	*(uint16_t*)&SPI4->TXDR = OPER;
-	*(uint16_t*)&SPI2->TXDR = OPER;
-	*(uint16_t*)&SPI6->TXDR = OPER;
-	__DSB();
-	delay_ms(1);
-	DESEL_IMU024_A();
-	__DSB();
-
-	// reply: 0xFA
-	uint16_t acc0 = *(uint16_t*)&SPI4->RXDR;
-	uint16_t acc2 = *(uint16_t*)&SPI6->RXDR;
-	uint16_t acc4 = *(uint16_t*)&SPI2->RXDR;
-
-	__DSB();
-
-	uart_print_string_blocking("acc0 = "); o_utoa16_hex(acc0, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("acc2 = "); o_utoa16_hex(acc2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("acc4 = "); o_utoa16_hex(acc4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-	delay_ms(1);
-
-	SEL_IMU024_G();
-	__DSB();
-	delay_us(10);
-
-	*(uint16_t*)&SPI4->TXDR = OPER;
-	*(uint16_t*)&SPI6->TXDR = OPER;
-	*(uint16_t*)&SPI2->TXDR = OPER;
-	__DSB();
-
-	delay_ms(1);
-	DESEL_IMU024_G();
-	__DSB();
-	// reply: 0x0F
-	uint16_t gyr0 = *(uint16_t*)&SPI4->RXDR;
-	uint16_t gyr2 = *(uint16_t*)&SPI6->RXDR;
-	uint16_t gyr4 = *(uint16_t*)&SPI2->RXDR;
-	uart_print_string_blocking("gyr0 = "); o_utoa16_hex(gyr0, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("gyr2 = "); o_utoa16_hex(gyr2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("gyr4 = "); o_utoa16_hex(gyr4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	delay_ms(1);
-
-	SEL_IMU024_M();
-	__DSB();
-	delay_us(10);
-	*(uint16_t*)&SPI4->TXDR = MAGOPER;
-	*(uint16_t*)&SPI6->TXDR = MAGOPER;
-	*(uint16_t*)&SPI2->TXDR = MAGOPER;
-	__DSB();
-	delay_ms(1);
-	DESEL_IMU024_M();
-	__DSB();
-
-	// reply: 0x32
-	uint16_t mag0 = *(uint16_t*)&SPI4->RXDR;
-	uint16_t mag2 = *(uint16_t*)&SPI6->RXDR;
-	uint16_t mag4 = *(uint16_t*)&SPI2->RXDR;
-	uart_print_string_blocking("mag0 = "); o_utoa16_hex(mag0, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("mag2 = "); o_utoa16_hex(mag2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("mag4 = "); o_utoa16_hex(mag4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	delay_ms(1);
-
-
-
-
-	SEL_IMU135_A();
-	__DSB();
-
-	delay_us(10);
-	*(uint16_t*)&SPI4->TXDR = OPER;
-	*(uint16_t*)&SPI6->TXDR = OPER;
-	*(uint16_t*)&SPI2->TXDR = OPER;
-	__DSB();
-	delay_ms(1);
-	DESEL_IMU135_A();
-	__DSB();
-
-	// reply: 0xFA
-	uint16_t acc1 = *(uint16_t*)&SPI4->RXDR;
-	uint16_t acc3 = *(uint16_t*)&SPI6->RXDR;
-	uint16_t acc5 = *(uint16_t*)&SPI2->RXDR;
-	uart_print_string_blocking("acc1 = "); o_utoa16_hex(acc1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("acc3 = "); o_utoa16_hex(acc3, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("acc5 = "); o_utoa16_hex(acc5, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	delay_ms(1);
-
-
-	SEL_IMU135_G();
-	__DSB();
-
-	delay_us(10);
-	*(uint16_t*)&SPI4->TXDR = OPER;
-	*(uint16_t*)&SPI6->TXDR = OPER;
-	*(uint16_t*)&SPI2->TXDR = OPER;
-	__DSB();
-	delay_ms(1);
-	DESEL_IMU135_G();
-	__DSB();
-
-	// reply: 0x0F
-	uint16_t gyr1 = *(uint16_t*)&SPI4->RXDR;
-	uint16_t gyr3 = *(uint16_t*)&SPI6->RXDR;
-	uint16_t gyr5 = *(uint16_t*)&SPI2->RXDR;
-	uart_print_string_blocking("gyr1 = "); o_utoa16_hex(gyr1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("gyr3 = "); o_utoa16_hex(gyr3, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("gyr5 = "); o_utoa16_hex(gyr5, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	delay_ms(1);
-
-
-
-	SEL_IMU135_M();
-	__DSB();
-
-	delay_us(10);
-	*(uint16_t*)&SPI4->TXDR = MAGOPER;
-	*(uint16_t*)&SPI6->TXDR = MAGOPER;
-	*(uint16_t*)&SPI2->TXDR = MAGOPER;
-	__DSB();
-	delay_ms(1);
-	DESEL_IMU135_M();
-	__DSB();
-
-	// reply: 0x32
-	uint16_t mag1 = *(uint16_t*)&SPI4->RXDR;
-	uint16_t mag3 = *(uint16_t*)&SPI6->RXDR;
-	uint16_t mag5 = *(uint16_t*)&SPI2->RXDR;
-	uart_print_string_blocking("mag1 = "); o_utoa16_hex(mag1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("mag3 = "); o_utoa16_hex(mag3, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("mag5 = "); o_utoa16_hex(mag5, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	delay_ms(1);
-
-
-	delay_ms(1000);
-
-}
-#endif
 void init_imu()
 {
 
