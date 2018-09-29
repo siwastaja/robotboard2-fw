@@ -51,6 +51,12 @@ static char printbuf[128];
 #define DESEL_M135() do{HI(IMU135_M_NCS_PORT,IMU135_M_NCS_PIN); __DSB();}while(0)
 
 
+#define WR_REG(_a_, _d_) ( (_a_) | ((_d_)<<8) )
+#define M_OP_NORMAL (0b00<<1)
+#define M_OP_FORCED (0b01<<1)
+#define M_OP_SLEEP  (0b11<<1)
+
+
 // To convert to two's complement value:
 // mask bits 3,2,1 (will contain random values) and 0 (new_data) away.
 typedef struct __attribute__((packed))
@@ -160,6 +166,9 @@ typedef union __attribute__((packed))
 
 
 volatile xyz_in_fifo_t latest_a[6];
+volatile xyz_in_fifo_t latest_g[6];
+volatile m_dataframe_in_fifo_t latest_m[6];
+volatile int8_t a_temps[6];
 
 #if 0
 volatile int a024_spis_remaining;
@@ -210,31 +219,6 @@ void a024_read_finished_inthandler()
 	Given the deterministic conversion time, we can just read out the data when we know it's ready.
 */
 
-// Missing numbers will go into default:, which will disable chip select signals and wait additional 1 us.
-enum
-{
-	IDLE = 0,
-	START_A024_STATUS_READ = 1,
-	// deassert chip selects
-	READ_A024_STATUS__START_DATA_READ = 3,
-	// deassert chip selects
-	READ_A024_DATA__START_A135_STATUS_READ = 5,
-	// deassert chip selects
-	READ_A135_STATUS__START_DATA_READ = 7,
-	// deassert chip selects
-	READ_A135_DATA__START_G024_STATUS_READ = 9,
-	// deassert chip selects
-	READ_G024_STATUS__START_DATA_READ = 11,
-	// deassert chip selects
-	READ_G024_DATA__START_G135_STATUS_READ = 13,
-	// deassert chip selects
-	READ_G135_DATA__START_M024_DATA_READ__OR__START_WAIT = 15,
-	// deassert chip selects
-	READ_M024_DATA__START_M135_DATA_READ = 17,
-	// deassert chip selects
-	READ_M135_DATA__START_WAIT = 19 // this deasserts chip selects manually (without help of default:)
-} cur_state;
-
 #define AGM01_WR32 (*(volatile uint32_t*)&SPI4->TXDR)
 #define AGM23_WR32 (*(volatile uint32_t*)&SPI6->TXDR)
 #define AGM45_WR32 (*(volatile uint32_t*)&SPI2->TXDR)
@@ -279,16 +263,97 @@ static inline void set_timer(uint16_t tenth_us)
 	TIM3->CR1 = 1UL<<3 /* one pulse mode */ | 1UL<<2 /*only over/underflow generates update int*/ | 1UL /* enable*/;
 }
 
+
+// wait times in tenths of microseconds
+
+// Status read is a 2-byte operation - 2.56 us. Leave some margin for SPI starting delay and bus delays
 #define STATUS_READ_WAIT_TIME 50
-#define DATA_READ_WAIT_TIME 100
-#define FINAL_WAIT_TIME 50000
+
+// Data read is a 7-byte operation - 8.96 us. Leave some margin for SPI starting delay and bus delays
+#define DATA_READ_WAIT_TIME 110
+
+// Trigger register write is a 2-byte operation, but as a write operation, 2us extra is required per datasheet
+#define TRIG_REG_WRITE_WAIT_TIME 70
+
+// Desel waiting time defines how long the "inactive" pulse of nCS is, which is very relevant between reading status and
+// then data from the same sensor, to signify separate transfers. This parameter is unspecified(!) in the datasheet. Assuming
+// 1us should be generous for simple read operations.
+
 #define DESEL_WAIT_TIME 10
+
+// Magnetometer data read requires two steps, since it's a 9-byte operation and the SPI fifo is 8 bytes.
+// This still makes sense over DMA, because the first reply byte is ditched anyway, and the actual data fits nicely in 8 bytes once.
+// Part 1 is 8 bytes, part 2 is 1 byte more.
+// Part 2 is supposed to run when part1 has run both TX and RX for at least 1 byte.
+// 1 byte should fit in 1.28 us. Add some leeway for SPI starting delay and bus delays.
+// No horrors happen if too long - but SPI clock generation stops temporarily. Sensors are OK with this.
+// If you want to keep this from happening, eep well below 8*1.28us = 10 us.
+// So between (1.28us + leeway) and (10 us - leeway), we choose 3 us.
+// (2 us has been tested working, and 1 us has been tested non-working, as expected)
+
+#define M_READ_PART1_WAIT_TIME 30
+
+// With 1 byte out of equation, the remaining data read is a 8-byte operation - 10.24 us.
+#define M_READ_PART2_WAIT_TIME 120
+
+// Finally, this parameter defines how quickly the whole thing runs.
+// You should never encounter more than 1 item in any FIFO. If this happens, reduce the wait time to run faster.
+// Running faster reduces readout latencies. Don't go too low mostly because the fsm inthandler starts to eat up
+// some considerable CPU time.
+#define FINAL_WAIT_TIME 20000
+#define FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS (FINAL_WAIT_TIME - (TRIG_REG_WRITE_WAIT_TIME*2 + \
+		STATUS_READ_WAIT_TIME*2 + M_READ_PART1_WAIT_TIME*2 + M_READ_PART2_WAIT_TIME*2 + 7*3)) /*Estimate of 0.3us per code execution per state*/
+
+#if ((FINAL_WAIT_TIME < 3000) || (FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS < 2000))
+#error "You really shouldn't be doing this. The ISR will hog up the CPU."
+#endif
+
+
 
 volatile int a_status_cnt[6];
 volatile int a_nonstatus_cnt[6];
+volatile int g_status_cnt[6];
+volatile int g_nonstatus_cnt[6];
 
 volatile int dbg;
+volatile int trig_m;
 
+// Missing numbers will go into default:, which will disable chip select signals and wait additional deselect time
+enum
+{
+	IDLE = 0,
+	START_A024_STATUS_READ = 1,
+	// deassert chip selects
+	READ_A024_STATUS__START_DATA_READ = 3,
+	// deassert chip selects
+	READ_A024_DATA__START_A135_STATUS_READ = 5,
+	// deassert chip selects
+	READ_A135_STATUS__START_DATA_READ = 7,
+	// deassert chip selects
+	READ_A135_DATA__START_G024_STATUS_READ = 9,
+	// deassert chip selects
+	READ_G024_STATUS__START_DATA_READ = 11,
+	// deassert chip selects
+	READ_G024_DATA__START_G135_STATUS_READ = 13,
+	// deassert chip selects
+	READ_G135_STATUS__START_DATA_READ = 15,
+	// deassert chip selects
+	READ_G135_DATA__TRIG_M024__OR__START_WAIT = 17,
+	// deassert chip selects
+	TRIG_M135 = 19,
+	// deassert chip selects
+	START_A024_TEMP_READ = 21,
+	// deassert chip selects
+	READ_A024_TEMP__START_A135_TEMP_READ = 23,
+	// deassert chip selects
+	READ_A135_TEMP__START_M024_DATA_READ = 25,
+	CONTINUE_M024_DATA_READ = 26,
+	// deassert chip selects
+	READ_M024_DATA__START_M135_DATA_READ = 28,
+	CONTINUE_M135_DATA_READ = 29,
+	// deassert chip selects
+	READ_M135_DATA__START_WAIT = 31 // this deasserts chip selects manually (without help of default:)
+} cur_state;
 
 void imu_fsm_inthandler()
 {
@@ -369,9 +434,369 @@ void imu_fsm_inthandler()
 				A_REMOVE_STATUS_BITS(latest_a[4]);
 			}
 
+			SEL_A135();
+			__DSB();
+			AGM01_WR16 = 0x008e;
+			AGM23_WR16 = 0x008e;
+			AGM45_WR16 = 0x008e;
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;
+		} break;
+
+		case READ_A135_STATUS__START_DATA_READ:
+		{
+			uint16_t status1 = AGM01_RD16;
+			uint16_t status3 = AGM23_RD16;
+			uint16_t status5 = AGM45_RD16;
+
+			SEL_A135();
+			__DSB();
+			reading0 = reading1 = reading2 = 0;
+			if(status1 & STATUS_FILL_LEVEL_MASK)
+			{
+				a_status_cnt[1]++;
+				reading0 = 1;
+				AG01_READ_CMD();
+			}
+			else
+				a_nonstatus_cnt[1]++;
+
+			if(status3 & STATUS_FILL_LEVEL_MASK)
+			{
+				a_status_cnt[3]++;
+				reading1 = 1;
+				AG23_READ_CMD();
+			}
+			else
+				a_nonstatus_cnt[3]++;
+
+			if(status5 & STATUS_FILL_LEVEL_MASK)
+			{
+				a_status_cnt[5]++;
+				reading2 = 1;
+				AG45_READ_CMD();
+			}
+			else
+				a_nonstatus_cnt[5]++;
+
+			set_timer(DATA_READ_WAIT_TIME);
+			cur_state++;
+		} break;
+
+		case READ_A135_DATA__START_G024_STATUS_READ:
+		{
+			if(reading0)
+			{
+				latest_a[1].blocks.first  = AGM01_RD32; __DMB();
+				latest_a[1].blocks.second = AGM01_RD32;
+				A_REMOVE_STATUS_BITS(latest_a[1]);
+			}
+			if(reading1)
+			{
+				latest_a[3].blocks.first  = AGM23_RD32; __DMB();
+				latest_a[3].blocks.second = AGM23_RD32;
+				A_REMOVE_STATUS_BITS(latest_a[3]);
+			}
+			if(reading2)
+			{
+				latest_a[5].blocks.first  = AGM45_RD32; __DMB();
+				latest_a[5].blocks.second = AGM45_RD32;
+				A_REMOVE_STATUS_BITS(latest_a[5]);
+			}
+
+			SEL_G024();
+			__DSB();
+			AGM01_WR16 = 0x008e;
+			AGM23_WR16 = 0x008e;
+			AGM45_WR16 = 0x008e;
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;
+
+		} break;
+
+		case READ_G024_STATUS__START_DATA_READ:
+		{
+			uint16_t status0 = AGM01_RD16;
+			uint16_t status2 = AGM23_RD16;
+			uint16_t status4 = AGM45_RD16;
+
+			SEL_G024();
+			__DSB();
+			reading0 = reading1 = reading2 = 0;
+			if(status0 & STATUS_FILL_LEVEL_MASK)
+			{
+				g_status_cnt[0]++;
+				reading0 = 1;
+				AG01_READ_CMD();
+			}
+			else
+				g_nonstatus_cnt[0]++;
+
+			if(status2 & STATUS_FILL_LEVEL_MASK)
+			{
+				g_status_cnt[2]++;
+				reading1 = 1;
+				AG23_READ_CMD();
+			}
+			else
+				g_nonstatus_cnt[2]++;
+
+			if(status4 & STATUS_FILL_LEVEL_MASK)
+			{
+				g_status_cnt[4]++;
+				reading2 = 1;
+				AG45_READ_CMD();
+			}
+			else
+				g_nonstatus_cnt[4]++;
+
+			set_timer(DATA_READ_WAIT_TIME);
+			cur_state++;
+		} break;
+
+		case READ_G024_DATA__START_G135_STATUS_READ:
+		{
+			if(reading0)
+			{
+				latest_g[0].blocks.first  = AGM01_RD32; __DMB();
+				latest_g[0].blocks.second = AGM01_RD32;
+			}
+			if(reading1)
+			{
+				latest_g[2].blocks.first  = AGM23_RD32; __DMB();
+				latest_g[2].blocks.second = AGM23_RD32;
+			}
+			if(reading2)
+			{
+				latest_g[4].blocks.first  = AGM45_RD32; __DMB();
+				latest_g[4].blocks.second = AGM45_RD32;
+			}
+
+			SEL_G135();
+			__DSB();
+			AGM01_WR16 = 0x008e;
+			AGM23_WR16 = 0x008e;
+			AGM45_WR16 = 0x008e;
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;
+
+		} break;
+
+		case READ_G135_STATUS__START_DATA_READ:
+		{
+			uint16_t status1 = AGM01_RD16;
+			uint16_t status3 = AGM23_RD16;
+			uint16_t status5 = AGM45_RD16;
+
+			SEL_G135();
+			__DSB();
+			reading0 = reading1 = reading2 = 0;
+			if(status1 & STATUS_FILL_LEVEL_MASK)
+			{
+				g_status_cnt[1]++;
+				reading0 = 1;
+				AG01_READ_CMD();
+			}
+			else
+				g_nonstatus_cnt[1]++;
+
+			if(status3 & STATUS_FILL_LEVEL_MASK)
+			{
+				g_status_cnt[3]++;
+				reading1 = 1;
+				AG23_READ_CMD();
+			}
+			else
+				g_nonstatus_cnt[3]++;
+
+			if(status5 & STATUS_FILL_LEVEL_MASK)
+			{
+				g_status_cnt[5]++;
+				reading2 = 1;
+				AG45_READ_CMD();
+			}
+			else
+				g_nonstatus_cnt[5]++;
+
+			set_timer(DATA_READ_WAIT_TIME);
+			cur_state++;
+
+		} break;
+
+		case READ_G135_DATA__TRIG_M024__OR__START_WAIT:
+		{
+			if(reading0)
+			{
+				latest_g[1].blocks.first  = AGM01_RD32; __DMB();
+				latest_g[1].blocks.second = AGM01_RD32;
+			}
+			if(reading1)
+			{
+				latest_g[3].blocks.first  = AGM23_RD32; __DMB();
+				latest_g[3].blocks.second = AGM23_RD32;
+			}
+			if(reading2)
+			{
+				latest_g[5].blocks.first  = AGM45_RD32; __DMB();
+				latest_g[5].blocks.second = AGM45_RD32;
+			}
+
+			if(trig_m)
+			{
+				trig_m = 0;
+				SEL_M024();
+				__DSB();
+				AGM01_WR16 = WR_REG(0x4c, M_OP_FORCED);
+				AGM23_WR16 = WR_REG(0x4c, M_OP_FORCED);
+				AGM45_WR16 = WR_REG(0x4c, M_OP_FORCED);
+				set_timer(TRIG_REG_WRITE_WAIT_TIME);
+				cur_state++;
+			}
+			else
+			{
+				set_timer(FINAL_WAIT_TIME);
+				cur_state = START_A024_STATUS_READ;
+			}
+
+		} break;
+
+		case TRIG_M135:
+		{
+			SEL_M135();
+			__DSB();
+			AGM01_WR16 = WR_REG(0x4c, M_OP_FORCED);
+			AGM23_WR16 = WR_REG(0x4c, M_OP_FORCED);
+			AGM45_WR16 = WR_REG(0x4c, M_OP_FORCED);
+			set_timer(TRIG_REG_WRITE_WAIT_TIME);
+			cur_state++;
+
+		} break;
+
+		case START_A024_TEMP_READ:
+		{
+			// empty the RX fifo for both TRIG operations at once:
+			AGM01_RD32;
+			AGM23_RD32;
+			AGM45_RD32;
+
+			SEL_A024();
+			__DSB();
+			AGM01_WR16 = 0x0088;
+			AGM23_WR16 = 0x0088;
+			AGM45_WR16 = 0x0088;
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;
+
+		} break;
+
+		case READ_A024_TEMP__START_A135_TEMP_READ:
+		{
+			a_temps[0] = ((int8_t)(AGM01_RD16>>8))+23;
+			a_temps[2] = ((int8_t)(AGM23_RD16>>8))+23;
+			a_temps[4] = ((int8_t)(AGM45_RD16>>8))+23;
+			SEL_A024();
+			__DSB();
+			AGM01_WR16 = 0x0088;
+			AGM23_WR16 = 0x0088;
+			AGM45_WR16 = 0x0088;
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;
+
+		} break;
+
+		case READ_A135_TEMP__START_M024_DATA_READ:
+		{
+			a_temps[1] = ((int8_t)(AGM01_RD16>>8))+23;
+			a_temps[3] = ((int8_t)(AGM23_RD16>>8))+23;
+			a_temps[5] = ((int8_t)(AGM45_RD16>>8))+23;
+
+			SEL_M024();
+			__DSB();
+			M01_READ_CMD_PART1();
+			M23_READ_CMD_PART1();
+			M45_READ_CMD_PART1();
+			set_timer(M_READ_PART1_WAIT_TIME);
+			cur_state++;
+		} break;
+
+		case CONTINUE_M024_DATA_READ:
+		{
+			// SPI FIFO is 8 bytes long.
+			// Transaction length is 9 bytes, first of which is dummy, to be thrown away
+			// Before the FIFO is full, we read out this dummy, and get the 8-byte payload
+			// nicely in our 8-byte FIFO. At the same time, there is now space in the TX fifo
+			// as well to fit the last byte of the read CMD.
+			AGM01_RD8;
+			AGM23_RD8;
+			AGM45_RD8;
+			__DSB();
+			// chip selects are already active here
+			M01_READ_CMD_PART2();
+			M23_READ_CMD_PART2();
+			M45_READ_CMD_PART2();
+			set_timer(M_READ_PART2_WAIT_TIME);
+			cur_state++;
+		} break;
+
+		case READ_M024_DATA__START_M135_DATA_READ:
+		{
+			latest_m[0].blocks.first  = AGM01_RD32; __DMB();
+			latest_m[0].blocks.second = AGM01_RD32;
+			__DMB();
+			M_REMOVE_STATUS_BITS(latest_m[0]);
+
+			latest_m[2].blocks.first  = AGM23_RD32; __DMB();
+			latest_m[2].blocks.second = AGM23_RD32;
+			__DMB();
+			M_REMOVE_STATUS_BITS(latest_m[2]);
+
+			latest_m[4].blocks.first  = AGM45_RD32; __DMB();
+			latest_m[4].blocks.second = AGM45_RD32;
+			__DMB();
+			M_REMOVE_STATUS_BITS(latest_m[4]);
+
+			SEL_M135();
+			__DSB();
+			M01_READ_CMD_PART1();
+			M23_READ_CMD_PART1();
+			M45_READ_CMD_PART1();
+			set_timer(M_READ_PART1_WAIT_TIME);
+			cur_state++;
+		} break;
+
+		case CONTINUE_M135_DATA_READ:
+		{
+			AGM01_RD8;
+			AGM23_RD8;
+			AGM45_RD8;
+			__DSB();
+			// chip selects are already active here
+			M01_READ_CMD_PART2();
+			M23_READ_CMD_PART2();
+			M45_READ_CMD_PART2();
+			set_timer(M_READ_PART2_WAIT_TIME);
+			cur_state++;
+		} break;
+
+		case READ_M135_DATA__START_WAIT:
+		{
+			latest_m[1].blocks.first  = AGM01_RD32; __DMB();
+			latest_m[1].blocks.second = AGM01_RD32;
+			__DMB();
+			M_REMOVE_STATUS_BITS(latest_m[1]);
+
+			latest_m[3].blocks.first  = AGM23_RD32; __DMB();
+			latest_m[3].blocks.second = AGM23_RD32;
+			__DMB();
+			M_REMOVE_STATUS_BITS(latest_m[3]);
+
+			latest_m[5].blocks.first  = AGM45_RD32; __DMB();
+			latest_m[5].blocks.second = AGM45_RD32;
+			__DMB();
+			M_REMOVE_STATUS_BITS(latest_m[5]);
+
 			set_timer(FINAL_WAIT_TIME);
 			cur_state = START_A024_STATUS_READ;
-
 		} break;
 
 		default:
@@ -395,64 +820,59 @@ void imu_fsm_inthandler()
 
 static void printings()
 {
+	int as[6], an[6], ax[6], ay[6], az[6];
+	int gs[6], gn[6], gx[6], gy[6], gz[6];
+
 	DIS_IRQ();
-	int a0s = a_status_cnt[0];
-	int a2s = a_status_cnt[2];
-	int a4s = a_status_cnt[4];
-	int a0n = a_nonstatus_cnt[0];
-	int a2n = a_nonstatus_cnt[2];
-	int a4n = a_nonstatus_cnt[4];
-	int a0x = latest_a[0].coords.x;
-	int a0y = latest_a[0].coords.y;
-	int a0z = latest_a[0].coords.z;
-	int a2x = latest_a[2].coords.x;
-	int a2y = latest_a[2].coords.y;
-	int a2z = latest_a[2].coords.z;
-	int a4x = latest_a[4].coords.x;
-	int a4y = latest_a[4].coords.y;
-	int a4z = latest_a[4].coords.z;
+	for(int i=0; i<6; i++)
+	{
+		as[i] = a_status_cnt[i];
+		an[i] = a_nonstatus_cnt[i];
+		ax[i] = latest_a[i].coords.x;
+		ay[i] = latest_a[i].coords.y;
+		az[i] = latest_a[i].coords.z;
+
+		gs[i] = g_status_cnt[i];
+		gn[i] = g_nonstatus_cnt[i];
+		gx[i] = latest_g[i].coords.x;
+		gy[i] = latest_g[i].coords.y;
+		gz[i] = latest_g[i].coords.z;
+
+	}
 	ENA_IRQ();
 
-	uart_print_string_blocking("a0: "); 
-	o_utoa16_fixed(a0s, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking(" / "); 
-	o_utoa16_fixed(a0n, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  x="); 
-	o_itoa16_fixed(a0x, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  y="); 
-	o_itoa16_fixed(a0y, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  z="); 
-	o_itoa16_fixed(a0z, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\n");
+	for(int i=0; i<6; i++)
+	{
+		uart_print_string_blocking("IMU"); o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
 
-	uart_print_string_blocking("a2: "); 
-	o_utoa16_fixed(a2s, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking(" / "); 
-	o_utoa16_fixed(a2n, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  x="); 
-	o_itoa16_fixed(a2x, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  y="); 
-	o_itoa16_fixed(a2y, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  z="); 
-	o_itoa16_fixed(a2z, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\n");
+		uart_print_string_blocking(":  A ");
 
-	uart_print_string_blocking("a4: "); 
-	o_utoa16_fixed(a4s, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking(" / "); 
-	o_utoa16_fixed(a4n, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  x="); 
-	o_itoa16_fixed(a4x, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  y="); 
-	o_itoa16_fixed(a4y, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("  z="); 
-	o_itoa16_fixed(a4z, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\n");
+		o_utoa16_fixed(as[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" / "); 
+		o_utoa16_fixed(an[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  x = "); 
+		o_itoa16_fixed(ax[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  y = "); 
+		o_itoa16_fixed(ay[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  z = "); 
+		o_itoa16_fixed(az[i], printbuf); uart_print_string_blocking(printbuf);
 
-	uart_print_string_blocking("dbg = "); 
-	o_utoa32_hex(dbg, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("   G ");
 
-	uart_print_string_blocking("\r\n");
+		o_utoa16_fixed(gs[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" / "); 
+		o_utoa16_fixed(gn[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  x = "); 
+		o_itoa16_fixed(gx[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  y = "); 
+		o_itoa16_fixed(gy[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  z = "); 
+		o_itoa16_fixed(gz[i], printbuf); uart_print_string_blocking(printbuf);
+
+		uart_print_string_blocking("\r\n");
+
+	}
+
 	uart_print_string_blocking("\r\n");
 	
 }
@@ -467,11 +887,10 @@ static void printings()
 #define XCEL_T2MS_BW250HZ  0b01101
 #define XCEL_T1MS_BW500HZ  0b01110
 
-#define WR_REG(_a_, _d_) ( (_a_) | ((_d_)<<8) )
 static const uint16_t a_init_seq[] =
 {
 	WR_REG(0x0f, XCEL_RANGE_2G),
-	WR_REG(0x10, XCEL_T16MS_BW31HZ),
+	WR_REG(0x10, XCEL_T4MS_BW125HZ),
 	WR_REG(0x3e, 0b01<<6 /*FIFO mode*/ | 0b00 /*X,Y and Z stored*/)
 };
 
@@ -497,7 +916,7 @@ static const uint16_t a_init_seq[] =
 static const uint16_t g_init_seq[] =
 {
 	WR_REG(0x0f, GYRO_RANGE_250DPS),
-	WR_REG(0x10, GYRO_ODR100HZ_BW32HZ),
+	WR_REG(0x10, GYRO_ODR200HZ_BW64HZ),
 	WR_REG(0x3e, 0b01<<6 /*FIFO mode*/ | 0b00 /*X,Y and Z stored*/)
 };
 
@@ -509,10 +928,6 @@ static const uint16_t g_init_seq[] =
 #define M_ODR_20HZ (0b101<<3)
 #define M_ODR_25HZ (0b110<<3)
 #define M_ODR_30HZ (0b111<<3)
-
-#define M_OP_NORMAL (0b00<<1)
-#define M_OP_FORCED (0b01<<1)
-#define M_OP_SLEEP  (0b11<<1)
 
 // 0 = BOSCH regular preset: 0.5 mA
 // 1 = BOSCH enhanced regular preset: 0.8 mA
@@ -553,7 +968,7 @@ static const uint16_t g_init_seq[] =
 static const uint16_t m_init_seq[] =
 {
 	WR_REG(0x4b, 1 /*Enable power*/),
-	WR_REG(0x4c, M_ODR_10HZ | M_OP_NORMAL),
+//	WR_REG(0x4c, M_ODR_10HZ | M_OP_NORMAL),
 	WR_REG(0x51, M_NUM_XY_REPETITIONS_REGVAL),
 	WR_REG(0x52, M_NUM_Z_REPETITIONS_REGVAL)
 };
@@ -561,18 +976,21 @@ static const uint16_t m_init_seq[] =
 
 #include "imu_m_compensation.c"
 
-static void send_sensor_init()
+static void send_sensor_init(int bunch)
 {
+	if(!(bunch == 0 || bunch == 1))
+		error(20);
+
 	for(int a=0; a < NUM_ELEM(a_init_seq); a++)
 	{
-		SEL_A024();
+		if(bunch) SEL_A135(); else SEL_A024();
 		__DSB();
 		AGM01_WR16 = a_init_seq[a];
 		AGM23_WR16 = a_init_seq[a];
 		AGM45_WR16 = a_init_seq[a];
 		__DSB();
 		delay_us(6);
-		DESEL_A024();
+		if(bunch) DESEL_A135(); else DESEL_A024();
 		// Clean up the RX fifo of the dummy data:
 		AGM01_RD16;
 		AGM23_RD16;
@@ -583,14 +1001,14 @@ static void send_sensor_init()
 
 	for(int g=0; g < NUM_ELEM(g_init_seq); g++)
 	{
-		SEL_G024();
+		if(bunch) SEL_G135(); else SEL_G024();
 		__DSB();
 		AGM01_WR16 = g_init_seq[g];
 		AGM23_WR16 = g_init_seq[g];
 		AGM45_WR16 = g_init_seq[g];
 		__DSB();
 		delay_us(6);
-		DESEL_G024();
+		if(bunch) DESEL_G135(); else DESEL_G024();
 		// Clean up the RX fifo of the dummy data:
 		AGM01_RD16;
 		AGM23_RD16;
@@ -601,14 +1019,14 @@ static void send_sensor_init()
 
 	for(int m=0; m < NUM_ELEM(m_init_seq); m++)
 	{
-		SEL_M024();
+		if(bunch) SEL_M135(); else SEL_M024();
 		__DSB();
 		AGM01_WR16 = m_init_seq[m];
 		AGM23_WR16 = m_init_seq[m];
 		AGM45_WR16 = m_init_seq[m];
 		__DSB();
 		delay_us(6);
-		DESEL_M024();
+		if(bunch) DESEL_M135(); else DESEL_M024();
 		// Clean up the RX fifo of the dummy data:
 		AGM01_RD16;
 		AGM23_RD16;
@@ -621,7 +1039,7 @@ static void send_sensor_init()
 
 	// Fetch calibration data from the magnetometer:
 
-	SEL_M024();
+	if(bunch) SEL_M135(); else SEL_M024();
 	AGM01_WR8 = 0x80 | M_CALIB_START_ADDR;
 	AGM23_WR8 = 0x80 | M_CALIB_START_ADDR;
 	AGM45_WR8 = 0x80 | M_CALIB_START_ADDR;
@@ -648,14 +1066,14 @@ static void send_sensor_init()
 		while(!(SPI2->SR & 1)) ;
 		__DSB();
 
-		*(((uint8_t*)&m_calib[0])+m) = AGM01_RD8; __DSB();
-		*(((uint8_t*)&m_calib[2])+m) = AGM23_RD8; __DSB();
-		*(((uint8_t*)&m_calib[4])+m) = AGM45_RD8; __DSB();
+		*(((uint8_t*)&m_calib[0+bunch])+m) = AGM01_RD8; __DSB();
+		*(((uint8_t*)&m_calib[2+bunch])+m) = AGM23_RD8; __DSB();
+		*(((uint8_t*)&m_calib[4+bunch])+m) = AGM45_RD8; __DSB();
 		__DSB();
 	}
-	DESEL_M024();
+	if(bunch) DESEL_M135(); else DESEL_M024();
 
-	for(int i=0; i<6; i+=2)
+	for(int i=bunch; i<6; i+=2)
 	{
 		uart_print_string_blocking("\r\nsensor "); o_itoa16(i, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		uart_print_string_blocking("x1="); o_itoa16(m_calib[i].x1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
@@ -847,9 +1265,8 @@ void init_imu()
 	TIM3->DIER |= 1UL; // Update interrupt
 	TIM3->PSC = 20;
 
-	send_sensor_init();
-
-	delay_ms(1);
+	send_sensor_init(0);
+	send_sensor_init(1);
 
 	NVIC_SetPriority(TIM3_IRQn, 5);
 	NVIC_EnableIRQ(TIM3_IRQn);
@@ -867,7 +1284,7 @@ void timer_test()
 	{
 		printings();
 
-		delay_ms(100);
+		delay_ms(200);
 	}
 }
 
