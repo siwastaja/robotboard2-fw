@@ -694,7 +694,7 @@ void imu_fsm_inthandler()
 			a_temps[0] = ((int8_t)(AGM01_RD16>>8))+23;
 			a_temps[2] = ((int8_t)(AGM23_RD16>>8))+23;
 			a_temps[4] = ((int8_t)(AGM45_RD16>>8))+23;
-			SEL_A024();
+			SEL_A135();
 			__DSB();
 			AGM01_WR16 = 0x0088;
 			AGM23_WR16 = 0x0088;
@@ -822,6 +822,7 @@ static void printings()
 {
 	int as[6], an[6], ax[6], ay[6], az[6];
 	int gs[6], gn[6], gx[6], gy[6], gz[6];
+	int mx[6], my[6], mz[6];
 
 	DIS_IRQ();
 	for(int i=0; i<6; i++)
@@ -838,14 +839,18 @@ static void printings()
 		gy[i] = latest_g[i].coords.y;
 		gz[i] = latest_g[i].coords.z;
 
+		mx[i] = latest_m[i].coords.x;
+		my[i] = latest_m[i].coords.y;
+		mz[i] = latest_m[i].coords.z;
+
 	}
 	ENA_IRQ();
 
 	for(int i=0; i<6; i++)
 	{
-		uart_print_string_blocking("IMU"); o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
+		o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
 
-		uart_print_string_blocking(":  A ");
+		uart_print_string_blocking(": A ");
 
 		o_utoa16_fixed(as[i], printbuf); uart_print_string_blocking(printbuf); 
 		uart_print_string_blocking(" / "); 
@@ -868,6 +873,20 @@ static void printings()
 		o_itoa16_fixed(gy[i], printbuf); uart_print_string_blocking(printbuf); 
 		uart_print_string_blocking("  z = "); 
 		o_itoa16_fixed(gz[i], printbuf); uart_print_string_blocking(printbuf);
+
+		uart_print_string_blocking("   T=");
+		o_itoa8_fixed(a_temps[i], printbuf); uart_print_string_blocking(printbuf); 
+
+
+
+		uart_print_string_blocking("   M ");
+
+		uart_print_string_blocking("  x = "); 
+		o_itoa16_fixed(mx[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  y = "); 
+		o_itoa16_fixed(my[i], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  z = "); 
+		o_itoa16_fixed(mz[i], printbuf); uart_print_string_blocking(printbuf);
 
 		uart_print_string_blocking("\r\n");
 
@@ -1284,6 +1303,7 @@ void timer_test()
 	{
 		printings();
 
+		trig_m = 1;
 		delay_ms(200);
 	}
 }
