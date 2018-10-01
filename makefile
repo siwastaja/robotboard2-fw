@@ -10,7 +10,7 @@ OBJCOPY = arm-none-eabi-objcopy
 OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o micronavi.o adcs.o pwrswitch.o charger.o imu.o audio.o sbc_comm.o timebase.o
 ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s micronavi.s adcs.s pwrswitch.s charger.s imu.s audio.s sbc_comm.s timebase.s
 
-CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
+CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -Winline -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
 
 CFLAGS += -DSBC_RASPI
 
@@ -67,7 +67,7 @@ syms:
 asm: $(ASMS)
 
 e:
-	gedit --new-window makefile linker.ld misc.h `echo "$(OBJ)" | sed s/"\.o"/"\.c"/g` `echo "$(OBJ)" | sed s/"\.o"/"\.h"/g` &
+	gedit --new-window makefile linker.ld misc.h imu_m_compensation.c `echo "$(OBJ)" | sed s/"\.o"/"\.c"/g` `echo "$(OBJ)" | sed s/"\.o"/"\.h"/g` &
 
 s:
-	screen /dev/ttyUSB0 115200
+	screen /dev/ttyUSB0 230400

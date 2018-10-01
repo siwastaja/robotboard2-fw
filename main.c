@@ -204,7 +204,7 @@ void main()
 		IO_TO_ALTFUNC(GPIOB, 15);
 		IO_SET_ALTFUNC(GPIOB, 14, 4);
 		IO_SET_ALTFUNC(GPIOB, 15, 4);
-		USART1->BRR = 100000000/115200;
+		USART1->BRR = 100000000/230400; //115200;
 		USART1->CR1 = 0UL<<5 /*RX interrupt*/ | 1UL<<3 /*TX ena*/ | 1UL<<2 /*RX ena*/ |  1UL /*USART ENA*/;
 
 	#endif
@@ -241,18 +241,15 @@ void main()
 
 
 	init_sbc_comm();
+	delay_ms(2000);
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
 
 	init_imu();
 	uart_print_string_blocking("init ok\r\n"); 
-	extern void imu_test();
-	delay_ms(4000);
-	extern void turn_m_on();
-	turn_m_on();
+	extern void timer_test();
+	timer_test();
 	delay_ms(10);
-	while(1)
-		imu_test();
 //	tof_ctrl_init();
 //	sbc_comm_test();
 //	pointer_system_test();
