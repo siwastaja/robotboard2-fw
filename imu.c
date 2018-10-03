@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #include "ext_include/stm32h7xx.h"
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
@@ -13,14 +14,7 @@ static char printbuf[128];
 #define IMU4_PRESENT
 #define IMU5_PRESENT
 
-#define IMU_SPI_6M25 // 6.25MHz SPI clock. Datasheet maximum: 10MHz
-
-#ifdef IMU_SPI_6M25
-#define SPI2_CLKDIV_REGVAL (0b011UL)
-#define SPI4_CLKDIV_REGVAL (0b011UL)
-#define SPI6_CLKDIV_REGVAL (0b011UL)
-#endif
-
+#define SPI_CLKDIV_REGVAL (0b011UL) // 6.25MHz SPI clock. Datasheet maximum: 10MHz
 
 #define IMU024_G_NCS_PORT GPIOA
 #define IMU024_G_NCS_PIN  14
@@ -51,20 +45,62 @@ static char printbuf[128];
 #define DESEL_M135() do{HI(IMU135_M_NCS_PORT,IMU135_M_NCS_PIN); __DSB();}while(0)
 
 
+#define AGM01_SPI SPI4
+#define AGM23_SPI SPI6
+#define AGM45_SPI SPI2
+
+
+/*
+Stupid heterogenous structure. Instead of 3 similar DMA's, 1 of them is different "BDMA", which is actually still
+almost the same, just a bit different (for added complexity). Nomenclature note: "channel" is the same as "stream".
+
+SPI6 cannot be mapped to DMA1 or DMA2, so it has to be mapped to BDMA.
+
+*/
+
+#define AGM01_TX_DMA DMA1
+#define AGM01_TX_DMA_STREAM DMA1_Stream6
+#define AGM01_TX_DMA_STREAM_NUM 6
+//#define AGM01_TX_DMA_STREAM_IRQ DMA1_Stream6_IRQn
+#define AGM01_TX_DMAMUX() do{DMAMUX1_Channel6->CCR = 84;}while(0)
+
+#define AGM23_TX_DMA BDMA
+#define AGM23_TX_DMA_STREAM BDMA_Channel1
+#define AGM23_TX_DMA_STREAM_NUM 1
+//#define AGM23_TX_DMA_STREAM_IRQ BDMA_Channel1_IRQn
+#define AGM23_TX_DMAMUX() do{DMAMUX2_Channel1->CCR = 12;}while(0)
+
+#define AGM45_TX_DMA DMA1
+#define AGM45_TX_DMA_STREAM DMA1_Stream7
+#define AGM45_TX_DMA_STREAM_NUM 7
+//#define AGM45_TX_DMA_STREAM_IRQ DMA1_Stream7_IRQn
+#define AGM45_TX_DMAMUX() do{DMAMUX1_Channel7->CCR = 40;}while(0)
+
+
+#define AGM01_RX_DMA DMA1
+#define AGM01_RX_DMA_STREAM DMA1_Stream4
+#define AGM01_RX_DMA_STREAM_NUM 4
+//#define AGM01_RX_DMA_STREAM_IRQ DMA1_Stream4_IRQn
+#define AGM01_RX_DMAMUX() do{DMAMUX1_Channel4->CCR = 83;}while(0)
+
+#define AGM23_RX_DMA BDMA
+#define AGM23_RX_DMA_STREAM BDMA_Channel0
+#define AGM23_RX_DMA_STREAM_NUM 0
+//#define AGM23_RX_DMA_STREAM_IRQ BDMA_Channel0_IRQn
+#define AGM23_RX_DMAMUX() do{DMAMUX2_Channel0->CCR = 11;}while(0)
+
+#define AGM45_RX_DMA DMA1
+#define AGM45_RX_DMA_STREAM DMA1_Stream5
+#define AGM45_RX_DMA_STREAM_NUM 5
+#define AGM45_RX_DMA_STREAM_IRQ DMA1_Stream5_IRQn
+#define AGM45_RX_DMAMUX() do{DMAMUX1_Channel5->CCR = 39;}while(0)
+
+
 #define WR_REG(_a_, _d_) ( (_a_) | ((_d_)<<8) )
 #define M_OP_NORMAL (0b00<<1)
 #define M_OP_FORCED (0b01<<1)
 #define M_OP_SLEEP  (0b11<<1)
 
-
-// To convert to two's complement value:
-// mask bits 3,2,1 (will contain random values) and 0 (new_data) away.
-typedef struct __attribute__((packed))
-{
-	int16_t raw_x;
-	int16_t raw_y;
-	int16_t raw_z;
-} xcel_fifo_access_rx_t;
 
 
 /*
@@ -112,14 +148,14 @@ static void start_a024_read()
 	// Make a short critical section, so that the writes start closely matched, in
 	// order to get closely matched end-of-transfer interrupts, so that they are likely to tail-chain
 	DIS_IRQ();
-	*(uint32_t*)&SPI4->TXDR = A_FIFO_READ_ADDR<<24;
-	*(uint32_t*)&SPI6->TXDR = A_FIFO_READ_ADDR<<24;
-	*(uint32_t*)&SPI2->TXDR = A_FIFO_READ_ADDR<<24;
+	*(uint32_t*)&AGM01_SPI->TXDR = A_FIFO_READ_ADDR<<24;
+	*(uint32_t*)&AGM23_SPI->TXDR = A_FIFO_READ_ADDR<<24;
+	*(uint32_t*)&AGM45_SPI->TXDR = A_FIFO_READ_ADDR<<24;
 	ENA_IRQ();
 	// add __DMB() here if DIS_IRQ() ENA_IRQ() is removed
-	*(uint16_t*)&SPI4->TXDR = 0;
-	*(uint16_t*)&SPI6->TXDR = 0;
-	*(uint16_t*)&SPI2->TXDR = 0;
+	*(uint16_t*)&AGM01_SPI->TXDR = 0;
+	*(uint16_t*)&AGM23_SPI->TXDR = 0;
+	*(uint16_t*)&AGM45_SPI->TXDR = 0;
 }
 #endif
 
@@ -170,78 +206,30 @@ volatile xyz_in_fifo_t latest_g[6];
 volatile m_dataframe_in_fifo_t latest_m[6];
 volatile int8_t a_temps[6];
 
-#if 0
-volatile int a024_spis_remaining;
 
-/*
-	SPIs are started almost at the same time, and run with synchronous clocks. They should finish at almost the same time.
-	It's expected that these inthandlers run tail-chained most of the time.
-*/
-void a024_any_spi_finished_inthandler()
-{
-	a024_spis_remaining--;
-	if(a024_spis_remaining == 0)
-	{
-		// All reads finished
-	}
-}
+#define AGM01_WR32 (*(volatile uint32_t*)&AGM01_SPI->TXDR)
+#define AGM23_WR32 (*(volatile uint32_t*)&AGM23_SPI->TXDR)
+#define AGM45_WR32 (*(volatile uint32_t*)&AGM45_SPI->TXDR)
 
-void a024_read_finished_inthandler()
-{
-	DESEL_IMU024_A();
-	*(uint32_t*)&latest_a[0] = *(uint32_t*)&SPI4->RXDR;
-	*(uint16_t*)((void*)&latest_a[0]+4) = *(uint16_t*)&SPI4->RXDR;
-	*(uint32_t*)&latest_a[2] = *(uint32_t*)&SPI6->RXDR;
-	*(uint16_t*)((void*)&latest_a[2]+4) = *(uint16_t*)&SPI6->RXDR;
-	*(uint32_t*)&latest_a[4] = *(uint32_t*)&SPI2->RXDR;
-	*(uint16_t*)((void*)&latest_a[4]+4) = *(uint16_t*)&SPI2->RXDR;
+#define AGM01_WR16 (*(volatile uint16_t*)&AGM01_SPI->TXDR)
+#define AGM23_WR16 (*(volatile uint16_t*)&AGM23_SPI->TXDR)
+#define AGM45_WR16 (*(volatile uint16_t*)&AGM45_SPI->TXDR)
 
-}
-#endif
+#define AGM01_WR8  (*(volatile uint8_t*)&AGM01_SPI->TXDR)
+#define AGM23_WR8  (*(volatile uint8_t*)&AGM23_SPI->TXDR)
+#define AGM45_WR8  (*(volatile uint8_t*)&AGM45_SPI->TXDR)
 
-/*
-	SPI is master. Timing is totally deterministic, minus APB bus uncertainty.
-	APB bus will never be heavily loaded. Uncertainty is in range of tens of nanoseconds - hundreds worst.
+#define AGM01_RD32 (*(volatile uint32_t*)&AGM01_SPI->RXDR)
+#define AGM23_RD32 (*(volatile uint32_t*)&AGM23_SPI->RXDR)
+#define AGM45_RD32 (*(volatile uint32_t*)&AGM45_SPI->RXDR)
 
-	SPI clock = 6.25 MHz
-	16 bits = 2.56 us
-	5 us is surely long enough to read the FIFO fill level
+#define AGM01_RD16 (*(volatile uint16_t*)&AGM01_SPI->RXDR)
+#define AGM23_RD16 (*(volatile uint16_t*)&AGM23_SPI->RXDR)
+#define AGM45_RD16 (*(volatile uint16_t*)&AGM45_SPI->RXDR)
 
-	48 bits = 7.68 us
-	10 us is surely long enough to read FIFO content
-	
-	- Timer int: Issue A0 A2 A4 status read. Set next timer int 5 us from now
-	- Timer int: Read A0 A2 A4 status. Issue relevant FIFO reads (where data exists). Set next timer int 10 us from now.
-	- Timer int: Read the data. Issue A1 A3 A4 status read, and so on...
-
-
-	Magnetometer is used in "FORCED" mode, meaning that it doesn't free run, conversion is triggered by us.
-	Given the deterministic conversion time, we can just read out the data when we know it's ready.
-*/
-
-#define AGM01_WR32 (*(volatile uint32_t*)&SPI4->TXDR)
-#define AGM23_WR32 (*(volatile uint32_t*)&SPI6->TXDR)
-#define AGM45_WR32 (*(volatile uint32_t*)&SPI2->TXDR)
-
-#define AGM01_WR16 (*(volatile uint16_t*)&SPI4->TXDR)
-#define AGM23_WR16 (*(volatile uint16_t*)&SPI6->TXDR)
-#define AGM45_WR16 (*(volatile uint16_t*)&SPI2->TXDR)
-
-#define AGM01_WR8  (*(volatile uint8_t*)&SPI4->TXDR)
-#define AGM23_WR8  (*(volatile uint8_t*)&SPI6->TXDR)
-#define AGM45_WR8  (*(volatile uint8_t*)&SPI2->TXDR)
-
-#define AGM01_RD32 (*(volatile uint32_t*)&SPI4->RXDR)
-#define AGM23_RD32 (*(volatile uint32_t*)&SPI6->RXDR)
-#define AGM45_RD32 (*(volatile uint32_t*)&SPI2->RXDR)
-
-#define AGM01_RD16 (*(volatile uint16_t*)&SPI4->RXDR)
-#define AGM23_RD16 (*(volatile uint16_t*)&SPI6->RXDR)
-#define AGM45_RD16 (*(volatile uint16_t*)&SPI2->RXDR)
-
-#define AGM01_RD8 (*(volatile uint8_t*)&SPI4->RXDR)
-#define AGM23_RD8 (*(volatile uint8_t*)&SPI6->RXDR)
-#define AGM45_RD8 (*(volatile uint8_t*)&SPI2->RXDR)
+#define AGM01_RD8 (*(volatile uint8_t*)&AGM01_SPI->RXDR)
+#define AGM23_RD8 (*(volatile uint8_t*)&AGM23_SPI->RXDR)
+#define AGM45_RD8 (*(volatile uint8_t*)&AGM45_SPI->RXDR)
 
 #define AG01_READ_CMD() do{AGM01_WR32 = 0x000000bf; __DMB(); AGM01_WR16 = 0x0000; __DMB(); AGM01_WR8 = 0x00; __DMB();}while(0)
 #define AG23_READ_CMD() do{AGM23_WR32 = 0x000000bf; __DMB(); AGM23_WR16 = 0x0000; __DMB(); AGM23_WR8 = 0x00; __DMB();}while(0)
@@ -254,8 +242,6 @@ void a024_read_finished_inthandler()
 #define M01_READ_CMD_PART2() do{AGM01_WR8 = 0x00; __DMB();}while(0)
 #define M23_READ_CMD_PART2() do{AGM23_WR8 = 0x00; __DMB();}while(0)
 #define M45_READ_CMD_PART2() do{AGM45_WR8 = 0x00; __DMB();}while(0)
-
-#define STATUS_FILL_LEVEL_MASK (0x7f00)
 
 static inline void set_timer(uint16_t tenth_us)
 {
@@ -308,7 +294,7 @@ static inline void set_timer(uint16_t tenth_us)
 #error "You really shouldn't be doing this. The ISR will hog up the CPU."
 #endif
 
-
+#define REPOLL_WAIT_TIME 5000
 
 volatile int a_status_cnt[6];
 volatile int a_nonstatus_cnt[6];
@@ -318,50 +304,478 @@ volatile int g_nonstatus_cnt[6];
 volatile int dbg;
 volatile int trig_m;
 
-// Missing numbers will go into default:, which will disable chip select signals and wait additional deselect time
-enum
+volatile int cur_state;
+
+/*
+	Both gyro and accelerometer in BMX055 are free-running, on internal, non-precision oscillator.
+	The data generation cannot be synced.
+
+	We may want to have equitemporal (is that a word? Trying to sound fancy) -- same-time samples
+	of all six devices. 
+
+	The only way to achieve something closer to that, is to minimize time difference by using
+	higher-than-necessary sampling rate, then average the samples together to form the desired output rate.
+
+	Gyro sampling rate = 1000Hz (internal filter BW = 116Hz)
+	Xcel sampling rate = 500Hz (internal filter BW = 250Hz)
+
+	Values are accumulated in the BMX055 FIFOs until there is at least:
+	* 4 gyro samples (0b100 or more; i.e., & 0b01111100 (0x7c) is true)
+	* 2 xcel samples (0b10 or more; i.e.,  & 0b01111110 (0x7e) is true)
+
+	It's acceptable to have one more (5 gyro, 3 xcel). More than that is considered a timing error, meaning
+	significant data rate error between the devices.
+
+	A amount to read: 2 or 3: fifo_status & 0b00000011 (0x03)
+	A mask:   0b00000010 (0x02) must equal
+	          0b00000010 (0x02) --> (2 or 3)
+	(Errmask:  0b11111100 (0xfc) is true (4 or more))
+
+
+	G amount to read: 4 or 5: fifo_status & 0b00000101 (0x05)
+	G mask:   0b00000110 (0x06) must equal)
+	          0b00000100 (0x04) --> (4 or 5)
+	Err analysis:
+	          condition would check ok the next time at 12, 13, then at 52, 53...
+	-> causes significant delay, easily detected by a watchdog.
+	(Errmask:  0b11111000 (0xf8) is true (8 or more) -- will trig after 12 samples in FIFO, causing a slight delay in error detection.)
+
+
+*/
+
+#define REQUIRED_FIRST_MASK  0x0606020202020202ULL
+#define REQUIRED_FIRST       0x0404020202020202ULL
+
+#define REQUIRED_SECOND_MASK 0x06060606UL
+#define REQUIRED_SECOND      0x04040404UL
+
+#define READ_LEN_FIRST_MASK  0x0505030303030303ULL
+#define READ_LEN_SECOND_MASK 0x05050505UL
+
+
+static void ag_do_fifo_lvl_read()
 {
-	IDLE = 0,
-	START_A024_STATUS_READ = 1,
-	// deassert chip selects
-	READ_A024_STATUS__START_DATA_READ = 3,
-	// deassert chip selects
-	READ_A024_DATA__START_A135_STATUS_READ = 5,
-	// deassert chip selects
-	READ_A135_STATUS__START_DATA_READ = 7,
-	// deassert chip selects
-	READ_A135_DATA__START_G024_STATUS_READ = 9,
-	// deassert chip selects
-	READ_G024_STATUS__START_DATA_READ = 11,
-	// deassert chip selects
-	READ_G024_DATA__START_G135_STATUS_READ = 13,
-	// deassert chip selects
-	READ_G135_STATUS__START_DATA_READ = 15,
-	// deassert chip selects
-	READ_G135_DATA__TRIG_M024__OR__START_WAIT = 17,
-	// deassert chip selects
-	TRIG_M135 = 19,
-	// deassert chip selects
-	START_A024_TEMP_READ = 21,
-	// deassert chip selects
-	READ_A024_TEMP__START_A135_TEMP_READ = 23,
-	// deassert chip selects
-	READ_A135_TEMP__START_M024_DATA_READ = 25,
-	CONTINUE_M024_DATA_READ = 26,
-	// deassert chip selects
-	READ_M024_DATA__START_M135_DATA_READ = 28,
-	CONTINUE_M135_DATA_READ = 29,
-	// deassert chip selects
-	READ_M135_DATA__START_WAIT = 31 // this deasserts chip selects manually (without help of default:)
-} cur_state;
+	AGM01_WR16 = 0x008e;
+	AGM23_WR16 = 0x008e;
+	AGM45_WR16 = 0x008e;
+}
+
+// Mask bit7 away to get the actual count.
+static inline uint8_t ag01_read_fifo_lvl()
+{
+	uint16_t status = AGM01_RD16;
+	return status>>8;
+}
+
+static inline uint8_t ag23_read_fifo_lvl()
+{
+	uint16_t status = AGM23_RD16;
+	return status>>8;
+}
+
+static inline uint8_t ag45_read_fifo_lvl()
+{
+	uint16_t status = AGM45_RD16;
+	return status>>8;
+}
+
+typedef struct __attribute__((packed))
+{
+	int16_t x;
+	int16_t y;
+	int16_t z;
+} xyz_i16_packed_t;
+
+
+// n field:
+// Works as a "read fifo" command (0x3f register address) on the TX packet
+// Comes inevitably back on the RX packet, containing random, do not care data
+// Is reused as a "number of samples" field, after DMA is done :-).
+typedef struct __attribute__((packed))
+{
+	uint8_t n;
+	xyz_i16_packed_t xyz[5];
+} g_dma_packet_t;
+
+typedef struct __attribute__((packed))
+{
+	uint8_t n;
+	xyz_i16_packed_t xyz[3];
+} a_dma_packet_t;
+
+volatile g_dma_packet_t g_packets[6] __attribute__((aligned(4)));
+volatile a_dma_packet_t a_packets[6] __attribute__((aligned(4)));
+
+
+static const g_dma_packet_t dma_command __attribute__((aligned(4))) = {0xbf, {{0}}};
+
+#define TX_DMA_CONFIG  (0b01UL<<16 /*med prio*/ | 0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ | 1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/)
+#define RX_DMA_CONFIG  (0b01UL<<16 /*med prio*/ | 0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ | 1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/)
+
+#define TX_BDMA_CONFIG (0b01UL<<12 /*med prio*/ | 0b00UL<<10 /*8-bit mem*/ | 0b00UL<<8 /*8-bit periph*/ | 1UL<<7 /*mem increment*/ | 1UL<<4 /*mem-to-periph*/)
+#define RX_BDMA_CONFIG (0b01UL<<12 /*med prio*/ | 0b00UL<<10 /*8-bit mem*/ | 0b00UL<<8 /*8-bit periph*/ | 1UL<<7 /*mem increment*/ | 0UL<<4 /*periph-to-mem*/)
+
+#define SPI_CR_ON (1UL<<12 /*SSI*/ | 1UL /*ena*/)
+
+static void ag01_dma_start(uint8_t n_samples, void* p_packet)
+{
+	uart_print_string_blocking("n_samples = "); o_utoa16(n_samples, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	if(n_samples < 2 || n_samples > 5)
+		error(7);
+
+	uint16_t len = n_samples*6+1;
+
+	delay_ms(4000);
+
+	uart_print_string_blocking("01SPISR = "); o_btoa16_fixed(AGM01_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01TX NDTR  = "); o_utoa16(AGM01_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01RX NDTR  = "); o_utoa16(AGM01_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n\r\n");
+
+
+	AGM01_RX_DMA_STREAM->M0AR = (uint32_t)&p_packet;
+	AGM01_RX_DMA_STREAM->NDTR = len;
+	DMA_CLEAR_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM);
+	AGM01_RX_DMA_STREAM->CR = RX_DMA_CONFIG | 0UL;
+
+	AGM01_TX_DMA_STREAM->NDTR = len;
+	DMA_CLEAR_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM);
+	AGM01_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 0UL;
+
+	AGM01_SPI->TSIZE = len;
+	__DSB();
+
+	uart_print_string_blocking("01SPISR = "); o_btoa16_fixed(AGM01_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01TX NDTR  = "); o_utoa16(AGM01_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01RX NDTR  = "); o_utoa16(AGM01_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n\r\n");
+	AGM01_RX_DMA_STREAM->CR = RX_DMA_CONFIG | 1UL;
+	AGM01_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 1UL;
+
+	AGM01_SPI->CR1 = SPI_CR_ON | (1UL<<9);
+
+	delay_ms(2);
+
+	uart_print_string_blocking("01SPISR = "); o_btoa16_fixed(AGM01_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01TX NDTR  = "); o_utoa16(AGM01_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01RX NDTR  = "); o_utoa16(AGM01_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n\r\n");
+
+	while(1);
+}
+
+static void ag23_dma_start(uint8_t n_samples, void* p_packet)
+{
+	uint16_t len = n_samples*6+1;
+
+	AGM23_TX_DMA_STREAM->CM0AR = (uint32_t)&p_packet;
+	AGM23_TX_DMA_STREAM->CNDTR = len;
+	BDMA_CLEAR_INTFLAGS(AGM23_RX_DMA, AGM23_RX_DMA_STREAM_NUM);
+	AGM23_RX_DMA_STREAM->CCR = RX_BDMA_CONFIG | 1UL;
+
+	AGM23_TX_DMA_STREAM->CNDTR = len;
+	BDMA_CLEAR_INTFLAGS(AGM23_TX_DMA, AGM23_TX_DMA_STREAM_NUM);
+	AGM23_TX_DMA_STREAM->CCR = TX_BDMA_CONFIG | 1UL;
+
+	AGM23_SPI->TSIZE = len;
+	__DSB();
+	AGM23_SPI->CR1 = SPI_CR_ON | (1UL<<9);
+}
+
+// This is the last DMA to start: get an interrupt when it's finished.
+static void ag45_dma_start(uint8_t n_samples, void* p_packet)
+{
+	uint16_t len = n_samples*6+1;
+
+	AGM45_RX_DMA_STREAM->M0AR = (uint32_t)&p_packet;
+	AGM45_RX_DMA_STREAM->NDTR = len;
+	DMA_CLEAR_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM);
+	AGM45_RX_DMA_STREAM->CR = RX_DMA_CONFIG | 1UL<<4 /*complete interrupt ena*/ | 1UL;
+
+	AGM45_TX_DMA_STREAM->NDTR = len;
+	DMA_CLEAR_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM);
+	AGM45_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 1UL;
+
+	AGM45_SPI->TSIZE = len;
+	__DSB();
+	AGM45_SPI->CR1 = SPI_CR_ON | (1UL<<9);
+}
+
+volatile int data_ok;
 
 void imu_fsm_inthandler()
 {
+	LED_ON();
 	TIM3->SR = 0UL;
 
-	static int reading0, reading1, reading2; // was reading started in the previous state? Numbers do not point to sensor indeces
+	static union
+	{
+		struct __attribute__((packed))
+		{
+			uint8_t a[6];
+			uint8_t g[6];
+		} lvls;
+
+		struct __attribute__((packed))
+		{
+			uint64_t first;
+			uint32_t second;
+		} quick;
+	} fifo;
+
+	static int kakka = 0;
+	static int kukka = 0;
+
 	switch(cur_state)
 	{
+		case 0: // Trig by timer: Assert A024, start reading FIFO fill level
+		{
+			SEL_A024();
+			ag_do_fifo_lvl_read();
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;
+		} break;
+
+		case 1: // Trig by timer: Deassert A024, Read A024 level, assert A135, start reading FIFO fill level
+		{
+			DESEL_A024();
+			fifo.lvls.a[0] = ag01_read_fifo_lvl();
+			fifo.lvls.a[2] = ag23_read_fifo_lvl();
+			fifo.lvls.a[4] = ag45_read_fifo_lvl();
+			SEL_A135();
+			ag_do_fifo_lvl_read();
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;			
+		} break;
+
+		case 2: // Trig by timer: Deassert A135, Read A135 level, assert G024, start reading FIFO fill level
+		{
+			DESEL_A135();
+			fifo.lvls.a[1] = ag01_read_fifo_lvl();
+			fifo.lvls.a[3] = ag23_read_fifo_lvl();
+			fifo.lvls.a[5] = ag45_read_fifo_lvl();
+			SEL_G024();
+			ag_do_fifo_lvl_read();
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;			
+		} break;
+
+		case 3: // Trig by timer: Deassert G024, Read G024 level, assert G135, start reading FIFO fill level
+		{
+			DESEL_G024();
+			fifo.lvls.g[0] = ag01_read_fifo_lvl();
+			fifo.lvls.g[2] = ag23_read_fifo_lvl();
+			fifo.lvls.g[4] = ag45_read_fifo_lvl();
+			SEL_G135();
+			ag_do_fifo_lvl_read();
+			set_timer(STATUS_READ_WAIT_TIME);
+			cur_state++;			
+		} break;
+
+		case 4: // Trig by timer: Deassert G135, Read G135 level, wait to start over? or Assert & DMA read A024?
+		{
+			DESEL_G135();
+			fifo.lvls.g[1] = ag01_read_fifo_lvl();
+			fifo.lvls.g[3] = ag23_read_fifo_lvl();
+			fifo.lvls.g[5] = ag45_read_fifo_lvl();
+			__DSB();
+
+			if(fifo.lvls.a[0] == 0) kakka++;
+			else if(fifo.lvls.a[0] < 4) kukka++;
+
+			if( (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
+			    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
+/*			if(
+			   fifo.lvls.g[0] >= 4 &&
+			   fifo.lvls.g[1] >= 4 &&
+			   fifo.lvls.g[2] >= 4 &&
+			   fifo.lvls.g[3] >= 4 &&
+			   fifo.lvls.g[4] >= 4 &&
+			   fifo.lvls.g[5] >= 4 &&
+			   fifo.lvls.a[0] >= 2 &&
+			   fifo.lvls.a[1] >= 2 &&
+			   fifo.lvls.a[2] >= 2 &&
+			   fifo.lvls.a[3] >= 2 &&
+			   fifo.lvls.a[4] >= 2 &&
+			   fifo.lvls.a[5] >= 2)
+*/
+			{
+
+				uart_print_string_blocking("\r\n");
+				uart_print_string_blocking("kakka = "); o_utoa16(kakka, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+				uart_print_string_blocking("kukka = "); o_utoa16(kukka, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+/*				uint64_t tmp = a.quick;
+				for(int i=0;i<64;i++)
+				{
+					if(tmp&0x8000000000000000ULL)
+						uart_print_string_blocking("1");
+					else
+						uart_print_string_blocking(".");
+					tmp<<=1;
+				}
+				uart_print_string_blocking("\r\n");*/
+
+				for(int i=0; i<6; i++)
+				{
+					uart_print_string_blocking("a: "); o_utoa16(fifo.lvls.a[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+				}
+				for(int i=0; i<6; i++)
+				{
+					uart_print_string_blocking("g: "); o_utoa16(fifo.lvls.g[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+				}
+
+				uart_print_string_blocking("quick = ");
+				o_utoa32_hex(fifo.quick.first>>32, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+				o_utoa32_hex(fifo.quick.first&0xffffffffULL, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+				o_utoa32_hex(fifo.quick.second, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+				uart_print_string_blocking("mask  = ");
+				o_utoa32_hex(REQUIRED_FIRST_MASK>>32, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+				o_utoa32_hex(REQUIRED_FIRST_MASK&0xffffffffULL, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+				o_utoa32_hex(REQUIRED_SECOND_MASK, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+				uint64_t tmpres1 = fifo.quick.first & REQUIRED_FIRST_MASK;
+				uint32_t tmpres2 = fifo.quick.second & REQUIRED_SECOND_MASK;
+
+				uart_print_string_blocking("result= ");
+				o_utoa32_hex(tmpres1>>32, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+				o_utoa32_hex(tmpres1&0xffffffffULL, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+				o_utoa32_hex(tmpres2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+				fifo.quick.first &= READ_LEN_FIRST_MASK;
+				fifo.quick.second &= READ_LEN_SECOND_MASK;
+
+				uart_print_string_blocking("readlen=");
+				o_utoa32_hex(tmpres1>>32, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+				o_utoa32_hex(tmpres1&0xffffffffULL, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+				o_utoa32_hex(tmpres2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+				while(1);
+
+				data_ok = 0;
+				// We don't need the actual FIFO level anymore, but we need the "read length" for now on,
+				// in two places (configuring the DMA channel, and later, after DMA is finished, to overwrite
+				// the n field). Let's overwrite fifo_lvls in a quick operation:
+				SEL_A024();
+				ag01_dma_start(fifo.lvls.a[0], &a_packets[0]);
+				ag23_dma_start(fifo.lvls.a[2], &a_packets[2]);
+				ag45_dma_start(fifo.lvls.a[4], &a_packets[4]);
+				// DMA interrupt is enabled here. No timer is set.
+				cur_state++;
+			}
+			else
+			{
+				cur_state = 0;
+				set_timer(REPOLL_WAIT_TIME);
+			}
+		} break;
+
+		case 5: // Trig by DMA completion: Deassert A024, Assert & DMA read A135
+		{
+			DMA_CLEAR_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM);
+
+			// todo: see if some of the DMAs not finished, give it a bit more time
+			DESEL_A024();
+			a_packets[0].n = fifo.lvls.a[0];
+			a_packets[2].n = fifo.lvls.a[2];
+			a_packets[4].n = fifo.lvls.a[4];
+			SEL_A135();
+			ag01_dma_start(fifo.lvls.a[1], &a_packets[1]);
+			ag23_dma_start(fifo.lvls.a[3], &a_packets[3]);
+			ag45_dma_start(fifo.lvls.a[5], &a_packets[5]);
+			// DMA interrupt is enabled here. No timer is set.
+			cur_state++;
+		} break;
+
+		case 6: // Trig by DMA completion: Deassert A135, Assert & DMA read G024
+		{
+			DMA_CLEAR_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM);
+
+			DESEL_A135();
+			a_packets[1].n = fifo.lvls.a[1];
+			a_packets[3].n = fifo.lvls.a[3];
+			a_packets[5].n = fifo.lvls.a[5];
+			SEL_G024();
+			ag01_dma_start(fifo.lvls.g[0], &g_packets[0]);
+			ag23_dma_start(fifo.lvls.g[2], &g_packets[2]);
+			ag45_dma_start(fifo.lvls.g[4], &g_packets[4]);
+			// DMA interrupt is enabled here. No timer is set.
+			cur_state++;
+		} break;
+
+		case 7: // Trig by DMA completion: Deassert G024, Assert & DMA read G135
+		{
+			DMA_CLEAR_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM);
+
+			DESEL_G024();
+			g_packets[0].n = fifo.lvls.g[0];
+			g_packets[2].n = fifo.lvls.g[2];
+			g_packets[4].n = fifo.lvls.g[4];
+			SEL_G135();
+			ag01_dma_start(fifo.lvls.g[1], &g_packets[1]);
+			ag23_dma_start(fifo.lvls.g[3], &g_packets[3]);
+			ag45_dma_start(fifo.lvls.g[5], &g_packets[5]);
+			// DMA interrupt is enabled here. No timer is set.
+			cur_state++;
+		} break;
+
+		case 8: // Trig by DMA completion: Deassert G135, wait to start over? or Assert & Trig M024?
+		{
+			DMA_CLEAR_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM);
+
+			DESEL_G135();
+			g_packets[1].n = fifo.lvls.g[1];
+			g_packets[3].n = fifo.lvls.g[3];
+			g_packets[5].n = fifo.lvls.g[5];
+			cur_state = 0;
+			data_ok = 1;
+			set_timer(FINAL_WAIT_TIME);
+		} break;
+
+		case 9: // Trig by timer: Deassert M024, Assert & Trig M135
+		{
+
+		} break;
+
+		case 10: // Trig by timer: Deassert M135, Assert & DMA read M024
+		{
+
+		} break;
+
+		case 11: // Trig by DMA completion: Deassert M024, Assert & DMA read M135
+		{
+
+		} break;
+
+		case 12: // Trig by DMA completion: Deassert M135, Assert A024 & start temperature read
+		{
+
+		} break;
+
+		case 13: // Trig by timer: Deassert A024, read temp, assert A135 & start temp read
+		{
+
+		} break;
+
+		case 14: // Trig by timer: Deassert A135, read temp, start final wait
+		{
+
+		} break;
+
+		case 15: // Trig by timer:
+		{
+
+		} break;
+
+		case 16: // Trig by timer:
+		{
+
+		} break;
+
+#if 0
 		case START_A024_STATUS_READ:
 		{
 			SEL_A024();
@@ -810,9 +1224,16 @@ void imu_fsm_inthandler()
 			set_timer(DESEL_WAIT_TIME);
 			cur_state++;
 		} break;
+#endif
+		default:
+		{
+			error(13);
+		} break;
 
 	}
 
+
+	LED_OFF();
 	__DSB();
 
 }
@@ -820,37 +1241,71 @@ void imu_fsm_inthandler()
 
 static void printings()
 {
-	int as[6], an[6], ax[6], ay[6], az[6];
-	int gs[6], gn[6], gx[6], gy[6], gz[6];
-	int mx[6], my[6], mz[6];
+//	int ax[6], ay[6], az[6];
+//	int gx[6], gy[6], gz[6];
+//	int mx[6], my[6], mz[6];
 
-	DIS_IRQ();
-	for(int i=0; i<6; i++)
+	static int cnt = 0;
+
+	a_dma_packet_t a[6];
+	g_dma_packet_t g[6];
+/*
+	uart_print_string_blocking("state = "); o_utoa16(cur_state, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("01SR = "); o_btoa16_fixed(AGM01_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("23SR = "); o_btoa16_fixed(AGM23_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45SR = "); o_btoa16_fixed(AGM45_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("23TXBDMA = "); o_btoa8_fixed(BDMA_INTFLAGS(AGM23_TX_DMA, AGM23_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("23RXBDMA = "); o_btoa8_fixed(BDMA_INTFLAGS(AGM23_RX_DMA, AGM23_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01TX NDTR  = "); o_utoa16(AGM01_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("23TX CNDTR = "); o_utoa16(AGM23_TX_DMA_STREAM->CNDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45TX NDTR  = "); o_utoa16(AGM45_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("01RX NDTR  = "); o_utoa16(AGM01_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("23RX CNDTR = "); o_utoa16(AGM23_RX_DMA_STREAM->CNDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45RX NDTR  = "); o_utoa16(AGM45_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	if(AGM01_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX01 ");
+	if(AGM23_TX_DMA_STREAM->CCR & 1) uart_print_string_blocking("TX23 ");
+	if(AGM45_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX45 ");
+	if(AGM01_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX01 ");
+	if(AGM23_RX_DMA_STREAM->CCR & 1) uart_print_string_blocking("RX23 ");
+	if(AGM45_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX45 ");
+
+
+	uart_print_string_blocking("\r\n");
+
+*/	if(++cnt > 2)
 	{
-		as[i] = a_status_cnt[i];
-		an[i] = a_nonstatus_cnt[i];
-		ax[i] = latest_a[i].coords.x;
-		ay[i] = latest_a[i].coords.y;
-		az[i] = latest_a[i].coords.z;
-
-		gs[i] = g_status_cnt[i];
-		gn[i] = g_nonstatus_cnt[i];
-		gx[i] = latest_g[i].coords.x;
-		gy[i] = latest_g[i].coords.y;
-		gz[i] = latest_g[i].coords.z;
-
-		mx[i] = latest_m[i].coords.x;
-		my[i] = latest_m[i].coords.y;
-		mz[i] = latest_m[i].coords.z;
-
+		while(1);
 	}
+
+	return;
+
+	while(!data_ok) ;
+	DIS_IRQ();
+	memcpy(a, a_packets, sizeof(a_packets));
+	memcpy(g, g_packets, sizeof(g_packets));
 	ENA_IRQ();
 
+	uart_print_string_blocking("A# ");
+
 	for(int i=0; i<6; i++)
 	{
-		o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
+		o_utoa16(a[i].n, printbuf); uart_print_string_blocking(printbuf);
+	}
 
-		uart_print_string_blocking(": A ");
+	uart_print_string_blocking("  G# ");
+
+	for(int i=0; i<6; i++)
+	{
+		o_utoa16(g[i].n, printbuf); uart_print_string_blocking(printbuf);
+	}
+
+/*	
 
 		o_utoa16_fixed(as[i], printbuf); uart_print_string_blocking(printbuf); 
 		uart_print_string_blocking(" / "); 
@@ -889,9 +1344,7 @@ static void printings()
 		o_itoa16_fixed(mz[i], printbuf); uart_print_string_blocking(printbuf);
 
 		uart_print_string_blocking("\r\n");
-
-	}
-
+*/
 	uart_print_string_blocking("\r\n");
 	
 }
@@ -909,7 +1362,7 @@ static void printings()
 static const uint16_t a_init_seq[] =
 {
 	WR_REG(0x0f, XCEL_RANGE_2G),
-	WR_REG(0x10, XCEL_T4MS_BW125HZ),
+	WR_REG(0x10, XCEL_T2MS_BW250HZ),
 	WR_REG(0x3e, 0b01<<6 /*FIFO mode*/ | 0b00 /*X,Y and Z stored*/)
 };
 
@@ -932,12 +1385,16 @@ static const uint16_t a_init_seq[] =
 #define GYRO_ODR2000HZ_BW230HZ 0b0001
 #define GYRO_ODR2000HZ_BW523HZ 0b0000
 
+
+
+
 static const uint16_t g_init_seq[] =
 {
 	WR_REG(0x0f, GYRO_RANGE_250DPS),
-	WR_REG(0x10, GYRO_ODR200HZ_BW64HZ),
+	WR_REG(0x10, GYRO_ODR1000HZ_BW116HZ),
 	WR_REG(0x3e, 0b01<<6 /*FIFO mode*/ | 0b00 /*X,Y and Z stored*/)
 };
+
 
 #define M_ODR_2HZ  (0b001<<3)
 #define M_ODR_6HZ  (0b010<<3)
@@ -995,7 +1452,89 @@ static const uint16_t m_init_seq[] =
 
 #include "imu_m_compensation.c"
 
-static void send_sensor_init(int bunch)
+static void m_sensor_init(int bunch)
+{
+	if(!(bunch == 0 || bunch == 1))
+		error(20);
+
+	for(int m=0; m < NUM_ELEM(m_init_seq); m++)
+	{
+		if(bunch) SEL_M135(); else SEL_M024();
+		__DSB();
+		AGM01_WR16 = m_init_seq[m];
+		AGM23_WR16 = m_init_seq[m];
+		AGM45_WR16 = m_init_seq[m];
+		__DSB();
+		delay_us(6);
+		if(bunch) DESEL_M135(); else DESEL_M024();
+		// Clean up the RX fifo of the dummy data:
+		AGM01_RD16;
+		AGM23_RD16;
+		AGM45_RD16;
+		__DSB();
+		delay_us(4);
+		if(m==0)
+			delay_ms(5); // Extra delay after the turn-on command (startup time in datasheet: 3ms)
+	}
+
+	// Fetch calibration data from the magnetometer:
+
+	if(bunch) SEL_M135(); else SEL_M024();
+	AGM01_WR8 = 0x80 | M_CALIB_START_ADDR;
+	AGM23_WR8 = 0x80 | M_CALIB_START_ADDR;
+	AGM45_WR8 = 0x80 | M_CALIB_START_ADDR;
+	__DSB();
+	while(!(AGM01_SPI->SR & 1)) ;
+	while(!(AGM23_SPI->SR & 1)) ;
+	while(!(AGM45_SPI->SR & 1)) ;
+	__DSB();
+
+	AGM01_RD8;
+	AGM23_RD8;
+	AGM45_RD8;
+	__DSB();
+
+	for(int m=0; m < sizeof(m_calib[0]); m++)
+	{
+		AGM01_WR8 = 0;
+		AGM23_WR8 = 0;
+		AGM45_WR8 = 0;
+		__DSB();
+
+		while(!(AGM01_SPI->SR & 1)) ;
+		while(!(AGM23_SPI->SR & 1)) ;
+		while(!(AGM45_SPI->SR & 1)) ;
+		__DSB();
+
+		*(((uint8_t*)&m_calib[0+bunch])+m) = AGM01_RD8; __DSB();
+		*(((uint8_t*)&m_calib[2+bunch])+m) = AGM23_RD8; __DSB();
+		*(((uint8_t*)&m_calib[4+bunch])+m) = AGM45_RD8; __DSB();
+		__DSB();
+	}
+	if(bunch) DESEL_M135(); else DESEL_M024();
+
+#if 0
+	for(int i=bunch; i<6; i+=2)
+	{
+		uart_print_string_blocking("\r\nsensor "); o_itoa16(i, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("x1="); o_itoa16(m_calib[i].x1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("y1="); o_itoa16(m_calib[i].y1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("z4="); o_itoa16(m_calib[i].z4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("x2="); o_itoa16(m_calib[i].x2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("y2="); o_itoa16(m_calib[i].y2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("z2="); o_itoa16(m_calib[i].z2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("z1="); o_utoa16(m_calib[i].z1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("xyz1="); o_utoa16(m_calib[i].xyz1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("z3="); o_itoa16(m_calib[i].z3, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("xy2="); o_itoa16(m_calib[i].xy2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("xy1="); o_utoa16(m_calib[i].xy1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("\r\n");
+	}
+#endif
+}
+
+
+static void ag_sensor_init(int bunch)
 {
 	if(!(bunch == 0 || bunch == 1))
 		error(20);
@@ -1035,81 +1574,6 @@ static void send_sensor_init(int bunch)
 		__DSB();
 		delay_us(4);
 	}
-
-	for(int m=0; m < NUM_ELEM(m_init_seq); m++)
-	{
-		if(bunch) SEL_M135(); else SEL_M024();
-		__DSB();
-		AGM01_WR16 = m_init_seq[m];
-		AGM23_WR16 = m_init_seq[m];
-		AGM45_WR16 = m_init_seq[m];
-		__DSB();
-		delay_us(6);
-		if(bunch) DESEL_M135(); else DESEL_M024();
-		// Clean up the RX fifo of the dummy data:
-		AGM01_RD16;
-		AGM23_RD16;
-		AGM45_RD16;
-		__DSB();
-		delay_us(4);
-		if(m==0)
-			delay_ms(5); // Extra delay after the turn-on command (startup time in datasheet: 3ms)
-	}
-
-	// Fetch calibration data from the magnetometer:
-
-	if(bunch) SEL_M135(); else SEL_M024();
-	AGM01_WR8 = 0x80 | M_CALIB_START_ADDR;
-	AGM23_WR8 = 0x80 | M_CALIB_START_ADDR;
-	AGM45_WR8 = 0x80 | M_CALIB_START_ADDR;
-	__DSB();
-	while(!(SPI4->SR & 1)) ;
-	while(!(SPI6->SR & 1)) ;
-	while(!(SPI2->SR & 1)) ;
-	__DSB();
-
-	AGM01_RD8;
-	AGM23_RD8;
-	AGM45_RD8;
-	__DSB();
-
-	for(int m=0; m < sizeof(m_calib[0]); m++)
-	{
-		AGM01_WR8 = 0;
-		AGM23_WR8 = 0;
-		AGM45_WR8 = 0;
-		__DSB();
-
-		while(!(SPI4->SR & 1)) ;
-		while(!(SPI6->SR & 1)) ;
-		while(!(SPI2->SR & 1)) ;
-		__DSB();
-
-		*(((uint8_t*)&m_calib[0+bunch])+m) = AGM01_RD8; __DSB();
-		*(((uint8_t*)&m_calib[2+bunch])+m) = AGM23_RD8; __DSB();
-		*(((uint8_t*)&m_calib[4+bunch])+m) = AGM45_RD8; __DSB();
-		__DSB();
-	}
-	if(bunch) DESEL_M135(); else DESEL_M024();
-
-	for(int i=bunch; i<6; i+=2)
-	{
-		uart_print_string_blocking("\r\nsensor "); o_itoa16(i, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("x1="); o_itoa16(m_calib[i].x1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("y1="); o_itoa16(m_calib[i].y1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("z4="); o_itoa16(m_calib[i].z4, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("x2="); o_itoa16(m_calib[i].x2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("y2="); o_itoa16(m_calib[i].y2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("z2="); o_itoa16(m_calib[i].z2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("z1="); o_utoa16(m_calib[i].z1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("xyz1="); o_utoa16(m_calib[i].xyz1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("z3="); o_itoa16(m_calib[i].z3, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("xy2="); o_itoa16(m_calib[i].xy2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("xy1="); o_utoa16(m_calib[i].xy1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("\r\n");
-	}
-
-	
 
 }
 
@@ -1173,13 +1637,13 @@ void init_imu()
 
 		RCC->APB2ENR |= 1UL<<13;
 
-		SPI4->CFG1 = SPI4_CLKDIV_REGVAL<<28 | 1UL<<15 /*TX DMA*/ | 1UL<<14 /*RX DMA*/ |
+		AGM01_SPI->CFG1 = SPI_CLKDIV_REGVAL<<28 | 1UL<<15 /*TX DMA*/ | 1UL<<14 /*RX DMA*/ |
 		             (1/*FIFO threshold*/   -1)<<5 | (8/*bits per frame*/   -1);
 
-		SPI4->CFG2 = 1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
+		AGM01_SPI->CFG2 = 1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
 		             1UL<<25 /*CPOL*/ | 1UL<<24 /*CPHA*/;
 		
-		SPI4->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
+		AGM01_SPI->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
 
 		IO_ALTFUNC(GPIOE,13, 5); // MISO
 
@@ -1189,22 +1653,28 @@ void init_imu()
 		IO_ALTFUNC(GPIOE,12, 5); // SCK
 		IO_SPEED(GPIOE,12, 2);
 
-		SPI4->CR1 |= 1UL;
-		SPI4->CR1 |= 1UL<<9;
+		AGM01_SPI->CR1 = SPI_CR_ON;
+		AGM01_SPI->CR1 |= 1UL<<9;
+
+		AGM01_TX_DMA_STREAM->PAR = (uint32_t)&(AGM01_SPI->TXDR);
+		AGM01_RX_DMA_STREAM->PAR = (uint32_t)&(AGM01_SPI->RXDR);
+		AGM01_TX_DMA_STREAM->M0AR = (uint32_t)&dma_command;
+		AGM01_TX_DMAMUX();
+		AGM01_RX_DMAMUX();
 	#endif
 
 	#if defined(IMU2_PRESENT) || defined(IMU3_PRESENT)
 
 		RCC->APB4ENR |= 1UL<<5;
 
-		SPI6->CFG1 = SPI4_CLKDIV_REGVAL<<28 | 1UL<<15 /*TX DMA*/ | 1UL<<14 /*RX DMA*/ |
+		AGM23_SPI->CFG1 = SPI_CLKDIV_REGVAL<<28 | 1UL<<15 /*TX DMA*/ | 1UL<<14 /*RX DMA*/ |
 		             (1/*FIFO threshold*/   -1)<<5 | (8/*bits per frame*/   -1);
 
-		SPI6->CFG2 = 1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
+		AGM23_SPI->CFG2 = 1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
 		             1UL<<25 /*CPOL*/ | 1UL<<24 /*CPHA*/;
 
 
-		SPI6->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
+		AGM23_SPI->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
 
 		IO_ALTFUNC(GPIOG,12, 5); // MISO
 
@@ -1214,8 +1684,16 @@ void init_imu()
 		IO_ALTFUNC(GPIOG,13, 5); // SCK
 		IO_SPEED(GPIOG,13, 2);
 
-		SPI6->CR1 |= 1UL;
-		SPI6->CR1 |= 1UL<<9;
+		AGM23_SPI->CR1 = SPI_CR_ON;
+		AGM23_SPI->CR1 |= 1UL<<9;
+
+		AGM23_TX_DMA_STREAM->CPAR = (uint32_t)&(AGM23_SPI->TXDR);
+		AGM23_RX_DMA_STREAM->CPAR = (uint32_t)&(AGM23_SPI->RXDR);
+
+		AGM23_TX_DMA_STREAM->CM0AR = (uint32_t)&dma_command;
+		AGM23_TX_DMAMUX();
+		AGM23_RX_DMAMUX();
+
 
 	#endif
 
@@ -1223,14 +1701,14 @@ void init_imu()
 
 		RCC->APB1LENR |= 1UL<<14;
 
-		SPI2->CFG1 = SPI4_CLKDIV_REGVAL<<28 | 1UL<<15 /*TX DMA*/ | 1UL<<14 /*RX DMA*/ |
+		AGM45_SPI->CFG1 = SPI_CLKDIV_REGVAL<<28 | 1UL<<15 /*TX DMA*/ | 1UL<<14 /*RX DMA*/ |
 		             (1/*FIFO threshold*/   -1)<<5 | (8/*bits per frame*/   -1);
 
-		SPI2->CFG2 = 1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
+		AGM45_SPI->CFG2 = 1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
 		             1UL<<25 /*CPOL*/ | 1UL<<24 /*CPHA*/;
 
 
-		SPI2->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
+		AGM45_SPI->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
 
 		IO_ALTFUNC(GPIOI, 2, 5); // MISO
 
@@ -1240,8 +1718,16 @@ void init_imu()
 		IO_ALTFUNC(GPIOI, 1, 5); // SCK
 		IO_SPEED(GPIOI, 1, 2);
 
-		SPI2->CR1 |= 1UL;
-		SPI2->CR1 |= 1UL<<9;
+		AGM45_SPI->CR1 = SPI_CR_ON;
+		AGM45_SPI->CR1 |= 1UL<<9;
+
+		AGM45_TX_DMA_STREAM->PAR = (uint32_t)&(AGM45_SPI->TXDR);
+		AGM45_RX_DMA_STREAM->PAR = (uint32_t)&(AGM45_SPI->RXDR);
+
+		AGM45_TX_DMA_STREAM->M0AR = (uint32_t)&dma_command;
+
+		AGM45_TX_DMAMUX();
+		AGM45_RX_DMAMUX();
 
 	#endif
 
@@ -1284,11 +1770,20 @@ void init_imu()
 	TIM3->DIER |= 1UL; // Update interrupt
 	TIM3->PSC = 20;
 
-	send_sensor_init(0);
-	send_sensor_init(1);
+	m_sensor_init(0);
+	m_sensor_init(1);
 
+	ag_sensor_init(0);
+	ag_sensor_init(1);
+
+	// Do not add delay here: init of the a&g flush the FIFOs, and we want to have the interrupt running right away
+	// (within about 2-3 ms) so that excess data does not accumulate.
+	// ISR considers excess data items in FIFOs as an error condition.
 	NVIC_SetPriority(TIM3_IRQn, 5);
 	NVIC_EnableIRQ(TIM3_IRQn);
+
+	NVIC_SetPriority(AGM45_RX_DMA_STREAM_IRQ, 5);
+	NVIC_EnableIRQ(AGM45_RX_DMA_STREAM_IRQ);
 
 }
 
@@ -1296,15 +1791,15 @@ void init_imu()
 
 void timer_test()
 {
-	int cnt = 0;
+//	int cnt = 0;
 	set_timer(50000);
 
 	while(1)
 	{
 		printings();
 
-		trig_m = 1;
-		delay_ms(200);
+//		trig_m = 1;
+//		delay_ms(200);
 	}
 }
 
@@ -1313,7 +1808,7 @@ void deinit_imu()
 {
 	#if defined(IMU0_PRESENT) || defined(IMU1_PRESENT)
 
-		SPI4->CR1 = 0;
+		AGM01_SPI->CR1 = 0;
 		RCC->APB2ENR &= ~(1UL<<13);
 
 		IO_TO_GPI(GPIOE,13); // MISO
@@ -1327,7 +1822,7 @@ void deinit_imu()
 
 	#if defined(IMU2_PRESENT) || defined(IMU3_PRESENT)
 
-		SPI6->CR1 = 0;
+		AGM23_SPI->CR1 = 0;
 		RCC->APB4ENR &= ~(1UL<<5);
 
 		IO_TO_GPI(GPIOG,12); // MISO
@@ -1341,7 +1836,7 @@ void deinit_imu()
 
 	#if defined(IMU4_PRESENT) || defined(IMU5_PRESENT)
 
-		SPI2->CR1 = 0;
+		AGM45_SPI->CR1 = 0;
 		RCC->APB1LENR &= ~(1UL<<14);
 
 		IO_TO_GPI(GPIOI, 2); // MISO

@@ -47,11 +47,11 @@ static char printbuf[128];
 
 #define WR_DMA DMA1
 #define WR_DMA_STREAM DMA1_Stream2
-#define WR_DMA_STREAM_NUM 2 // stream number
+#define WR_DMA_STREAM_NUM 2
 
 #define RD_DMA DMA1
 #define RD_DMA_STREAM DMA1_Stream3
-#define RD_DMA_STREAM_NUM 3 // stream number
+#define RD_DMA_STREAM_NUM 3
 #define RD_DMA_STREAM_IRQ DMA1_Stream3_IRQn
 
 #define DCMI_DMA DMA2

@@ -42,6 +42,24 @@
 	else if((_stream_) == 7) (_dma_)->HIFCR = 0b111101UL<<22; \
 	}while(0)
 
+#define BDMA_CLEAR_INTFLAGS(_dma_, _stream_) do{ _dma_->IFCR = 0b1111UL<<(4*_stream_);}while(0)
+
+
+static inline uint32_t DMA_INTFLAGS(DMA_TypeDef* _dma_, int _stream_)
+{                  
+	if     ((_stream_) == 0) return _dma_->LIFCR&(0b111101UL<<0)>>0;
+	else if((_stream_) == 1) return _dma_->LIFCR&(0b111101UL<<6)>>6;
+	else if((_stream_) == 2) return _dma_->LIFCR&(0b111101UL<<16)>>16;
+	else if((_stream_) == 3) return _dma_->LIFCR&(0b111101UL<<22)>>22;
+	else if((_stream_) == 4) return _dma_->HIFCR&(0b111101UL<<0)>>0;
+	else if((_stream_) == 5) return _dma_->HIFCR&(0b111101UL<<6)>>6;
+	else if((_stream_) == 6) return _dma_->HIFCR&(0b111101UL<<16)>>16;
+	else if((_stream_) == 7) return _dma_->HIFCR&(0b111101UL<<22)>>22;
+
+	return 0;
+}
+
+#define BDMA_INTFLAGS(_dma_, _stream_) ((_dma_->ISR&(0b1111UL<<(4*_stream_)))>>(4*_stream_))
 
 #define IO_ALTFUNC(port, pin, af) do{ IO_TO_ALTFUNC((port),(pin)); IO_SET_ALTFUNC((port),(pin),(af));}while(0)
 

@@ -179,6 +179,7 @@ void main()
 	RCC->D3CFGR = 0b100UL<<4 /*D3PPRE = 2*/;
 
 	RCC->AHB1ENR |= 1UL<<1 /*DMA2*/ | 1UL<<0 /*DMA1*/;
+	RCC->AHB4ENR |= 1UL<<21 /*BDMA*/;
 
 
 	while(!(RCC->CR & 1UL<<25)) ; // Wait for PLL1 ready
@@ -241,7 +242,7 @@ void main()
 
 
 	init_sbc_comm();
-	delay_ms(2000);
+	delay_ms(1000);
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
 
