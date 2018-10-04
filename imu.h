@@ -21,5 +21,6 @@
 #pragma once
 #include <stdint.h>
 
+void init_imu() __attribute__((section(".text_itcm")));
 void init_imu();
 

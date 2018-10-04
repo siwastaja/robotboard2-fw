@@ -62,7 +62,7 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0074            2       */ (unsigned int *) invalid_handler,
 /* 0x0078            3       */ (unsigned int *) epc_rx_dma_inthandler,
 /* 0x007C            4       */ (unsigned int *) invalid_handler,
-/* 0x0080            5       */ (unsigned int *) imu_fsm_inthandler,
+/* 0x0080            5       */ (unsigned int *) invalid_handler,
 /* 0x0084            6       */ (unsigned int *) invalid_handler,
 /* 0x0088 ADC1&2             */ (unsigned int *) invalid_handler,
 /* 0x008C                    */ (unsigned int *) invalid_handler,
