@@ -373,7 +373,7 @@ static inline void set_timer(uint16_t tenth_us)
 // You should never encounter more than 1 item in any FIFO. If this happens, reduce the wait time to run faster.
 // Running faster reduces readout latencies. Don't go too low mostly because the fsm inthandler starts to eat up
 // some considerable CPU time.
-#define FINAL_WAIT_TIME 1000
+#define FINAL_WAIT_TIME 5000
 #define FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS (FINAL_WAIT_TIME - (TRIG_REG_WRITE_WAIT_TIME*2 + \
 		STATUS_READ_WAIT_TIME*2 + M_READ_PART1_WAIT_TIME*2 + M_READ_PART2_WAIT_TIME*2 + 7*3)) /*Estimate of 0.3us per code execution per state*/
 
@@ -381,7 +381,7 @@ static inline void set_timer(uint16_t tenth_us)
 //#error "You really shouldn't be doing this. The ISR will hog up the CPU."
 //#endif
 
-#define REPOLL_WAIT_TIME 1000
+#define REPOLL_WAIT_TIME 2000
 
 // 1.28us per byte -> add 10% extra: 1.4us per byte. Then, add 5 us extra to the total.
 #define A_DMA_WAIT_TIME ((3*6+1)*14 + 50)
@@ -594,7 +594,7 @@ static void ag45_nondma()
 static void ag23_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 2 || n_samples > 7)
+	if(n_samples < 1 || n_samples > 7)
 		error(7);
 
 	// BDMA doesn't clear the enable bit after completion, so we need to do it manually before starting the new transfer:
@@ -633,7 +633,7 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 static void ag01_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 2 || n_samples > 7)
+	if(n_samples < 1 || n_samples > 7)
 		error(7);
 
 	uint16_t len = n_samples*6+1;
@@ -670,7 +670,7 @@ static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 static void ag45_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 2 || n_samples > 7)
+	if(n_samples < 1 || n_samples > 7)
 		error(7);
 
 	uint16_t len = n_samples*6+1;
@@ -726,7 +726,7 @@ int curd;
 void imu_fsm_inthandler() __attribute__((section(".text_itcm")));
 void imu_fsm_inthandler()
 {
-	LED_ON();
+//	LED_ON();
 	TIM3->SR = 0UL;
 
 	switch(cur_state)
@@ -744,8 +744,6 @@ void imu_fsm_inthandler()
 		case 1: // Trig by timer: Deassert A024, Read A024 level, assert A135, start reading FIFO fill level
 		{
 			DESEL_A024();
-			kukka_cnt++;
-
 			fifo.lvls.a[0] = ag01_read_fifo_lvl();
 			fifo.lvls.a[2] = ag23_read_fifo_lvl();
 			fifo.lvls.a[4] = ag45_read_fifo_lvl();
@@ -787,19 +785,6 @@ void imu_fsm_inthandler()
 			fifo.lvls.g[5] = ag45_read_fifo_lvl();
 			__DSB();
 
-			dbg[curd][0] = fifo.lvls.a[0];
-			dbg[curd][1] = fifo.lvls.a[1];
-			dbg[curd][2] = fifo.lvls.a[2];
-			dbg[curd][3] = fifo.lvls.a[3];
-			dbg[curd][4] = fifo.lvls.a[4];
-			dbg[curd][5] = fifo.lvls.a[5];
-			dbg[curd][6] = fifo.lvls.g[0];
-			dbg[curd][7] = fifo.lvls.g[1];
-			dbg[curd][8] = fifo.lvls.g[2];
-			dbg[curd][9] = fifo.lvls.g[3];
-			dbg[curd][10] = fifo.lvls.g[4];
-			dbg[curd][11] = fifo.lvls.g[5];
-
 			if(
 				fifo.lvls.a[0] > 4 ||
 				fifo.lvls.a[1] > 4 ||
@@ -812,14 +797,10 @@ void imu_fsm_inthandler()
 				fifo.lvls.g[2] > 6 ||
 				fifo.lvls.g[3] > 6 ||
 				fifo.lvls.g[4] > 6 ||
-				fifo.lvls.g[5] > 6 ||
-				curd >= DLEN)
+				fifo.lvls.g[5] > 6)
 			{
 
-				if(curd >= DLEN)
-					uart_print_string_blocking("\r\nSTOPPED: end of dbg - NO ERRORS\r\n");
-				else
-					uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
+				uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
 
 				for(int i=0; i<6; i++)
 				{
@@ -833,38 +814,19 @@ void imu_fsm_inthandler()
 					if(fifo.lvls.g[i] > 5) uart_print_string_blocking(" !");
 					uart_print_string_blocking("\r\n");
 				}
-
-				uart_print_string_blocking("TRACE:\r\n");
-
-				for(int i=0; i<=curd; i++)
-				{
-					for(int j=0; j<12; j++)
-					{
-						o_utoa16(dbg[i][j], printbuf); uart_print_string_blocking(printbuf);
-//						if(j==5)
-						uart_print_string_blocking(",");
-					}
-					uart_print_string_blocking("\r\n");
-				}
-				uart_print_string_blocking("\r\nEND\r\n");
-				
-
 				error(17);
 			}
-
-			curd++;
-
 
 
 			if(
 //			    (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
 //			    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
-				fifo.lvls.a[0] >= 2 &&
-				fifo.lvls.a[1] >= 2 &&
-				fifo.lvls.a[2] >= 2 &&
-				fifo.lvls.a[3] >= 2 &&
-				fifo.lvls.a[4] >= 2 &&
-				fifo.lvls.a[5] >= 2 &&
+				fifo.lvls.a[0] >= 1 &&
+				fifo.lvls.a[1] >= 1 &&
+				fifo.lvls.a[2] >= 1 &&
+				fifo.lvls.a[3] >= 1 &&
+				fifo.lvls.a[4] >= 1 &&
+				fifo.lvls.a[5] >= 1 &&
 				fifo.lvls.g[0] >= 4 &&
 				fifo.lvls.g[1] >= 4 &&
 				fifo.lvls.g[2] >= 4 &&
@@ -873,45 +835,6 @@ void imu_fsm_inthandler()
 				fifo.lvls.g[5] >= 4)
 
 			{
-/*
-				for(int i=0; i<6; i++)
-				{
-					uart_print_string_blocking("a: "); o_utoa16(fifo.lvls.a[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-				}
-				for(int i=0; i<6; i++)
-				{
-					uart_print_string_blocking("g: "); o_utoa16(fifo.lvls.g[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-				}
-
-				uart_print_string_blocking("quick = ");
-				o_utoa32_hex(fifo.quick.first>>32, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				o_utoa32_hex(fifo.quick.first&0xffffffffULL, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				o_utoa32_hex(fifo.quick.second, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-				uart_print_string_blocking("mask  = ");
-				o_utoa32_hex(REQUIRED_FIRST_MASK>>32, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				o_utoa32_hex(REQUIRED_FIRST_MASK&0xffffffffULL, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				o_utoa32_hex(REQUIRED_SECOND_MASK, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-				uint64_t tmpres1 = fifo.quick.first & REQUIRED_FIRST_MASK;
-				uint32_t tmpres2 = fifo.quick.second & REQUIRED_SECOND_MASK;
-
-				uart_print_string_blocking("result= ");
-				o_utoa32_hex(tmpres1>>32, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				o_utoa32_hex(tmpres1&0xffffffffULL, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				o_utoa32_hex(tmpres2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-				fifo.quick.first &= READ_LEN_FIRST_MASK;
-				fifo.quick.second &= READ_LEN_SECOND_MASK;
-
-				uart_print_string_blocking("readlen=");
-				o_utoa32_hex(tmpres1>>32, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				o_utoa32_hex(tmpres1&0xffffffffULL, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				o_utoa32_hex(tmpres2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-				while(1);
-*/
-
 				fifo.quick.first &= READ_LEN_FIRST_MASK;
 				fifo.quick.second &= READ_LEN_SECOND_MASK;
 
@@ -1492,7 +1415,7 @@ void imu_fsm_inthandler()
 	}
 
 
-	LED_OFF();
+//	LED_OFF();
 	__DSB();
 
 }
@@ -1508,35 +1431,6 @@ static void printings()
 
 	a_dma_packet_t a[6];
 	g_dma_packet_t g[6];
-
-//	uart_print_string_blocking("state = "); o_utoa16(cur_state, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-//	if(++cnt > 2)
-//	{
-//		while(1);
-//	}
-
-/*	int as[6], gs[6];
-	DIS_IRQ();
-	for(int i=0; i<6; i++)
-	{
-		as[i] = fifo.lvls.a[i];
-		gs[i] = fifo.lvls.g[i];
-	}
-	ENA_IRQ();
-
-	for(int i=0; i<6; i++)
-	{
-		o_utoa16(as[i], printbuf); uart_print_string_blocking(printbuf);
-	}
-
-	uart_print_string_blocking(" ");
-	for(int i=0; i<6; i++)
-	{
-		o_utoa16(gs[i], printbuf); uart_print_string_blocking(printbuf);
-	}
-	uart_print_string_blocking("\r\n");*/
-	return;
 
 	while(!data_ok) ;
 	DIS_IRQ();
@@ -1655,7 +1549,7 @@ static void printings()
 		uart_print_string_blocking("\r\n");
 */
 	uart_print_string_blocking("\r\n");
-//	delay_ms(100);
+	delay_ms(200);
 
 //				NVIC_SystemReset();
 //				while(1);
@@ -2136,7 +2030,7 @@ void init_imu()
 
 	TIM3->CR1 = 1UL<<3 /* one pulse mode */ | 1UL<<2 /*only over/underflow generates update int*/;
 	TIM3->DIER |= 1UL; // Update interrupt
-	TIM3->PSC = 20;
+	TIM3->PSC = 20-1;
 
 	m_sensor_init(0);
 	m_sensor_init(1);
@@ -2237,16 +2131,43 @@ void init_imu()
 }
 
 
+/*
+	CPU analysis: delay_ms(10) takes:
+	9 000 us (0.0% burden), fsm disables (nothing runs, expect delay_ms() function)
+	9 314 us (3.4% burden), IMU fsm running, REPOLL_WAIT = 1000, FINAL_WAIT = 1000
+	9 256 us (2.8% burden),                                      FINAL_WAIT = 10000
+	9 088 us (0.9% burden),                  REPOLL_WAIT = 5000, FINAL_WAIT = 10000
+
+*/
 
 void timer_test()
 {
 //	int cnt = 0;
 	set_timer(50000);
 
+//	RCC->APB1LENR |= 1UL<<2;
+//	__DSB();
+//	TIM4->PSC = 200-1;
+//	TIM4->CR1 = 1UL<<3 /* one pulse mode */;
+//	TIM4->ARR = 0xffffffff;
+
+//	delay_ms(1);
+
 	while(1)
 	{
 		printings();
 
+/*
+		TIM4->CNT = 0;
+		__DSB();
+		TIM4->CR1 = 1UL<<3 | 1UL; // Enable
+		__DSB();
+		delay_ms(10);
+		uint32_t time = TIM4->CNT;		
+		TIM4->CR1 = 1UL<<3;
+		__DSB();
+		uart_print_string_blocking("time : "); o_utoa32(time, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+*/		
 //		trig_m = 1;
 //		delay_ms(200);
 	}
