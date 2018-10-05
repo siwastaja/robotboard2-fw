@@ -511,7 +511,7 @@ static const g_dma_packet_t bdma_command __attribute__((aligned(4))) __attribute
 #define SPI_CFG1_RXTXDMA (SPI_CLKDIV_REGVAL<<28 | 1UL<<15 /*TX DMA*/ | 1UL<<14 /*RX DMA*/ | \
                         (4/*FIFO threshold*/   -1)<<5 | (8/*bits per frame*/   -1))
 
-
+static void ag01_nondma() __attribute__((section(".text_itcm")));
 static void ag01_nondma()
 {
 	AGM01_SPI->CR1 = SPI_CR_OFF;
@@ -524,6 +524,7 @@ static void ag01_nondma()
 	AGM01_SPI->CR1 |= 1UL<<9;
 }
 
+static void ag23_nondma() __attribute__((section(".text_itcm")));
 static void ag23_nondma()
 {
 	AGM23_SPI->CR1 = SPI_CR_OFF;
@@ -536,6 +537,7 @@ static void ag23_nondma()
 	AGM23_SPI->CR1 |= 1UL<<9;
 }
 
+static void ag45_nondma() __attribute__((section(".text_itcm")));
 static void ag45_nondma()
 {
 	AGM45_SPI->CR1 = SPI_CR_OFF;
@@ -649,21 +651,6 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 
 volatile int data_ok;
 
-volatile static union
-{
-	struct __attribute__((packed))
-	{
-		uint8_t a[6];
-		uint8_t g[6];
-	} lvls;
-
-	struct __attribute__((packed))
-	{
-		uint64_t first;
-		uint32_t second;
-	} quick;
-} fifo;
-
 #define DLEN 8000
 uint8_t dbg[DLEN][12];
 int curd;
@@ -671,6 +658,21 @@ int curd;
 void imu_fsm_inthandler() __attribute__((section(".text_itcm")));
 void imu_fsm_inthandler()
 {
+	static union
+	{
+		struct __attribute__((packed))
+		{
+			uint8_t a[6];
+			uint8_t g[6];
+		} lvls;
+
+		struct __attribute__((packed))
+		{
+			uint64_t first;
+			uint32_t second;
+		} quick;
+	} fifo;
+
 //	LED_ON();
 	TIM3->SR = 0UL;
 	static int kukka;
