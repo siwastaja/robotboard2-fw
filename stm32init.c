@@ -24,6 +24,9 @@ extern void epc_i2c_inthandler();
 extern void epc_dcmi_dma_inthandler();
 extern void imu_fsm_inthandler();
 
+extern void agm01_errhandler();
+extern void agm23_errhandler();
+extern void agm45_errhandler();
 
 extern unsigned int _STACKTOP;
 
@@ -61,9 +64,9 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0070            1       */ (unsigned int *) invalid_handler,
 /* 0x0074            2       */ (unsigned int *) invalid_handler,
 /* 0x0078            3       */ (unsigned int *) epc_rx_dma_inthandler,
-/* 0x007C            4       */ (unsigned int *) invalid_handler,
-/* 0x0080            5       */ (unsigned int *) invalid_handler,
-/* 0x0084            6       */ (unsigned int *) invalid_handler,
+/* 0x007C            4       */ (unsigned int *) agm01_errhandler,
+/* 0x0080            5       */ (unsigned int *) agm45_errhandler,
+/* 0x0084            6       */ (unsigned int *) agm01_errhandler,
 /* 0x0088 ADC1&2             */ (unsigned int *) invalid_handler,
 /* 0x008C                    */ (unsigned int *) invalid_handler,
 /* 0x0090                    */ (unsigned int *) invalid_handler,
@@ -81,8 +84,8 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00C0      ERR           */ (unsigned int *) invalid_handler,
 /* 0x00C4 I2C2 EVENT         */ (unsigned int *) invalid_handler,
 /* 0x00C8      ERR           */ (unsigned int *) invalid_handler,
-/* 0x00CC SPI1               */ (unsigned int *) invalid_handler, //sbc_spi_eot_inthandler,
-/* 0x00D0 SPI2               */ (unsigned int *) invalid_handler,
+/* 0x00CC SPI1               */ (unsigned int *) invalid_handler,
+/* 0x00D0 SPI2               */ (unsigned int *) agm45_errhandler,
 /* 0x00D4 USART1             */ (unsigned int *) invalid_handler,
 /* 0x00D8 USART2             */ (unsigned int *) invalid_handler,
 /* 0x00DC USART3             */ (unsigned int *) invalid_handler,
@@ -93,7 +96,7 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00F0                    */ (unsigned int *) invalid_handler,
 /* 0x00F4                    */ (unsigned int *) invalid_handler,
 /* 0x00F8                    */ (unsigned int *) invalid_handler,
-/* 0x00FC DMA1 STREAM7       */ (unsigned int *) invalid_handler,
+/* 0x00FC DMA1 STREAM7       */ (unsigned int *) agm45_errhandler,
 /* 0x0100                    */ (unsigned int *) invalid_handler,
 /* 0x0104                    */ (unsigned int *) invalid_handler,
 /* 0x0108 TIM5               */ (unsigned int *) invalid_handler,
@@ -130,9 +133,9 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0184                    */ (unsigned int *) invalid_handler,
 /* 0x0188 UART7              */ (unsigned int *) invalid_handler,
 /* 0x018C UART8              */ (unsigned int *) invalid_handler,
-/* 0x0190 SPI4               */ (unsigned int *) invalid_handler,
+/* 0x0190 SPI4               */ (unsigned int *) agm01_errhandler,
 /* 0x0194 SPI5               */ (unsigned int *) invalid_handler,
-/* 0x0198 SPI6               */ (unsigned int *) invalid_handler,
+/* 0x0198 SPI6               */ (unsigned int *) agm23_errhandler,
 /* 0x019C                    */ (unsigned int *) invalid_handler,
 /* 0x01A0                    */ (unsigned int *) invalid_handler,
 /* 0x01A4                    */ (unsigned int *) invalid_handler,
@@ -175,14 +178,14 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0238                    */ (unsigned int *) invalid_handler,
 /* 0x023C                    */ (unsigned int *) invalid_handler,
 /* 0x0240                    */ (unsigned int *) invalid_handler,
-/* 0x0244                    */ (unsigned int *) invalid_handler,
-/* 0x0248                    */ (unsigned int *) invalid_handler,
-/* 0x024C                    */ (unsigned int *) invalid_handler,
-/* 0x0250                    */ (unsigned int *) invalid_handler,
-/* 0x0254                    */ (unsigned int *) invalid_handler,
-/* 0x0258                    */ (unsigned int *) invalid_handler,
-/* 0x025C                    */ (unsigned int *) invalid_handler,
-/* 0x0260                    */ (unsigned int *) invalid_handler,
+/* 0x0244 BDMA 0             */ (unsigned int *) agm23_errhandler,
+/* 0x0248      1             */ (unsigned int *) agm23_errhandler,
+/* 0x024C      2             */ (unsigned int *) invalid_handler,
+/* 0x0250      3             */ (unsigned int *) invalid_handler,
+/* 0x0254      4             */ (unsigned int *) invalid_handler,
+/* 0x0258      5             */ (unsigned int *) invalid_handler,
+/* 0x025C      6             */ (unsigned int *) invalid_handler,
+/* 0x0260      7             */ (unsigned int *) invalid_handler,
 /* 0x0264                    */ (unsigned int *) invalid_handler,
 /* 0x0268                    */ (unsigned int *) invalid_handler,
 /* 0x026C                    */ (unsigned int *) invalid_handler,

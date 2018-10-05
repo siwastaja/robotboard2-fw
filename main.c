@@ -61,11 +61,12 @@ void error(int code)
 			delay_ms(600);
 			o++;
 
-			if(o > 10)
+/*			if(o > 10)
 			{
 				NVIC_SystemReset();
 				while(1);
 			}
+*/
 		}
 
 	}
@@ -242,7 +243,7 @@ void main()
 
 
 	init_sbc_comm();
-	delay_ms(1000);
+	delay_ms(2000);
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
 
