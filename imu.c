@@ -514,68 +514,43 @@ static const g_dma_packet_t bdma_command __attribute__((aligned(4))) __attribute
 
 static void ag01_nondma()
 {
-	if(!(AGM01_SPI->SR & 1UL<<3))
-	{
-		uart_print_string_blocking("SPI01 NOT DONE!");
-		error(15);
-	}
-
 	AGM01_SPI->CR1 = SPI_CR_OFF;
 	__DSB();
 	AGM01_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM01_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM01_SPI->TSIZE = 0;
-	__DSB();
 	AGM01_SPI->CR1 = SPI_CR_ON;
-	__DSB();
+//	__DSB();
 	AGM01_SPI->CR1 |= 1UL<<9;
 }
 
 static void ag23_nondma()
 {
-	if(!(AGM23_SPI->SR & 1UL<<3))
-	{
-		uart_print_string_blocking("SPI23 NOT DONE!");
-		error(15);
-	}
 	AGM23_SPI->CR1 = SPI_CR_OFF;
 	__DSB();
 	AGM23_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM23_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM23_SPI->TSIZE = 0;
-	__DSB();
 	AGM23_SPI->CR1 = SPI_CR_ON;
-	__DSB();
+//	__DSB();
 	AGM23_SPI->CR1 |= 1UL<<9;
 }
 
 static void ag45_nondma()
 {
-	if(!(AGM45_SPI->SR & 1UL<<3))
-	{
-		uart_print_string_blocking("SPI45 NOT DONE!");
-		error(15);
-	}
-
 	AGM45_SPI->CR1 = SPI_CR_OFF;
 	__DSB();
 	AGM45_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM45_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM45_SPI->TSIZE = 0;
-	__DSB();
 	AGM45_SPI->CR1 = SPI_CR_ON;
-	__DSB();
+//	__DSB();
 	AGM45_SPI->CR1 |= 1UL<<9;
 }
 
 static void ag23_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 1 || n_samples > 7)
-		error(7);
-
-//	delay_us(4);
-
 	// BDMA doesn't clear the enable bit after completion, so we need to do it manually before starting the new transfer:
 	AGM23_RX_DMA_STREAM->CCR = RX_BDMA_CONFIG;
 	AGM23_TX_DMA_STREAM->CCR = TX_BDMA_CONFIG;
@@ -593,7 +568,6 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 	BDMA_CLEAR_INTFLAGS(AGM23_RX_DMA, AGM23_RX_DMA_STREAM_NUM);
 	__DSB();
 	AGM23_RX_DMA_STREAM->CCR = RX_BDMA_CONFIG | 1UL;
-	__DSB();
 
 	AGM23_TX_DMA_STREAM->CNDTR = (len+3)/4;
 	BDMA_CLEAR_INTFLAGS(AGM23_TX_DMA, AGM23_TX_DMA_STREAM_NUM);
@@ -604,7 +578,7 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 
 	__DSB();
 	AGM23_SPI->CR1 = SPI_CR_ON;
-	__DSB();
+//	__DSB();
 	AGM23_SPI->CR1 = SPI_CR_ON | (1UL<<9);
 }
 
@@ -612,11 +586,6 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 static void ag01_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 1 || n_samples > 7)
-		error(7);
-
-//	delay_us(4);
-
 	uint16_t len = n_samples*6+1;
 
 	AGM01_SPI->CR1 = SPI_CR_OFF;
@@ -643,19 +612,13 @@ static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 
 	__DSB();
 	AGM01_SPI->CR1 = SPI_CR_ON;
-	__DSB();
+//	__DSB();
 	AGM01_SPI->CR1 = SPI_CR_ON | (1UL<<9);
-	__DSB();
 }
 
 static void ag45_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 1 || n_samples > 7)
-		error(7);
-
-//	delay_us(4);
-
 	uint16_t len = n_samples*6+1;
 
 	AGM45_SPI->CR1 = SPI_CR_OFF;
@@ -679,10 +642,8 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 
 	__DSB();
 	AGM45_SPI->CR1 = SPI_CR_ON;
-	__DSB();
+//	__DSB();
 	AGM45_SPI->CR1 = SPI_CR_ON | (1UL<<9);
-	__DSB();
-
 }
 
 volatile int data_ok;
