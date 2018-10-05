@@ -379,8 +379,6 @@ volatile int g_nonstatus_cnt[6];
 
 volatile int trig_m;
 
-volatile int cur_state;
-
 /*
 	Both gyro and accelerometer in BMX055 are free-running, on internal, non-precision oscillator.
 	The data generation cannot be synced.
@@ -656,9 +654,6 @@ uint8_t dbg[DLEN][12];
 int curd;
 
 
-	SET_TIM3_VECTOR(imu_fsm_inthandler);
-
-
 static void inthandler0() __attribute__((section(".text_itcm")));
 static void inthandler1() __attribute__((section(".text_itcm")));
 static void inthandler2() __attribute__((section(".text_itcm")));
@@ -669,281 +664,281 @@ static void inthandler6() __attribute__((section(".text_itcm")));
 static void inthandler7() __attribute__((section(".text_itcm")));
 static void inthandler8() __attribute__((section(".text_itcm")));
 
+static int kukka;
+static int repolls;
+
+static union
+{
+	struct __attribute__((packed))
+	{
+		uint8_t a[6];
+		uint8_t g[6];
+	} lvls;
+
+	struct __attribute__((packed))
+	{
+		uint64_t first;
+		uint32_t second;
+	} quick;
+} fifo;
+
 static void inthandler0()
 {
 	TIM3->SR = 0UL;
+	fifo.quick.first = fifo.quick.second = 0;
+	SEL_A024();
+	ag_do_fifo_lvl_read();
+	set_timer(STATUS_READ_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler1);
 	__DSB();
 }
+
 static void inthandler1()
-static void inthandler2()
-static void inthandler3()
-static void inthandler4()
-static void inthandler5()
-static void inthandler6()
-static void inthandler7()
-static void inthandler8()
-
-void imu_fsm_inthandler() __attribute__((section(".text_itcm")));
-void imu_fsm_inthandler()
 {
-	static union
-	{
-		struct __attribute__((packed))
-		{
-			uint8_t a[6];
-			uint8_t g[6];
-		} lvls;
-
-		struct __attribute__((packed))
-		{
-			uint64_t first;
-			uint32_t second;
-		} quick;
-	} fifo;
-
-//	LED_ON();
 	TIM3->SR = 0UL;
-	static int kukka;
-	static int repolls;
-	switch(cur_state)
-	{
-		case 0: // Trig by timer: Assert A024, start reading FIFO fill level
-		{
-			fifo.quick.first = fifo.quick.second = 0;
+	DESEL_A024();
+	fifo.lvls.a[0] = ag01_read_fifo_lvl();
+	fifo.lvls.a[2] = ag23_read_fifo_lvl();
+	fifo.lvls.a[4] = ag45_read_fifo_lvl();
+	SEL_A135();
+	ag_do_fifo_lvl_read();
+	set_timer(STATUS_READ_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler2);
+	__DSB();
+}
 
-			SEL_A024();
-			ag_do_fifo_lvl_read();
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;
-		} break;
+static void inthandler2()
+{
+	TIM3->SR = 0UL;
+	DESEL_A135();
+	fifo.lvls.a[1] = ag01_read_fifo_lvl();
+	fifo.lvls.a[3] = ag23_read_fifo_lvl();
+	fifo.lvls.a[5] = ag45_read_fifo_lvl();
+	SEL_G024();
+	ag_do_fifo_lvl_read();
+	set_timer(STATUS_READ_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler3);
+	__DSB();
+}
 
-		case 1: // Trig by timer: Deassert A024, Read A024 level, assert A135, start reading FIFO fill level
-		{
-			DESEL_A024();
-//			delay_us(1);
-			fifo.lvls.a[0] = ag01_read_fifo_lvl();
-			fifo.lvls.a[2] = ag23_read_fifo_lvl();
-			fifo.lvls.a[4] = ag45_read_fifo_lvl();
-			SEL_A135();
-			ag_do_fifo_lvl_read();
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;
-		} break;
+static void inthandler3()
+{
+	TIM3->SR = 0UL;
+	DESEL_G024();
+	fifo.lvls.g[0] = ag01_read_fifo_lvl();
+	fifo.lvls.g[2] = ag23_read_fifo_lvl();
+	fifo.lvls.g[4] = ag45_read_fifo_lvl();
+	SEL_G135();
+	ag_do_fifo_lvl_read();
+	set_timer(STATUS_READ_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler4);
+	__DSB();
+}
 
-		case 2: // Trig by timer: Deassert A135, Read A135 level, assert G024, start reading FIFO fill level
-		{
-			DESEL_A135();
-//			delay_us(1);
-			fifo.lvls.a[1] = ag01_read_fifo_lvl();
-			fifo.lvls.a[3] = ag23_read_fifo_lvl();
-			fifo.lvls.a[5] = ag45_read_fifo_lvl();
-			SEL_G024();
-			ag_do_fifo_lvl_read();
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;			
-		} break;
+static void inthandler4()
+{
+	TIM3->SR = 0UL;
+	kukka++;
+	DESEL_G135();
+	fifo.lvls.g[1] = ag01_read_fifo_lvl();
+	fifo.lvls.g[3] = ag23_read_fifo_lvl();
+	fifo.lvls.g[5] = ag45_read_fifo_lvl();
+	__DSB();
 
-		case 3: // Trig by timer: Deassert G024, Read G024 level, assert G135, start reading FIFO fill level
-		{
-			DESEL_G024();
-//			delay_us(1);
-			fifo.lvls.g[0] = ag01_read_fifo_lvl();
-			fifo.lvls.g[2] = ag23_read_fifo_lvl();
-			fifo.lvls.g[4] = ag45_read_fifo_lvl();
-			SEL_G135();
-			ag_do_fifo_lvl_read();
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;			
-		} break;
+	dbg[curd][0] = fifo.lvls.a[0];
+	dbg[curd][1] = fifo.lvls.a[1];
+	dbg[curd][2] = fifo.lvls.a[2];
+	dbg[curd][3] = fifo.lvls.a[3];
+	dbg[curd][4] = fifo.lvls.a[4];
+	dbg[curd][5] = fifo.lvls.a[5];
+	dbg[curd][6] = fifo.lvls.g[0];
+	dbg[curd][7] = fifo.lvls.g[1];
+	dbg[curd][8] = fifo.lvls.g[2];
+	dbg[curd][9] = fifo.lvls.g[3];
+	dbg[curd][10] = fifo.lvls.g[4];
+	dbg[curd][11] = fifo.lvls.g[5];
 
-		case 4: // Trig by timer: Deassert G135, Read G135 level, wait to start over? or Assert & DMA read A024?
-		{
-			kukka++;
-			DESEL_G135();
-			fifo.lvls.g[1] = ag01_read_fifo_lvl();
-			fifo.lvls.g[3] = ag23_read_fifo_lvl();
-			fifo.lvls.g[5] = ag45_read_fifo_lvl();
-			__DSB();
-
-			dbg[curd][0] = fifo.lvls.a[0];
-			dbg[curd][1] = fifo.lvls.a[1];
-			dbg[curd][2] = fifo.lvls.a[2];
-			dbg[curd][3] = fifo.lvls.a[3];
-			dbg[curd][4] = fifo.lvls.a[4];
-			dbg[curd][5] = fifo.lvls.a[5];
-			dbg[curd][6] = fifo.lvls.g[0];
-			dbg[curd][7] = fifo.lvls.g[1];
-			dbg[curd][8] = fifo.lvls.g[2];
-			dbg[curd][9] = fifo.lvls.g[3];
-			dbg[curd][10] = fifo.lvls.g[4];
-			dbg[curd][11] = fifo.lvls.g[5];
-
-			if(
-			    (fifo.quick.first & ERR_FIRST_MASK) || 
-			    (fifo.quick.second & ERR_SECOND_MASK))
+	if(
+	    (fifo.quick.first & ERR_FIRST_MASK) || 
+	    (fifo.quick.second & ERR_SECOND_MASK))
 
 /*
-				fifo.lvls.a[0] > 7 ||
-				fifo.lvls.a[1] > 7 ||
-				fifo.lvls.a[2] > 7 ||
-				fifo.lvls.a[3] > 7 ||
-				fifo.lvls.a[4] > 7 ||
-				fifo.lvls.a[5] > 7 ||
-				fifo.lvls.g[0] > 7 ||
-				fifo.lvls.g[1] > 7 ||
-				fifo.lvls.g[2] > 7 ||
-				fifo.lvls.g[3] > 7 ||
-				fifo.lvls.g[4] > 7 ||
-				fifo.lvls.g[5] > 7)
+		fifo.lvls.a[0] > 7 ||
+		fifo.lvls.a[1] > 7 ||
+		fifo.lvls.a[2] > 7 ||
+		fifo.lvls.a[3] > 7 ||
+		fifo.lvls.a[4] > 7 ||
+		fifo.lvls.a[5] > 7 ||
+		fifo.lvls.g[0] > 7 ||
+		fifo.lvls.g[1] > 7 ||
+		fifo.lvls.g[2] > 7 ||
+		fifo.lvls.g[3] > 7 ||
+		fifo.lvls.g[4] > 7 ||
+		fifo.lvls.g[5] > 7)
 */
+	{
+		uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
+
+		for(int i=0; i<6; i++)
+		{
+			uart_print_string_blocking("a: "); o_utoa16(fifo.lvls.a[i], printbuf); uart_print_string_blocking(printbuf); 
+			if(fifo.lvls.a[i] > 3) uart_print_string_blocking(" !");
+			uart_print_string_blocking("\r\n");
+		}
+		for(int i=0; i<6; i++)
+		{
+			uart_print_string_blocking("g: "); o_utoa16(fifo.lvls.g[i], printbuf); uart_print_string_blocking(printbuf);
+			if(fifo.lvls.g[i] > 5) uart_print_string_blocking(" !");
+			uart_print_string_blocking("\r\n");
+		}
+
+		uart_print_string_blocking("TRACE:\r\n");
+
+		for(int i=0; i<=curd; i++)
+		{
+			int weird = 0;
+			for(int j=0; j<12; j++)
 			{
-				uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
-
-				for(int i=0; i<6; i++)
-				{
-					uart_print_string_blocking("a: "); o_utoa16(fifo.lvls.a[i], printbuf); uart_print_string_blocking(printbuf); 
-					if(fifo.lvls.a[i] > 3) uart_print_string_blocking(" !");
-					uart_print_string_blocking("\r\n");
-				}
-				for(int i=0; i<6; i++)
-				{
-					uart_print_string_blocking("g: "); o_utoa16(fifo.lvls.g[i], printbuf); uart_print_string_blocking(printbuf);
-					if(fifo.lvls.g[i] > 5) uart_print_string_blocking(" !");
-					uart_print_string_blocking("\r\n");
-				}
-
-				uart_print_string_blocking("TRACE:\r\n");
-
-				for(int i=0; i<=curd; i++)
-				{
-					int weird = 0;
-					for(int j=0; j<12; j++)
-					{
-						if(i>0 && (dbg[i][j] > dbg[i-1][j]+1)) weird = 1;
-						o_utoa16(dbg[i][j], printbuf); uart_print_string_blocking(printbuf);
+				if(i>0 && (dbg[i][j] > dbg[i-1][j]+1)) weird = 1;
+				o_utoa16(dbg[i][j], printbuf); uart_print_string_blocking(printbuf);
 //						if(j==5)
-						uart_print_string_blocking(",");
-					}
-					if(weird)
-						uart_print_string_blocking("!!!!!");
-					uart_print_string_blocking("\r\n");
-				}
-				uart_print_string_blocking("\r\nEND\r\n");
-
-				error(13);
+				uart_print_string_blocking(",");
 			}
+			if(weird)
+				uart_print_string_blocking("!!!!!");
+			uart_print_string_blocking("\r\n");
+		}
+		uart_print_string_blocking("\r\nEND\r\n");
 
-			curd++;
-			if(curd >= DLEN) curd = 0;
+		error(13);
+	}
+
+	curd++;
+	if(curd >= DLEN) curd = 0;
 
 
 
-			if(
-			    (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
-			    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
+	if(
+	    (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
+	    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
 /*				fifo.lvls.a[0] >= 4 &&
-				fifo.lvls.a[1] >= 4 &&
-				fifo.lvls.a[2] >= 4 &&
-				fifo.lvls.a[3] >= 4 &&
-				fifo.lvls.a[4] >= 4 &&
-				fifo.lvls.a[5] >= 4 &&
-				fifo.lvls.g[0] >= 4 &&
-				fifo.lvls.g[1] >= 4 &&
-				fifo.lvls.g[2] >= 4 &&
-				fifo.lvls.g[3] >= 4 &&
-				fifo.lvls.g[4] >= 4 &&
-				fifo.lvls.g[5] >= 4)*/
+		fifo.lvls.a[1] >= 4 &&
+		fifo.lvls.a[2] >= 4 &&
+		fifo.lvls.a[3] >= 4 &&
+		fifo.lvls.a[4] >= 4 &&
+		fifo.lvls.a[5] >= 4 &&
+		fifo.lvls.g[0] >= 4 &&
+		fifo.lvls.g[1] >= 4 &&
+		fifo.lvls.g[2] >= 4 &&
+		fifo.lvls.g[3] >= 4 &&
+		fifo.lvls.g[4] >= 4 &&
+		fifo.lvls.g[5] >= 4)*/
 
-			{
-				fifo.quick.first &= READ_LEN_FIRST_MASK;
-				fifo.quick.second &= READ_LEN_SECOND_MASK;
+	{
+		fifo.quick.first &= READ_LEN_FIRST_MASK;
+		fifo.quick.second &= READ_LEN_SECOND_MASK;
 
-				data_ok = 0;
-				// We don't need the actual FIFO level anymore, but we need the "read length" for now on,
-				// in two places (configuring the DMA channel, and later, after DMA is finished, to overwrite
-				// the n field). Let's overwrite fifo_lvls in a quick operation:
+		data_ok = 0;
+		// We don't need the actual FIFO level anymore, but we need the "read length" for now on,
+		// in two places (configuring the DMA channel, and later, after DMA is finished, to overwrite
+		// the n field). Let's overwrite fifo_lvls in a quick operation:
 
-				SEL_A024();
-				ag01_dma_start(fifo.lvls.a[0], &a_packet0);
-				ag23_dma_start(fifo.lvls.a[2], &a_packet2);
-				ag45_dma_start(fifo.lvls.a[4], &a_packet4);
-				set_timer(A_DMA_WAIT_TIME);
-				cur_state++;
-			}
-			else
-			{				
-				cur_state = 0;
-				set_timer(REPOLL_WAIT_TIME);
-				repolls++;
-			}
-		} break;
+		SEL_A024();
+		ag01_dma_start(fifo.lvls.a[0], &a_packet0);
+		ag23_dma_start(fifo.lvls.a[2], &a_packet2);
+		ag45_dma_start(fifo.lvls.a[4], &a_packet4);
+		set_timer(A_DMA_WAIT_TIME);
+		SET_TIM3_VECTOR(inthandler5);
+	}
+	else
+	{				
+		SET_TIM3_VECTOR(inthandler0);
+		set_timer(REPOLL_WAIT_TIME);
+		repolls++;
+	}
 
-		case 5: // Trig by DMA completion: Deassert A024, Assert & DMA read A135
-		{
-			DESEL_A024();
-			a_packet0.n = fifo.lvls.a[0];
-			a_packet2.n = fifo.lvls.a[2];
-			a_packet4.n = fifo.lvls.a[4];
-			SEL_A135();
-			ag01_dma_start(fifo.lvls.a[1], &a_packet1);
-			ag23_dma_start(fifo.lvls.a[3], &a_packet3);
-			ag45_dma_start(fifo.lvls.a[5], &a_packet5);
-			cur_state++;
-			set_timer(A_DMA_WAIT_TIME);
-		} break;
+	__DSB();
+}
 
-		case 6: // Trig by DMA completion: Deassert A135, Assert & DMA read G024
-		{
-			DESEL_A135();
-			a_packet1.n = fifo.lvls.a[1];
-			a_packet3.n = fifo.lvls.a[3];
-			a_packet5.n = fifo.lvls.a[5];
-			SEL_G024();
-			ag01_dma_start(fifo.lvls.g[0], &g_packet0);
-			ag23_dma_start(fifo.lvls.g[2], &g_packet2);
-			ag45_dma_start(fifo.lvls.g[4], &g_packet4);
-			set_timer(G_DMA_WAIT_TIME);
-			cur_state++;
+static void inthandler5()
+{
+	TIM3->SR = 0UL;
+	DESEL_A024();
+	a_packet0.n = fifo.lvls.a[0];
+	a_packet2.n = fifo.lvls.a[2];
+	a_packet4.n = fifo.lvls.a[4];
+	SEL_A135();
+	ag01_dma_start(fifo.lvls.a[1], &a_packet1);
+	ag23_dma_start(fifo.lvls.a[3], &a_packet3);
+	ag45_dma_start(fifo.lvls.a[5], &a_packet5);
+	SET_TIM3_VECTOR(inthandler6);
+	set_timer(A_DMA_WAIT_TIME);
+	__DSB();
+}
 
-		} break;
+static void inthandler6()
+{
+	TIM3->SR = 0UL;
+	DESEL_A135();
+	a_packet1.n = fifo.lvls.a[1];
+	a_packet3.n = fifo.lvls.a[3];
+	a_packet5.n = fifo.lvls.a[5];
+	SEL_G024();
+	ag01_dma_start(fifo.lvls.g[0], &g_packet0);
+	ag23_dma_start(fifo.lvls.g[2], &g_packet2);
+	ag45_dma_start(fifo.lvls.g[4], &g_packet4);
+	set_timer(G_DMA_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler7);
+	__DSB();
+}
 
-		case 7: // Trig by DMA completion: Deassert G024, Assert & DMA read G135
-		{
-			DESEL_G024();
+static void inthandler7()
+{
+	TIM3->SR = 0UL;
+	DESEL_G024();
+	g_packet0.n = fifo.lvls.g[0];
+	g_packet2.n = fifo.lvls.g[2];
+	g_packet4.n = fifo.lvls.g[4];
+	SEL_G135();
+	ag01_dma_start(fifo.lvls.g[1], &g_packet1);
+	ag23_dma_start(fifo.lvls.g[3], &g_packet3);
+	ag45_dma_start(fifo.lvls.g[5], &g_packet5);
+	set_timer(G_DMA_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler8);
+	__DSB();
+}
 
-			g_packet0.n = fifo.lvls.g[0];
-			g_packet2.n = fifo.lvls.g[2];
-			g_packet4.n = fifo.lvls.g[4];
-			SEL_G135();
-			ag01_dma_start(fifo.lvls.g[1], &g_packet1);
-			ag23_dma_start(fifo.lvls.g[3], &g_packet3);
-			ag45_dma_start(fifo.lvls.g[5], &g_packet5);
-			set_timer(G_DMA_WAIT_TIME);
-			cur_state++;
-		} break;
+static void inthandler8()
+{
+	TIM3->SR = 0UL;
+	DESEL_G135();
+
+	ag01_nondma();
+	ag23_nondma();
+	ag45_nondma();
+	g_packet1.n = fifo.lvls.g[1];
+	g_packet3.n = fifo.lvls.g[3];
+	g_packet5.n = fifo.lvls.g[5];
+	SET_TIM3_VECTOR(inthandler0);
+	data_ok = 1;
+	kakka_cnt++;
+	if(repolls == 0)
+		final_wait_time -= 1000;
+	else if(repolls >= 2)
+		final_wait_time += 500;
+	repolls = 0;
+	set_timer(final_wait_time);
+	kukka_cnt = kukka;
+	__DSB();
+	kukka = 0;
+
+	__DSB();
+}
+
+#if 0
 
 		case 8: // Trig by DMA completion: Deassert G135, wait to start over? or Assert & Trig M024?
 		{
-			DESEL_G135();
-
-			ag01_nondma();
-			ag23_nondma();
-			ag45_nondma();
-			g_packet1.n = fifo.lvls.g[1];
-			g_packet3.n = fifo.lvls.g[3];
-			g_packet5.n = fifo.lvls.g[5];
-			cur_state = 0;
-			data_ok = 1;
-			kakka_cnt++;
-			if(repolls == 0)
-				final_wait_time -= 1000;
-			else if(repolls >= 2)
-				final_wait_time += 500;
-			repolls = 0;
-			set_timer(final_wait_time);
-			kukka_cnt = kukka;
-			__DSB();
-			kukka = 0;
 		} break;
 
 		case 9: // Trig by timer: Deassert M024, Assert & Trig M135
@@ -986,7 +981,6 @@ void imu_fsm_inthandler()
 
 		} break;
 
-#if 0
 		case START_A024_STATUS_READ:
 		{
 			SEL_A024();
@@ -1436,18 +1430,6 @@ void imu_fsm_inthandler()
 			cur_state++;
 		} break;
 #endif
-		default:
-		{
-			error(13);
-		} break;
-
-	}
-
-
-//	LED_OFF();
-	__DSB();
-
-}
 
 
 static void printings()
@@ -1890,7 +1872,7 @@ static void ag_sensor_init(int bunch)
 void init_imu() __attribute__((section(".text_itcm")));
 void init_imu()
 {
-	SET_TIM3_VECTOR(imu_fsm_inthandler);
+	SET_TIM3_VECTOR(inthandler0);
 
 	#if defined(IMU0_PRESENT) || defined(IMU1_PRESENT)
 
