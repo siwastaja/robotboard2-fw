@@ -1,17 +1,3 @@
-/*
-
-STM32H7 MASSIVE TRAP WARNING
-(So-called "vittu mitä paskaa")
-
-BDMA ON D3 CAN ONLY ACCESS SRAM4, NOT FLASH NOR AXISRAM, SRAM1,2,3
-
-THIS OBVIOUS TRAP IS NOT CLEARLY DOCUMENTED ANYWHERE IN THE REFERENCE MANUAL.
-
-https://community.st.com/s/article/FAQ-DMA-is-not-working-on-STM32H7-devices
-
-
-*/
-
 #include <stdint.h>
 #include <string.h>
 #include "ext_include/stm32h7xx.h"
@@ -19,7 +5,7 @@ https://community.st.com/s/article/FAQ-DMA-is-not-working-on-STM32H7-devices
 #include "misc.h"
 #include "own_std.h"
 
-volatile int kakka_cnt, kukka_cnt;
+volatile int packet_cnt;
 
 static char printbuf[128];
 
@@ -72,11 +58,10 @@ static char printbuf[128];
 
 
 /*
-Stupid heterogenous structure. Instead of 3 similar DMA's, 1 of them is different "BDMA", which is actually still
+Stupid heterogenous structure. Instead of 3 similar DMA's, 1 of them is a different "BDMA", which is actually still
 almost the same, just a bit different (for added complexity). Nomenclature note: "channel" is the same as "stream".
 
 SPI6 cannot be mapped to DMA1 or DMA2, so it has to be mapped to BDMA.
-
 */
 
 #define AGM01_TX_DMA DMA1
@@ -115,6 +100,14 @@ SPI6 cannot be mapped to DMA1 or DMA2, so it has to be mapped to BDMA.
 #define AGM45_RX_DMA_STREAM_NUM 5
 #define AGM45_RX_DMA_STREAM_IRQ DMA1_Stream5_IRQn
 #define AGM45_RX_DMAMUX() do{DMAMUX1_Channel5->CCR = 39;}while(0)
+
+
+/*
+	These error handlers trig on _all_ error interrupts from:
+	- relevant tx dma
+	- relevant rx dma
+	- relevant SPI
+*/
 
 void agm01_errhandler()
 {
@@ -183,7 +176,8 @@ void agm45_errhandler()
 }
 
 
-#define WR_REG(_a_, _d_) ( (_a_) | ((_d_)<<8) )
+#define WR_REG(_a_, _d_) ( (_a_) | ((_d_)<<8) ) // 16-bit SPI operation to write a BMX055 register
+
 #define M_OP_NORMAL (0b00<<1)
 #define M_OP_FORCED (0b01<<1)
 #define M_OP_SLEEP  (0b11<<1)
@@ -199,27 +193,7 @@ void agm45_errhandler()
 	tan(0.9 degrees)*10000 = 157mm. Seems acceptable given that this is a fairly extreme angular rate and not something
 	happening all the time during mapping.
 
-	-> 200Hz is OK.
-
-
-	Data flow synchronization:
-
-	6 gyros and accelerometers would require 12 interrupt lines to serve in real time without polling. Such number of IOs
-	were not available.
-
-	Sensors run on their internal clocks, exact frequency being unspecified and subject to drift.
-
-	Because we want data with low latency, we only want to keep the sensor FIFO fill level to max 1.
-
-	Unfortunately, the register ordering makes it impossible to read the FIFO fill level on the same burst read with the data.
-
-	The sensor is documented to give out all zeroes when reading empty FIFO.
-
-	ISR runs at 10kHz (0.1ms)
-
-	Rate for A: 250Hz (4ms)
-	Rate for G: 200Hz (5ms)
-
+	-> around 200Hz is OK.
 */
 
 typedef union __attribute__((packed))
@@ -263,13 +237,13 @@ typedef union __attribute__((packed))
 
 #define M_REMOVE_STATUS_BITS(_x_) do{((m_dataframe_in_fifo_t*)&(_x_))->blocks.first &= 0xfff8fff8; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0xfffcfffe; }while(0)
 
-
-volatile xyz_in_fifo_t latest_a[6];
-volatile xyz_in_fifo_t latest_g[6];
 volatile m_dataframe_in_fifo_t latest_m[6];
 volatile int8_t a_temps[6];
 
 
+/*
+	SPI FIFO access macros for non-DMA mode:
+*/
 #define AGM01_WR32 (*(volatile uint32_t*)&AGM01_SPI->TXDR)
 #define AGM23_WR32 (*(volatile uint32_t*)&AGM23_SPI->TXDR)
 #define AGM45_WR32 (*(volatile uint32_t*)&AGM45_SPI->TXDR)
@@ -355,9 +329,8 @@ static inline void set_timer(uint16_t tenth_us)
 	50000 too high - doens't work
 	40000 barely works, without margin
 	25000, with REPOLL_WAIT=5000, gives normally 3 or 4 polls (so 2 or 3 repolls)
-	This gives 0.58% CPU overhead
 */
-int final_wait_time = 25000;
+int final_wait_time = 20000;
 #define FINAL_WAIT_TIME 25000
 #define FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS (FINAL_WAIT_TIME - (TRIG_REG_WRITE_WAIT_TIME*2 + \
 		STATUS_READ_WAIT_TIME*2 + M_READ_PART1_WAIT_TIME*2 + M_READ_PART2_WAIT_TIME*2 + 7*3)) /*Estimate of 0.3us per code execution per state*/
@@ -372,10 +345,6 @@ int final_wait_time = 25000;
 #define A_DMA_WAIT_TIME ((7*6+1)*14 + 100)
 #define G_DMA_WAIT_TIME ((7*6+1)*14 + 100)
 
-volatile int a_status_cnt[6];
-volatile int a_nonstatus_cnt[6];
-volatile int g_status_cnt[6];
-volatile int g_nonstatus_cnt[6];
 
 volatile int trig_m;
 
@@ -389,20 +358,28 @@ volatile int trig_m;
 	The only way to achieve something closer to that, is to minimize time difference by using
 	higher-than-necessary sampling rate, then average the samples together to form the desired output rate.
 
-	Gyro sampling rate = 1000Hz (internal filter BW = 116Hz)
 	Xcel sampling rate = 1000Hz (internal filter BW = 500Hz)
+	Gyro sampling rate = 1000Hz (internal filter BW = 116Hz)
 
-	Values are accumulated in the BMX055 FIFOs until there is at least:
-	* 4 gyro samples
+	Values are accumulated in the BMX055 FIFOs (i.e., not read out) until there are at least:
 	* 4 xcel samples
+	* 4 gyro samples
 
-	It's acceptable to have more (7 gyro, 7 xcel). More than that is considered a timing error, meaning
-	significant data rate error between the devices.
+	It's acceptable to have more samples in FIFOs: 7 gyro, 7 xcel. More than that is considered a
+	timing error, meaning significant data rate error between the devices.
 
-	amount to read: Up to 7: fifo_status & 0b00000111 (0x07)
-	mask:   0b00000100 (0x04) must equal
-	        0b00000100 (0x04) --> (4,5,6,or 7 data)
+	FIFO levels for the 6 accelerometers and 6 gyros (12 devices total) are stored in uint8_t[12], which
+	is aliased on an uint64_t and an uint32_t, allowing checking in three 32-bit operations (instead of 12).
+	(Just FYI, I verified the compiler cannot optimize this from behavioral code, and the speedup was considerable
+	9% improvement for the whole unit).
 
+	checking if there is enough data:
+	fifo_status & 0b00000100 (0x04) must equal
+	              0b00000100 (0x04) --> (4,5,6,or 7 data available)
+	
+	Error checking: any higher order bit high on any device (i.e., fifo_status & 0xf8 true).
+
+	
 */
 
 #define REQUIRED_FIRST_MASK  0x0404040404040404ULL
@@ -413,12 +390,6 @@ volatile int trig_m;
 
 #define ERR_FIRST_MASK  0xf8f8f8f8f8f8f8f8ULL
 #define ERR_SECOND_MASK 0xf8f8f8f8UL
-
-
-//#define READ_LEN_FIRST_MASK  0x0505030303030303ULL
-//#define READ_LEN_SECOND_MASK 0x05050505UL
-#define READ_LEN_FIRST_MASK  0x0707070707070707ULL
-#define READ_LEN_SECOND_MASK 0x07070707UL
 
 static void ag_do_fifo_lvl_read() __attribute__((section(".text_itcm")));
 static void ag_do_fifo_lvl_read()
@@ -472,6 +443,18 @@ typedef struct __attribute__((packed))
 	uint8_t n;
 	xyz_i16_packed_t xyz[8]; //3
 } a_dma_packet_t;
+
+/*
+
+STM32H7 MASSIVE TRAP WARNING:
+BDMA ON D3 CAN ONLY ACCESS SRAM4, NOT FLASH NOR AXISRAM, SRAM1,2,3
+
+THIS OBVIOUS TRAP IS NOT CLEARLY DOCUMENTED ANYWHERE IN THE REFERENCE MANUAL.
+
+https://community.st.com/s/article/FAQ-DMA-is-not-working-on-STM32H7-devices
+
+
+*/
 
 volatile a_dma_packet_t a_packet0 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile g_dma_packet_t g_packet0 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
@@ -649,9 +632,11 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 
 volatile int data_ok;
 
-#define DLEN 8000
-uint8_t dbg[DLEN][12];
-int curd;
+#ifdef DBG_TRACE
+	#define DLEN 8000
+	uint8_t dbg[DLEN][12];
+	int curd;
+#endif
 
 
 static void inthandler0() __attribute__((section(".text_itcm")));
@@ -664,7 +649,6 @@ static void inthandler6() __attribute__((section(".text_itcm")));
 static void inthandler7() __attribute__((section(".text_itcm")));
 static void inthandler8() __attribute__((section(".text_itcm")));
 
-static int kukka;
 static int repolls;
 
 static union
@@ -738,44 +722,29 @@ static void inthandler3()
 static void inthandler4()
 {
 	TIM3->SR = 0UL;
-	kukka++;
 	DESEL_G135();
 	fifo.lvls.g[1] = ag01_read_fifo_lvl();
 	fifo.lvls.g[3] = ag23_read_fifo_lvl();
 	fifo.lvls.g[5] = ag45_read_fifo_lvl();
 	__DSB();
 
-	dbg[curd][0] = fifo.lvls.a[0];
-	dbg[curd][1] = fifo.lvls.a[1];
-	dbg[curd][2] = fifo.lvls.a[2];
-	dbg[curd][3] = fifo.lvls.a[3];
-	dbg[curd][4] = fifo.lvls.a[4];
-	dbg[curd][5] = fifo.lvls.a[5];
-	dbg[curd][6] = fifo.lvls.g[0];
-	dbg[curd][7] = fifo.lvls.g[1];
-	dbg[curd][8] = fifo.lvls.g[2];
-	dbg[curd][9] = fifo.lvls.g[3];
-	dbg[curd][10] = fifo.lvls.g[4];
-	dbg[curd][11] = fifo.lvls.g[5];
+#ifdef DBG_TRACE
+		dbg[curd][0] = fifo.lvls.a[0];
+		dbg[curd][1] = fifo.lvls.a[1];
+		dbg[curd][2] = fifo.lvls.a[2];
+		dbg[curd][3] = fifo.lvls.a[3];
+		dbg[curd][4] = fifo.lvls.a[4];
+		dbg[curd][5] = fifo.lvls.a[5];
+		dbg[curd][6] = fifo.lvls.g[0];
+		dbg[curd][7] = fifo.lvls.g[1];
+		dbg[curd][8] = fifo.lvls.g[2];
+		dbg[curd][9] = fifo.lvls.g[3];
+		dbg[curd][10] = fifo.lvls.g[4];
+		dbg[curd][11] = fifo.lvls.g[5];
+#endif
 
-	if(
-	    (fifo.quick.first & ERR_FIRST_MASK) || 
+	if( (fifo.quick.first & ERR_FIRST_MASK) || 
 	    (fifo.quick.second & ERR_SECOND_MASK))
-
-/*
-		fifo.lvls.a[0] > 7 ||
-		fifo.lvls.a[1] > 7 ||
-		fifo.lvls.a[2] > 7 ||
-		fifo.lvls.a[3] > 7 ||
-		fifo.lvls.a[4] > 7 ||
-		fifo.lvls.a[5] > 7 ||
-		fifo.lvls.g[0] > 7 ||
-		fifo.lvls.g[1] > 7 ||
-		fifo.lvls.g[2] > 7 ||
-		fifo.lvls.g[3] > 7 ||
-		fifo.lvls.g[4] > 7 ||
-		fifo.lvls.g[5] > 7)
-*/
 	{
 		uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
 
@@ -792,57 +761,39 @@ static void inthandler4()
 			uart_print_string_blocking("\r\n");
 		}
 
-		uart_print_string_blocking("TRACE:\r\n");
+		#ifdef DBG_TRACE
 
-		for(int i=0; i<=curd; i++)
-		{
-			int weird = 0;
-			for(int j=0; j<12; j++)
+			uart_print_string_blocking("TRACE:\r\n");
+
+			for(int i=0; i<=curd; i++)
 			{
-				if(i>0 && (dbg[i][j] > dbg[i-1][j]+1)) weird = 1;
-				o_utoa16(dbg[i][j], printbuf); uart_print_string_blocking(printbuf);
-//						if(j==5)
-				uart_print_string_blocking(",");
+				int weird = 0;
+				for(int j=0; j<12; j++)
+				{
+					if(i>0 && (dbg[i][j] > dbg[i-1][j]+1)) weird = 1;
+					o_utoa16(dbg[i][j], printbuf); uart_print_string_blocking(printbuf);
+					uart_print_string_blocking(",");
+				}
+				if(weird)
+					uart_print_string_blocking("!!!!!");
+				uart_print_string_blocking("\r\n");
 			}
-			if(weird)
-				uart_print_string_blocking("!!!!!");
-			uart_print_string_blocking("\r\n");
-		}
-		uart_print_string_blocking("\r\nEND\r\n");
+			uart_print_string_blocking("\r\nEND\r\n");
+		#endif
 
 		error(13);
 	}
 
-	curd++;
-	if(curd >= DLEN) curd = 0;
+	#ifdef DBG_TRACE
+		curd++;
+		if(curd >= DLEN) curd = 0;
+	#endif
 
-
-
-	if(
-	    (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
+	if( (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
 	    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
-/*				fifo.lvls.a[0] >= 4 &&
-		fifo.lvls.a[1] >= 4 &&
-		fifo.lvls.a[2] >= 4 &&
-		fifo.lvls.a[3] >= 4 &&
-		fifo.lvls.a[4] >= 4 &&
-		fifo.lvls.a[5] >= 4 &&
-		fifo.lvls.g[0] >= 4 &&
-		fifo.lvls.g[1] >= 4 &&
-		fifo.lvls.g[2] >= 4 &&
-		fifo.lvls.g[3] >= 4 &&
-		fifo.lvls.g[4] >= 4 &&
-		fifo.lvls.g[5] >= 4)*/
-
 	{
-		fifo.quick.first &= READ_LEN_FIRST_MASK;
-		fifo.quick.second &= READ_LEN_SECOND_MASK;
 
 		data_ok = 0;
-		// We don't need the actual FIFO level anymore, but we need the "read length" for now on,
-		// in two places (configuring the DMA channel, and later, after DMA is finished, to overwrite
-		// the n field). Let's overwrite fifo_lvls in a quick operation:
-
 		SEL_A024();
 		ag01_dma_start(fifo.lvls.a[0], &a_packet0);
 		ag23_dma_start(fifo.lvls.a[2], &a_packet2);
@@ -921,17 +872,13 @@ static void inthandler8()
 	g_packet5.n = fifo.lvls.g[5];
 	SET_TIM3_VECTOR(inthandler0);
 	data_ok = 1;
-	kakka_cnt++;
+	packet_cnt++;
 	if(repolls == 0)
 		final_wait_time -= 1000;
 	else if(repolls >= 2)
 		final_wait_time += 500;
 	repolls = 0;
 	set_timer(final_wait_time);
-	kukka_cnt = kukka;
-	__DSB();
-	kukka = 0;
-
 	__DSB();
 }
 
@@ -1476,8 +1423,7 @@ static void printings()
 //		o_utoa16(g_packets0145[i].n, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
 	}
 
-	uart_print_string_blocking("  kakka= "); o_utoa32(kakka_cnt, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-	uart_print_string_blocking("  kukka= "); o_utoa32(kukka_cnt, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+	uart_print_string_blocking("  packet_cnt= "); o_utoa32(packet_cnt, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
 
 	uart_print_string_blocking("\r\n");
 
@@ -1519,69 +1465,25 @@ static void printings()
 
 	uart_print_string_blocking("\r\n");
 
-/*	
+	TIM4->CNT = 0;
+	__DSB();
+	TIM4->CR1 = 1UL<<3 | 1UL; // Enable
+	__DSB();
+	delay_ms(40);
+	uint32_t time = TIM4->CNT;		
+	TIM4->CR1 = 1UL<<3;
+	__DSB();
+	uart_print_string_blocking("CPU overhead : "); 
+	char* p_joo = o_utoa32(((time-36000))*10000/36000, printbuf);
+	p_joo[0] = p_joo[-1];
+	p_joo[-1] = p_joo[-2];
+	p_joo[-2] = '.';
+	p_joo[1] = 0;
 
-		o_utoa16_fixed(as[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking(" / "); 
-		o_utoa16_fixed(an[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  x = "); 
-		o_itoa16_fixed(ax[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  y = "); 
-		o_itoa16_fixed(ay[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  z = "); 
-		o_itoa16_fixed(az[i], printbuf); uart_print_string_blocking(printbuf);
-
-		uart_print_string_blocking("   G ");
-
-		o_utoa16_fixed(gs[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking(" / "); 
-		o_utoa16_fixed(gn[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  x = "); 
-		o_itoa16_fixed(gx[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  y = "); 
-		o_itoa16_fixed(gy[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  z = "); 
-		o_itoa16_fixed(gz[i], printbuf); uart_print_string_blocking(printbuf);
-
-		uart_print_string_blocking("   T=");
-		o_itoa8_fixed(a_temps[i], printbuf); uart_print_string_blocking(printbuf); 
-
-
-
-		uart_print_string_blocking("   M ");
-
-		uart_print_string_blocking("  x = "); 
-		o_itoa16_fixed(mx[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  y = "); 
-		o_itoa16_fixed(my[i], printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking("  z = "); 
-		o_itoa16_fixed(mz[i], printbuf); uart_print_string_blocking(printbuf);
-
-		uart_print_string_blocking("\r\n");
-*/
-
-		TIM4->CNT = 0;
-		__DSB();
-		TIM4->CR1 = 1UL<<3 | 1UL; // Enable
-		__DSB();
-		delay_ms(40);
-		uint32_t time = TIM4->CNT;		
-		TIM4->CR1 = 1UL<<3;
-		__DSB();
-		uart_print_string_blocking("CPU overhead : "); 
-		char* p_joo = o_utoa32(((time-36000))*10000/36000, printbuf);
-		p_joo[0] = p_joo[-1];
-		p_joo[-1] = p_joo[-2];
-		p_joo[-2] = '.';
-		p_joo[1] = 0;
-
-		uart_print_string_blocking(printbuf); uart_print_string_blocking(" % \r\n");
+	uart_print_string_blocking(printbuf); uart_print_string_blocking(" % \r\n");
 
 
 	delay_ms(200);
-
-//				NVIC_SystemReset();
-//				while(1);
 
 }
 
@@ -1819,20 +1721,6 @@ static void ag_sensor_init(int bunch)
 
 
 /* 
-
-	Three sensors are connected to shared nCS signals, each on separate SPI bus.
-	Thus, three sensors (0,2,4 or 1,3,5) are all read simultaneously.
-
-	While the sampling rates are the same, due to free-running oscillators, the FIFO
-	fill level on the sensors won't always be the same. This means, sometimes we read
-	data from a sensor which has nothing in FIFO. This is acceptable per datasheet, and
-	zeroes will be read out. Note that this case is only allowed when "read or burst
-	read access time [will not] exceed the sampling time". This won't become an issue
-	with our fast SPI comms.
-
-
-
-
 	Idle time between write accesses at least 2 us
 
 	Write operation: 16 bit access
@@ -1869,7 +1757,6 @@ static void ag_sensor_init(int bunch)
 
 */
 
-void init_imu() __attribute__((section(".text_itcm")));
 void init_imu()
 {
 	SET_TIM3_VECTOR(inthandler0);
@@ -2075,107 +1962,15 @@ void init_imu()
 	NVIC_SetPriority(TIM3_IRQn, 5);
 	NVIC_EnableIRQ(TIM3_IRQn);
 
-#if 0
-
-	// Code to measure in which order RX DMA END interrupt flag, RX DMA turning off, and EOT interrupt flag show up.
-	// Due to limitations of measurement on CPU, exact order couldn't be established - they appear approximately the same
-	int cnt = 0;
-	int eot01 = 0;
-	int eot23 = 0;
-	int eot45 = 0;
-	int dma01tx_off = 0;
-	int dma01rx_off = 0;
-	int dma45tx_off = 0;
-	int dma45rx_off = 0;
-
-	int dma01tx_fin = 0;
-	int dma01rx_fin = 0;
-	int dma23tx_fin = 0;
-	int dma23rx_fin = 0;
-	int dma45tx_fin = 0;
-	int dma45rx_fin = 0;
-
-	TIM3->ARR = 65000;
-
-	ag01_dma_start(2, &a_packets0145[0]);
-	ag23_dma_start(2, &a_packets23[0]);
-	ag45_dma_start(2, &a_packets0145[2]);
-
-	TIM3->CNT = 0;
-	__DSB();
-	TIM3->CR1 = 1UL<<3 | 1UL<<2 | 1UL;
-	__DSB();
-
-	while(1)
-	{
-		if(AGM01_SPI->SR & (1UL<<3)) if(!eot01) eot01 = TIM3->CNT;
-//		if(AGM23_SPI->SR & (1UL<<3)) if(!eot23) eot23 = TIM3->CNT;
-//		if(AGM45_SPI->SR & (1UL<<3)) if(!eot45) eot45 = TIM3->CNT;
-
-//		if(!(AGM01_TX_DMA_STREAM->CR & 1UL)) if(!dma01tx_off) dma01tx_off = TIM3->CNT;
-		if(!(AGM01_RX_DMA_STREAM->CR & 1UL)) if(!dma01rx_off) dma01rx_off = TIM3->CNT;
-//		if(!(AGM45_TX_DMA_STREAM->CR & 1UL)) if(!dma45tx_off) dma45tx_off = TIM3->CNT;
-//		if(!(AGM45_RX_DMA_STREAM->CR & 1UL)) if(!dma45rx_off) dma45rx_off = TIM3->CNT;
-
-//		if(DMA_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM) & (1UL<<5))  if(!dma01tx_fin) dma01tx_fin = TIM3->CNT;
-		if(DMA_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM) & (1UL<<5))  if(!dma01rx_fin) dma01rx_fin = TIM3->CNT;
-//		if(BDMA_INTFLAGS(AGM23_TX_DMA, AGM23_TX_DMA_STREAM_NUM) & (1UL<<1)) if(!dma23tx_fin) dma23tx_fin = TIM3->CNT;
-//		if(BDMA_INTFLAGS(AGM23_RX_DMA, AGM23_RX_DMA_STREAM_NUM) & (1UL<<1)) if(!dma23rx_fin) dma23rx_fin = TIM3->CNT;
-//		if(DMA_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM) & (1UL<<5))  if(!dma45tx_fin) dma45tx_fin = TIM3->CNT;
-//		if(DMA_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM) & (1UL<<5))  if(!dma45rx_fin) dma45rx_fin = TIM3->CNT;
-
-		__DSB();
-
-		cnt++;
-
-		if(cnt > 1000000)
-			break;
-	}
-
-	
-	uart_print_string_blocking("perkele : "); o_btoa16_fixed(DMA_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-//	uart_print_string_blocking("perkele : "); o_utoa32_hex(DMA1->HIF), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	
-	uart_print_string_blocking("01 RXDMAFIN : "); o_utoa32(dma01rx_fin, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("01 RXDMAOFF : "); o_utoa32(dma01rx_off, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("01 TXDMAFIN : "); o_utoa32(dma01tx_fin, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("01 TXDMAOFF : "); o_utoa32(dma01tx_off, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("01       EOT: "); o_utoa32(eot01, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n\r\n");
-
-	uart_print_string_blocking("23 RXDMAFIN : "); o_utoa32(dma23rx_fin, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("23 RXDMAOFF : N/A"); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("23 TXDMAFIN : "); o_utoa32(dma23tx_fin, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("23 TXDMAOFF : N/A"); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("23       EOT: "); o_utoa32(eot23, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n\r\n");
-
-	uart_print_string_blocking("45 RXDMAFIN : "); o_utoa32(dma45rx_fin, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("45 RXDMAOFF : "); o_utoa32(dma45rx_off, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("45 TXDMAFIN : "); o_utoa32(dma45tx_fin, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("45 TXDMAOFF : "); o_utoa32(dma45tx_off, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("45       EOT: "); o_utoa32(eot45, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n\r\n");
-
-
-	while(1);
-
-#endif
-
 }
 
-
-/*
-	CPU analysis: delay_ms(10) takes:
-	9 000 us (0.0% burden), fsm disables (nothing runs, expect delay_ms() function)
-	9 314 us (3.4% burden), IMU fsm running, REPOLL_WAIT = 1000, FINAL_WAIT = 1000
-	9 256 us (2.8% burden),                                      FINAL_WAIT = 10000
-	9 088 us (0.9% burden),                  REPOLL_WAIT = 5000, FINAL_WAIT = 10000
-
-*/
 
 void timer_test()
 {
 //	int cnt = 0;
 	set_timer(50000);
 
+	// TIM4 used for CPU usage profiling
 	RCC->APB1LENR |= 1UL<<2;
 	__DSB();
 	TIM4->PSC = 200-1;
