@@ -515,7 +515,7 @@ static const g_dma_packet_t bdma_command __attribute__((aligned(4))) __attribute
 static void ag01_nondma()
 {
 	AGM01_SPI->CR1 = SPI_CR_OFF;
-	__DSB();
+//	__DSB();
 	AGM01_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM01_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM01_SPI->TSIZE = 0;
@@ -527,7 +527,7 @@ static void ag01_nondma()
 static void ag23_nondma()
 {
 	AGM23_SPI->CR1 = SPI_CR_OFF;
-	__DSB();
+//	__DSB();
 	AGM23_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM23_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM23_SPI->TSIZE = 0;
@@ -539,7 +539,7 @@ static void ag23_nondma()
 static void ag45_nondma()
 {
 	AGM45_SPI->CR1 = SPI_CR_OFF;
-	__DSB();
+//	__DSB();
 	AGM45_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM45_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM45_SPI->TSIZE = 0;
@@ -558,6 +558,7 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 	uint16_t len = n_samples*6+1;
 
 	AGM23_SPI->CR1 = SPI_CR_OFF;
+//	__DSB();
 	AGM23_SPI->CFG1 = SPI_CFG1_RXDMA;
 	AGM23_SPI->TSIZE = len;
 
@@ -573,7 +574,7 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 //	BDMA_CLEAR_INTFLAGS(AGM23_TX_DMA, AGM23_TX_DMA_STREAM_NUM);
 	AGM23_TX_DMA_STREAM->CCR = TX_BDMA_CONFIG | 1UL;
 
-	__DSB();
+//	__DSB();
 	AGM23_SPI->CFG1 = SPI_CFG1_RXTXDMA;
 
 	__DSB();
@@ -589,7 +590,7 @@ static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 	uint16_t len = n_samples*6+1;
 
 	AGM01_SPI->CR1 = SPI_CR_OFF;
-	__DSB();
+//	__DSB();
 	AGM01_SPI->CFG1 = SPI_CFG1_RXDMA;
 	AGM01_SPI->TSIZE = len;
 
@@ -607,7 +608,7 @@ static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 	DMA_CLEAR_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM);
 	AGM01_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 1UL;
 
-	__DSB();
+//	__DSB();
 	AGM01_SPI->CFG1 = SPI_CFG1_RXTXDMA;
 
 	__DSB();
@@ -622,7 +623,7 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 	uint16_t len = n_samples*6+1;
 
 	AGM45_SPI->CR1 = SPI_CR_OFF;
-	__DSB();
+//	__DSB();
 	AGM45_SPI->CFG1 = SPI_CFG1_RXDMA;
 	AGM45_SPI->TSIZE = len;
 
@@ -637,7 +638,7 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 	DMA_CLEAR_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM);
 	AGM45_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 1UL;
 
-	__DSB();
+//	__DSB();
 	AGM45_SPI->CFG1 = SPI_CFG1_RXTXDMA;
 
 	__DSB();
