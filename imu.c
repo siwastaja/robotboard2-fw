@@ -655,6 +655,34 @@ volatile int data_ok;
 uint8_t dbg[DLEN][12];
 int curd;
 
+
+	SET_TIM3_VECTOR(imu_fsm_inthandler);
+
+
+static void inthandler0() __attribute__((section(".text_itcm")));
+static void inthandler1() __attribute__((section(".text_itcm")));
+static void inthandler2() __attribute__((section(".text_itcm")));
+static void inthandler3() __attribute__((section(".text_itcm")));
+static void inthandler4() __attribute__((section(".text_itcm")));
+static void inthandler5() __attribute__((section(".text_itcm")));
+static void inthandler6() __attribute__((section(".text_itcm")));
+static void inthandler7() __attribute__((section(".text_itcm")));
+static void inthandler8() __attribute__((section(".text_itcm")));
+
+static void inthandler0()
+{
+	TIM3->SR = 0UL;
+	__DSB();
+}
+static void inthandler1()
+static void inthandler2()
+static void inthandler3()
+static void inthandler4()
+static void inthandler5()
+static void inthandler6()
+static void inthandler7()
+static void inthandler8()
+
 void imu_fsm_inthandler() __attribute__((section(".text_itcm")));
 void imu_fsm_inthandler()
 {
@@ -1862,6 +1890,8 @@ static void ag_sensor_init(int bunch)
 void init_imu() __attribute__((section(".text_itcm")));
 void init_imu()
 {
+	SET_TIM3_VECTOR(imu_fsm_inthandler);
+
 	#if defined(IMU0_PRESENT) || defined(IMU1_PRESENT)
 
 		RCC->APB2ENR |= 1UL<<13;

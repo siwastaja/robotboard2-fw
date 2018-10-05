@@ -30,8 +30,10 @@ extern void agm45_errhandler();
 
 extern unsigned int _STACKTOP;
 
+#define VECTOR_TBL_LEN 166
+
 // Vector table on page 730 on the Reference Manual RM0433
-unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
+unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_vector"))) =
 {
 /* 0x0000                    */ (unsigned int *) &_STACKTOP,
 /* 0x0004 RESET              */ (unsigned int *) stm32init,
@@ -78,7 +80,7 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00A8                    */ (unsigned int *) invalid_handler,
 /* 0x00AC                    */ (unsigned int *) invalid_handler,
 /* 0x00B0 TIM2               */ (unsigned int *) invalid_handler,
-/* 0x00B4 TIM3               */ (unsigned int *) imu_fsm_inthandler,
+/* 0x00B4 TIM3               */ (unsigned int *) invalid_handler, //imu_fsm_inthandler,
 /* 0x00B8 TIM4               */ (unsigned int *) invalid_handler,
 /* 0x00BC I2C1 EVENT         */ (unsigned int *) epc_i2c_inthandler,
 /* 0x00C0      ERR           */ (unsigned int *) invalid_handler,
@@ -285,8 +287,29 @@ void refresh_settings()
 	__DSB(); __ISB();
 }
 */
+
+#define _RELOCATED_VECTORS_BEGIN 0x0000FC00UL
+#define ROM_ORIGIN 0x08000000UL
+
 void stm32init(void)
 {
+	/*
+		For some reason, reading at address 0 causes gcc to not generate any code at all, without any warnings,
+		so we start copying at 4.
+	*/
+	uint32_t* vect_begin  = (uint32_t*)(_RELOCATED_VECTORS_BEGIN+4);
+	uint32_t* vect_end    = (uint32_t*)(_RELOCATED_VECTORS_BEGIN+VECTOR_TBL_LEN*4);
+	uint32_t* vecti_begin = (uint32_t*)(ROM_ORIGIN+4);
+
+	while(vect_begin < vect_end)
+	{
+		*vect_begin = *vecti_begin;
+		vect_begin++;
+		vecti_begin++;
+	}
+
+	SCB->VTOR = _RELOCATED_VECTORS_BEGIN;
+
 
 	RCC->APB4ENR |= 1UL<<1 /*SYSCFG needs to be on for some configuration thingies often needed when fighting against
 		 device errata*/;

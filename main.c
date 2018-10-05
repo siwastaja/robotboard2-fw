@@ -247,6 +247,8 @@ void main()
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
 
+
+
 	init_imu();
 	uart_print_string_blocking("init ok\r\n"); 
 	extern void timer_test();
