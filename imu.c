@@ -222,30 +222,6 @@ void agm45_errhandler()
 
 */
 
-#define A_FIFO_READ_ADDR (0x80UL|0x3fUL)
-#define G_FIFO_READ_ADDR (0x80UL|0x3fUL)
-
-#if 0
-
-static void start_a024_read()
-{
-	SEL_IMU024_A();
-	__DSB();
-
-	// Make a short critical section, so that the writes start closely matched, in
-	// order to get closely matched end-of-transfer interrupts, so that they are likely to tail-chain
-	DIS_IRQ();
-	*(uint32_t*)&AGM01_SPI->TXDR = A_FIFO_READ_ADDR<<24;
-	*(uint32_t*)&AGM23_SPI->TXDR = A_FIFO_READ_ADDR<<24;
-	*(uint32_t*)&AGM45_SPI->TXDR = A_FIFO_READ_ADDR<<24;
-	ENA_IRQ();
-	// add __DMB() here if DIS_IRQ() ENA_IRQ() is removed
-	*(uint16_t*)&AGM01_SPI->TXDR = 0;
-	*(uint16_t*)&AGM23_SPI->TXDR = 0;
-	*(uint16_t*)&AGM45_SPI->TXDR = 0;
-}
-#endif
-
 typedef union __attribute__((packed))
 {
 	struct __attribute__((packed))
@@ -381,11 +357,11 @@ static inline void set_timer(uint16_t tenth_us)
 //#error "You really shouldn't be doing this. The ISR will hog up the CPU."
 //#endif
 
-#define REPOLL_WAIT_TIME 2000
+#define REPOLL_WAIT_TIME 5000
 
 // 1.28us per byte -> add 10% extra: 1.4us per byte. Then, add 5 us extra to the total.
-#define A_DMA_WAIT_TIME ((3*6+1)*14 + 50)
-#define G_DMA_WAIT_TIME ((5*6+1)*14 + 50)
+#define A_DMA_WAIT_TIME ((3*6+1)*14 + 500)
+#define G_DMA_WAIT_TIME ((5*6+1)*14 + 500)
 
 volatile int a_status_cnt[6];
 volatile int a_nonstatus_cnt[6];
@@ -450,6 +426,8 @@ volatile int cur_state;
 static void ag_do_fifo_lvl_read() __attribute__((section(".text_itcm")));
 static void ag_do_fifo_lvl_read()
 {
+//	delay_us(4);
+
 	AGM01_WR16 = 0x008e;
 	AGM23_WR16 = 0x008e;
 	AGM45_WR16 = 0x008e;
@@ -597,6 +575,8 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 	if(n_samples < 1 || n_samples > 7)
 		error(7);
 
+//	delay_us(4);
+
 	// BDMA doesn't clear the enable bit after completion, so we need to do it manually before starting the new transfer:
 	AGM23_RX_DMA_STREAM->CCR = RX_BDMA_CONFIG;
 	AGM23_TX_DMA_STREAM->CCR = TX_BDMA_CONFIG;
@@ -636,6 +616,8 @@ static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 	if(n_samples < 1 || n_samples > 7)
 		error(7);
 
+//	delay_us(4);
+
 	uint16_t len = n_samples*6+1;
 
 	AGM01_SPI->CR1 = SPI_CR_OFF;
@@ -672,6 +654,8 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 {
 	if(n_samples < 1 || n_samples > 7)
 		error(7);
+
+//	delay_us(4);
 
 	uint16_t len = n_samples*6+1;
 
@@ -744,6 +728,7 @@ void imu_fsm_inthandler()
 		case 1: // Trig by timer: Deassert A024, Read A024 level, assert A135, start reading FIFO fill level
 		{
 			DESEL_A024();
+//			delay_us(1);
 			fifo.lvls.a[0] = ag01_read_fifo_lvl();
 			fifo.lvls.a[2] = ag23_read_fifo_lvl();
 			fifo.lvls.a[4] = ag45_read_fifo_lvl();
@@ -756,6 +741,7 @@ void imu_fsm_inthandler()
 		case 2: // Trig by timer: Deassert A135, Read A135 level, assert G024, start reading FIFO fill level
 		{
 			DESEL_A135();
+//			delay_us(1);
 			fifo.lvls.a[1] = ag01_read_fifo_lvl();
 			fifo.lvls.a[3] = ag23_read_fifo_lvl();
 			fifo.lvls.a[5] = ag45_read_fifo_lvl();
@@ -768,6 +754,7 @@ void imu_fsm_inthandler()
 		case 3: // Trig by timer: Deassert G024, Read G024 level, assert G135, start reading FIFO fill level
 		{
 			DESEL_G024();
+//			delay_us(1);
 			fifo.lvls.g[0] = ag01_read_fifo_lvl();
 			fifo.lvls.g[2] = ag23_read_fifo_lvl();
 			fifo.lvls.g[4] = ag45_read_fifo_lvl();
@@ -785,21 +772,33 @@ void imu_fsm_inthandler()
 			fifo.lvls.g[5] = ag45_read_fifo_lvl();
 			__DSB();
 
-			if(
-				fifo.lvls.a[0] > 4 ||
-				fifo.lvls.a[1] > 4 ||
-				fifo.lvls.a[2] > 4 ||
-				fifo.lvls.a[3] > 4 ||
-				fifo.lvls.a[4] > 4 ||
-				fifo.lvls.a[5] > 4 ||
-				fifo.lvls.g[0] > 6 ||
-				fifo.lvls.g[1] > 6 ||
-				fifo.lvls.g[2] > 6 ||
-				fifo.lvls.g[3] > 6 ||
-				fifo.lvls.g[4] > 6 ||
-				fifo.lvls.g[5] > 6)
-			{
+			dbg[curd][0] = fifo.lvls.a[0];
+			dbg[curd][1] = fifo.lvls.a[1];
+			dbg[curd][2] = fifo.lvls.a[2];
+			dbg[curd][3] = fifo.lvls.a[3];
+			dbg[curd][4] = fifo.lvls.a[4];
+			dbg[curd][5] = fifo.lvls.a[5];
+			dbg[curd][6] = fifo.lvls.g[0];
+			dbg[curd][7] = fifo.lvls.g[1];
+			dbg[curd][8] = fifo.lvls.g[2];
+			dbg[curd][9] = fifo.lvls.g[3];
+			dbg[curd][10] = fifo.lvls.g[4];
+			dbg[curd][11] = fifo.lvls.g[5];
 
+			if(
+				fifo.lvls.a[0] > 7 ||
+				fifo.lvls.a[1] > 7 ||
+				fifo.lvls.a[2] > 7 ||
+				fifo.lvls.a[3] > 7 ||
+				fifo.lvls.a[4] > 7 ||
+				fifo.lvls.a[5] > 7 ||
+				fifo.lvls.g[0] > 7 ||
+				fifo.lvls.g[1] > 7 ||
+				fifo.lvls.g[2] > 7 ||
+				fifo.lvls.g[3] > 7 ||
+				fifo.lvls.g[4] > 7 ||
+				fifo.lvls.g[5] > 7)
+			{
 				uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
 
 				for(int i=0; i<6; i++)
@@ -814,19 +813,42 @@ void imu_fsm_inthandler()
 					if(fifo.lvls.g[i] > 5) uart_print_string_blocking(" !");
 					uart_print_string_blocking("\r\n");
 				}
-				error(17);
+
+				uart_print_string_blocking("TRACE:\r\n");
+
+				for(int i=0; i<=curd; i++)
+				{
+					int weird = 0;
+					for(int j=0; j<12; j++)
+					{
+						if(i>0 && (dbg[i][j] > dbg[i-1][j]+1)) weird = 1;
+						o_utoa16(dbg[i][j], printbuf); uart_print_string_blocking(printbuf);
+//						if(j==5)
+						uart_print_string_blocking(",");
+					}
+					if(weird)
+						uart_print_string_blocking("!!!!!");
+					uart_print_string_blocking("\r\n");
+				}
+				uart_print_string_blocking("\r\nEND\r\n");
+
+				error(13);
 			}
+
+			curd++;
+			if(curd >= DLEN) curd = 0;
+
 
 
 			if(
 //			    (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
 //			    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
-				fifo.lvls.a[0] >= 1 &&
-				fifo.lvls.a[1] >= 1 &&
-				fifo.lvls.a[2] >= 1 &&
-				fifo.lvls.a[3] >= 1 &&
-				fifo.lvls.a[4] >= 1 &&
-				fifo.lvls.a[5] >= 1 &&
+				fifo.lvls.a[0] >= 4 &&
+				fifo.lvls.a[1] >= 4 &&
+				fifo.lvls.a[2] >= 4 &&
+				fifo.lvls.a[3] >= 4 &&
+				fifo.lvls.a[4] >= 4 &&
+				fifo.lvls.a[5] >= 4 &&
 				fifo.lvls.g[0] >= 4 &&
 				fifo.lvls.g[1] >= 4 &&
 				fifo.lvls.g[2] >= 4 &&
@@ -1548,7 +1570,25 @@ static void printings()
 
 		uart_print_string_blocking("\r\n");
 */
-	uart_print_string_blocking("\r\n");
+
+		TIM4->CNT = 0;
+		__DSB();
+		TIM4->CR1 = 1UL<<3 | 1UL; // Enable
+		__DSB();
+		delay_ms(40);
+		uint32_t time = TIM4->CNT;		
+		TIM4->CR1 = 1UL<<3;
+		__DSB();
+		uart_print_string_blocking("CPU overhead : "); 
+		char* p_joo = o_utoa32(((time-36000))*10000/36000, printbuf);
+		p_joo[0] = p_joo[-1];
+		p_joo[-1] = p_joo[-2];
+		p_joo[-2] = '.';
+		p_joo[1] = 0;
+
+		uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+
 	delay_ms(200);
 
 //				NVIC_SystemReset();
@@ -1569,7 +1609,7 @@ static void printings()
 static const uint16_t a_init_seq[] =
 {
 	WR_REG(0x0f, XCEL_RANGE_2G),
-	WR_REG(0x10, XCEL_T2MS_BW250HZ),
+	WR_REG(0x10, XCEL_T1MS_BW500HZ),
 	WR_REG(0x3e, 0b01<<6 /*FIFO mode*/ | 0b00 /*X,Y and Z stored*/)
 };
 
@@ -1852,7 +1892,7 @@ void init_imu()
 
 		AGM01_SPI->CFG2 = 1UL<<31 /*Keep pin config while SPI is disabled to prevent glitches*/ |
 			1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
-			1UL<<25 /*CPOL*/ | 1UL<<24 /*CPHA*/;
+			0UL<<25 /*CPOL*/ | 0UL<<24 /*CPHA*/;
 		
 		AGM01_SPI->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
 
@@ -1902,7 +1942,7 @@ void init_imu()
 
 		AGM23_SPI->CFG2 = 1UL<<31 /*Keep pin config while SPI is disabled to prevent glitches*/ |
 			1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
-			1UL<<25 /*CPOL*/ | 1UL<<24 /*CPHA*/;
+			0UL<<25 /*CPOL*/ | 0UL<<24 /*CPHA*/;
 
 
 		AGM23_SPI->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
@@ -1950,7 +1990,7 @@ void init_imu()
 
 		AGM45_SPI->CFG2 =  1UL<<31 /*Keep pin config while SPI is disabled to prevent glitches*/ |
 			1UL<<29 /*SSOE - another new incorrectly documented trap bit*/ | 1UL<<26 /*Software slave management*/ | 1UL<<22 /*Master*/ |
-			1UL<<25 /*CPOL*/ | 1UL<<24 /*CPHA*/;
+			0UL<<25 /*CPOL*/ | 0UL<<24 /*CPHA*/;
 
 
 		AGM45_SPI->CR1 =  1UL<<12 /*SSI bit must always be high in software nSS managed master mode*/;
@@ -2145,31 +2185,16 @@ void timer_test()
 //	int cnt = 0;
 	set_timer(50000);
 
-//	RCC->APB1LENR |= 1UL<<2;
-//	__DSB();
-//	TIM4->PSC = 200-1;
-//	TIM4->CR1 = 1UL<<3 /* one pulse mode */;
-//	TIM4->ARR = 0xffffffff;
+	RCC->APB1LENR |= 1UL<<2;
+	__DSB();
+	TIM4->PSC = 200-1;
+	TIM4->CR1 = 1UL<<3 /* one pulse mode */;
+	TIM4->ARR = 0xffffffff;
 
-//	delay_ms(1);
 
 	while(1)
 	{
 		printings();
-
-/*
-		TIM4->CNT = 0;
-		__DSB();
-		TIM4->CR1 = 1UL<<3 | 1UL; // Enable
-		__DSB();
-		delay_ms(10);
-		uint32_t time = TIM4->CNT;		
-		TIM4->CR1 = 1UL<<3;
-		__DSB();
-		uart_print_string_blocking("time : "); o_utoa32(time, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-*/		
-//		trig_m = 1;
-//		delay_ms(200);
 	}
 }
 
