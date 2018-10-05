@@ -349,7 +349,15 @@ static inline void set_timer(uint16_t tenth_us)
 // You should never encounter more than 1 item in any FIFO. If this happens, reduce the wait time to run faster.
 // Running faster reduces readout latencies. Don't go too low mostly because the fsm inthandler starts to eat up
 // some considerable CPU time.
-#define FINAL_WAIT_TIME 5000
+
+/*
+	Test results:
+	50000 too high - doens't work
+	40000 barely works, without margin
+	25000, with REPOLL_WAIT=5000, gives normally 3 or 4 polls (so 2 or 3 repolls)
+	This gives 0.56% CPU overhead
+*/
+#define FINAL_WAIT_TIME 25000 
 #define FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS (FINAL_WAIT_TIME - (TRIG_REG_WRITE_WAIT_TIME*2 + \
 		STATUS_READ_WAIT_TIME*2 + M_READ_PART1_WAIT_TIME*2 + M_READ_PART2_WAIT_TIME*2 + 7*3)) /*Estimate of 0.3us per code execution per state*/
 
@@ -359,9 +367,9 @@ static inline void set_timer(uint16_t tenth_us)
 
 #define REPOLL_WAIT_TIME 5000
 
-// 1.28us per byte -> add 10% extra: 1.4us per byte. Then, add 5 us extra to the total.
-#define A_DMA_WAIT_TIME ((3*6+1)*14 + 500)
-#define G_DMA_WAIT_TIME ((5*6+1)*14 + 500)
+// 1.28us per byte -> add 10% extra: 1.4us per byte. Then, add 10 us extra to the total.
+#define A_DMA_WAIT_TIME ((7*6+1)*14 + 100)
+#define G_DMA_WAIT_TIME ((7*6+1)*14 + 100)
 
 volatile int a_status_cnt[6];
 volatile int a_nonstatus_cnt[6];
@@ -702,7 +710,7 @@ void imu_fsm_inthandler()
 {
 //	LED_ON();
 	TIM3->SR = 0UL;
-
+	static int kukka;
 	switch(cur_state)
 	{
 		case 0: // Trig by timer: Assert A024, start reading FIFO fill level
@@ -756,6 +764,7 @@ void imu_fsm_inthandler()
 
 		case 4: // Trig by timer: Deassert G135, Read G135 level, wait to start over? or Assert & DMA read A024?
 		{
+			kukka++;
 			DESEL_G135();
 			fifo.lvls.g[1] = ag01_read_fifo_lvl();
 			fifo.lvls.g[3] = ag23_read_fifo_lvl();
@@ -932,6 +941,9 @@ void imu_fsm_inthandler()
 			data_ok = 1;
 			kakka_cnt++;
 			set_timer(FINAL_WAIT_TIME);
+			kukka_cnt = kukka;
+			__DSB();
+			kukka = 0;
 		} break;
 
 		case 9: // Trig by timer: Deassert M024, Assert & Trig M135
