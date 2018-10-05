@@ -383,40 +383,30 @@ volatile int cur_state;
 	higher-than-necessary sampling rate, then average the samples together to form the desired output rate.
 
 	Gyro sampling rate = 1000Hz (internal filter BW = 116Hz)
-	Xcel sampling rate = 500Hz (internal filter BW = 250Hz)
+	Xcel sampling rate = 1000Hz (internal filter BW = 500Hz)
 
 	Values are accumulated in the BMX055 FIFOs until there is at least:
-	* 4 gyro samples (0b100 or more; i.e., & 0b01111100 (0x7c) is true)
-	* 2 xcel samples (0b10 or more; i.e.,  & 0b01111110 (0x7e) is true)
+	* 4 gyro samples
+	* 4 xcel samples
 
 	It's acceptable to have more (7 gyro, 7 xcel). More than that is considered a timing error, meaning
 	significant data rate error between the devices.
 
-	A amount to read: Up to 7: fifo_status & 0b00000111 (0x07)
-	A mask:   0b00000110 (0x0) must equal
-	          0b00000010 (0x0) --> (2 or 3)
-		or
-	          0b00000100 (0x0) --> (4,5,6 or 7)
-
-	(Errmask:  0b11111100 (0xfc) is true (4 or more))
-
-
-	G amount to read: 4 or 5: fifo_status & 0b00000101 (0x05)
-	G mask:   0b00000110 (0x06) must equal)
-	          0b00000100 (0x04) --> (4 or 5)
-	Err analysis:
-	          condition would check ok the next time at 12, 13, then at 52, 53...
-	-> causes significant delay, easily detected by a watchdog.
-	(Errmask:  0b11111000 (0xf8) is true (8 or more) -- will trig after 12 samples in FIFO, causing a slight delay in error detection.)
-
+	amount to read: Up to 7: fifo_status & 0b00000111 (0x07)
+	mask:   0b00000100 (0x04) must equal
+	        0b00000100 (0x04) --> (4,5,6,or 7 data)
 
 */
 
-#define REQUIRED_FIRST_MASK  0x0606020202020202ULL
-#define REQUIRED_FIRST       0x0404020202020202ULL
+#define REQUIRED_FIRST_MASK  0x0404040404040404ULL
+#define REQUIRED_FIRST       0x0404040404040404ULL
 
-#define REQUIRED_SECOND_MASK 0x06060606UL
+#define REQUIRED_SECOND_MASK 0x04040404UL
 #define REQUIRED_SECOND      0x04040404UL
+
+#define ERR_FIRST_MASK  0xf8f8f8f8f8f8f8f8ULL
+#define ERR_SECOND_MASK 0xf8f8f8f8UL
+
 
 //#define READ_LEN_FIRST_MASK  0x0505030303030303ULL
 //#define READ_LEN_SECOND_MASK 0x05050505UL
@@ -786,6 +776,10 @@ void imu_fsm_inthandler()
 			dbg[curd][11] = fifo.lvls.g[5];
 
 			if(
+			    (fifo.quick.first & ERR_FIRST_MASK) || 
+			    (fifo.quick.second & ERR_SECOND_MASK))
+
+/*
 				fifo.lvls.a[0] > 7 ||
 				fifo.lvls.a[1] > 7 ||
 				fifo.lvls.a[2] > 7 ||
@@ -798,6 +792,7 @@ void imu_fsm_inthandler()
 				fifo.lvls.g[3] > 7 ||
 				fifo.lvls.g[4] > 7 ||
 				fifo.lvls.g[5] > 7)
+*/
 			{
 				uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
 
@@ -841,9 +836,9 @@ void imu_fsm_inthandler()
 
 
 			if(
-//			    (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
-//			    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
-				fifo.lvls.a[0] >= 4 &&
+			    (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
+			    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
+/*				fifo.lvls.a[0] >= 4 &&
 				fifo.lvls.a[1] >= 4 &&
 				fifo.lvls.a[2] >= 4 &&
 				fifo.lvls.a[3] >= 4 &&
@@ -854,7 +849,7 @@ void imu_fsm_inthandler()
 				fifo.lvls.g[2] >= 4 &&
 				fifo.lvls.g[3] >= 4 &&
 				fifo.lvls.g[4] >= 4 &&
-				fifo.lvls.g[5] >= 4)
+				fifo.lvls.g[5] >= 4)*/
 
 			{
 				fifo.quick.first &= READ_LEN_FIRST_MASK;
@@ -1586,7 +1581,7 @@ static void printings()
 		p_joo[-2] = '.';
 		p_joo[1] = 0;
 
-		uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking(printbuf); uart_print_string_blocking(" % \r\n");
 
 
 	delay_ms(200);
