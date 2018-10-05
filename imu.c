@@ -20,10 +20,6 @@ https://community.st.com/s/article/FAQ-DMA-is-not-working-on-STM32H7-devices
 #include "own_std.h"
 
 volatile int kakka_cnt, kukka_cnt;
-volatile uint16_t kikka;
-volatile int fancy_shit01 = 0;
-volatile int fancy_shit45 = 0;
-volatile int deep_shit = 0;
 
 static char printbuf[128];
 
@@ -377,15 +373,15 @@ static inline void set_timer(uint16_t tenth_us)
 // You should never encounter more than 1 item in any FIFO. If this happens, reduce the wait time to run faster.
 // Running faster reduces readout latencies. Don't go too low mostly because the fsm inthandler starts to eat up
 // some considerable CPU time.
-#define FINAL_WAIT_TIME 10000
+#define FINAL_WAIT_TIME 1000
 #define FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS (FINAL_WAIT_TIME - (TRIG_REG_WRITE_WAIT_TIME*2 + \
 		STATUS_READ_WAIT_TIME*2 + M_READ_PART1_WAIT_TIME*2 + M_READ_PART2_WAIT_TIME*2 + 7*3)) /*Estimate of 0.3us per code execution per state*/
 
-#if ((FINAL_WAIT_TIME < 3000) || (FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS < 2000))
-#error "You really shouldn't be doing this. The ISR will hog up the CPU."
-#endif
+//#if ((FINAL_WAIT_TIME < 3000) || (FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS < 2000))
+//#error "You really shouldn't be doing this. The ISR will hog up the CPU."
+//#endif
 
-#define REPOLL_WAIT_TIME 5000
+#define REPOLL_WAIT_TIME 1000
 
 // 1.28us per byte -> add 10% extra: 1.4us per byte. Then, add 5 us extra to the total.
 #define A_DMA_WAIT_TIME ((3*6+1)*14 + 50)
@@ -396,7 +392,6 @@ volatile int a_nonstatus_cnt[6];
 volatile int g_status_cnt[6];
 volatile int g_nonstatus_cnt[6];
 
-volatile int dbg;
 volatile int trig_m;
 
 volatile int cur_state;
@@ -418,12 +413,15 @@ volatile int cur_state;
 	* 4 gyro samples (0b100 or more; i.e., & 0b01111100 (0x7c) is true)
 	* 2 xcel samples (0b10 or more; i.e.,  & 0b01111110 (0x7e) is true)
 
-	It's acceptable to have one more (5 gyro, 3 xcel). More than that is considered a timing error, meaning
+	It's acceptable to have more (7 gyro, 7 xcel). More than that is considered a timing error, meaning
 	significant data rate error between the devices.
 
-	A amount to read: 2 or 3: fifo_status & 0b00000011 (0x03)
-	A mask:   0b00000010 (0x02) must equal
-	          0b00000010 (0x02) --> (2 or 3)
+	A amount to read: Up to 7: fifo_status & 0b00000111 (0x07)
+	A mask:   0b00000110 (0x0) must equal
+	          0b00000010 (0x0) --> (2 or 3)
+		or
+	          0b00000100 (0x0) --> (4,5,6 or 7)
+
 	(Errmask:  0b11111100 (0xfc) is true (4 or more))
 
 
@@ -444,46 +442,23 @@ volatile int cur_state;
 #define REQUIRED_SECOND_MASK 0x06060606UL
 #define REQUIRED_SECOND      0x04040404UL
 
-#define READ_LEN_FIRST_MASK  0x0505030303030303ULL
-#define READ_LEN_SECOND_MASK 0x05050505UL
+//#define READ_LEN_FIRST_MASK  0x0505030303030303ULL
+//#define READ_LEN_SECOND_MASK 0x05050505UL
+#define READ_LEN_FIRST_MASK  0x0707070707070707ULL
+#define READ_LEN_SECOND_MASK 0x07070707UL
 
 static void ag_do_fifo_lvl_read() __attribute__((section(".text_itcm")));
 static void ag_do_fifo_lvl_read()
 {
-	if(deep_shit)
-	{
-		delay_ms(4000);
-		uart_print_string_blocking("\r\n01SPICR = "); o_utoa32_hex(AGM01_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPISR = "); o_btoa16_fixed(AGM01_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("TSIZE = "); o_utoa16_fixed(AGM01_SPI->TSIZE, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(AGM01_SPI->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPICFG1 = "); o_utoa32_hex(AGM01_SPI->CFG1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPICFG2 = "); o_utoa32_hex(AGM01_SPI->CFG2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("\r\n");
-	}
 	AGM01_WR16 = 0x008e;
 	AGM23_WR16 = 0x008e;
 	AGM45_WR16 = 0x008e;
-	if(deep_shit)
-	{
-		__DSB();
-		delay_ms(2);
-		uart_print_string_blocking("\r\n01SPICR = "); o_utoa32_hex(AGM01_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPISR = "); o_btoa16_fixed(AGM01_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("TSIZE = "); o_utoa16_fixed(AGM01_SPI->TSIZE, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(AGM01_SPI->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPICFG1 = "); o_utoa32_hex(AGM01_SPI->CFG1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPICFG2 = "); o_utoa32_hex(AGM01_SPI->CFG2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("\r\n");
-		while(1);
-	}
 }
 
 // Mask bit7 away to get the actual count.
 static inline uint8_t ag01_read_fifo_lvl()
 {
 	uint16_t status = AGM01_RD16;
-	kikka = status;
 	return status>>8;
 }
 
@@ -619,7 +594,7 @@ static void ag45_nondma()
 static void ag23_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 2 || n_samples > 5)
+	if(n_samples < 2 || n_samples > 7)
 		error(7);
 
 	// BDMA doesn't clear the enable bit after completion, so we need to do it manually before starting the new transfer:
@@ -658,33 +633,10 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 static void ag01_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 2 || n_samples > 5)
+	if(n_samples < 2 || n_samples > 7)
 		error(7);
 
-	if(fancy_shit01)
-	{
-		uart_print_string_blocking("\r\n\r\n FANCY SHIT HAPPENING\r\n\r\nn_samples = "); o_utoa16(n_samples, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	}
-
 	uint16_t len = n_samples*6+1;
-
-	if(fancy_shit01)
-	{
-		delay_ms(4000);
-
-		if(AGM01_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX01 ");
-		if(AGM01_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX01 ");
-		uart_print_string_blocking("\r\n01SPICR = "); o_btoa16_fixed(AGM01_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPISR = "); o_btoa16_fixed(AGM01_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(AGM01_SPI->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01TX NDTR  = "); o_utoa16(AGM01_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01RX NDTR  = "); o_utoa16(AGM01_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPICFG2 = "); o_utoa32_hex(AGM01_SPI->CFG2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	
-		uart_print_string_blocking("\r\n");
-	}
 
 	AGM01_SPI->CR1 = SPI_CR_OFF;
 	__DSB();
@@ -713,58 +665,15 @@ static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 	__DSB();
 	AGM01_SPI->CR1 = SPI_CR_ON | (1UL<<9);
 	__DSB();
-
-	if(fancy_shit01)
-	{
-		delay_ms(5);
-
-		if(AGM01_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX01 ");
-		if(AGM01_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX01 ");
-		uart_print_string_blocking("\r\n01SPICR = "); o_btoa16_fixed(AGM01_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPISR = "); o_btoa16_fixed(AGM01_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(AGM01_SPI->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01TX NDTR  = "); o_utoa16(AGM01_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01RX NDTR  = "); o_utoa16(AGM01_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("01SPICFG2 = "); o_utoa32_hex(AGM01_SPI->CFG2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("\r\n");
-
-		while(1);
-	}
-
 }
 
 static void ag45_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
 static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 {
-	if(n_samples < 2 || n_samples > 5)
+	if(n_samples < 2 || n_samples > 7)
 		error(7);
 
-	if(fancy_shit45)
-	{
-		uart_print_string_blocking("\r\n\r\n FANCY SHIT HAPPENING\r\n\r\nn_samples = "); o_utoa16(n_samples, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	}
-
 	uint16_t len = n_samples*6+1;
-
-	if(fancy_shit45)
-	{
-		delay_ms(4000);
-
-		if(AGM45_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX45 ");
-		if(AGM45_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX45 ");
-		uart_print_string_blocking("\r\n45SPICR = "); o_btoa16_fixed(AGM45_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45SPISR = "); o_btoa16_fixed(AGM45_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(AGM45_SPI->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45TX NDTR  = "); o_utoa16(AGM45_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45RX NDTR  = "); o_utoa16(AGM45_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45SPICFG2 = "); o_utoa32_hex(AGM45_SPI->CFG2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	
-		uart_print_string_blocking("\r\n");
-	}
 
 	AGM45_SPI->CR1 = SPI_CR_OFF;
 	__DSB();
@@ -791,24 +700,6 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 	AGM45_SPI->CR1 = SPI_CR_ON | (1UL<<9);
 	__DSB();
 
-	if(fancy_shit45)
-	{
-		delay_ms(5);
-
-		if(AGM45_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX45 ");
-		if(AGM45_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX45 ");
-		uart_print_string_blocking("\r\n45SPICR = "); o_btoa16_fixed(AGM45_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45SPISR = "); o_btoa16_fixed(AGM45_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(AGM45_SPI->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45TX NDTR  = "); o_utoa16(AGM45_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45RX NDTR  = "); o_utoa16(AGM45_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("45SPICFG2 = "); o_utoa32_hex(AGM45_SPI->CFG2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("\r\n");
-
-		while(1);
-	}
 }
 
 volatile int data_ok;
@@ -828,12 +719,15 @@ volatile static union
 	} quick;
 } fifo;
 
+#define DLEN 8000
+uint8_t dbg[DLEN][12];
+int curd;
+
 void imu_fsm_inthandler() __attribute__((section(".text_itcm")));
 void imu_fsm_inthandler()
 {
 	LED_ON();
 	TIM3->SR = 0UL;
-
 
 	switch(cur_state)
 	{
@@ -893,8 +787,91 @@ void imu_fsm_inthandler()
 			fifo.lvls.g[5] = ag45_read_fifo_lvl();
 			__DSB();
 
-			if( (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
-			    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
+			dbg[curd][0] = fifo.lvls.a[0];
+			dbg[curd][1] = fifo.lvls.a[1];
+			dbg[curd][2] = fifo.lvls.a[2];
+			dbg[curd][3] = fifo.lvls.a[3];
+			dbg[curd][4] = fifo.lvls.a[4];
+			dbg[curd][5] = fifo.lvls.a[5];
+			dbg[curd][6] = fifo.lvls.g[0];
+			dbg[curd][7] = fifo.lvls.g[1];
+			dbg[curd][8] = fifo.lvls.g[2];
+			dbg[curd][9] = fifo.lvls.g[3];
+			dbg[curd][10] = fifo.lvls.g[4];
+			dbg[curd][11] = fifo.lvls.g[5];
+
+			if(
+				fifo.lvls.a[0] > 4 ||
+				fifo.lvls.a[1] > 4 ||
+				fifo.lvls.a[2] > 4 ||
+				fifo.lvls.a[3] > 4 ||
+				fifo.lvls.a[4] > 4 ||
+				fifo.lvls.a[5] > 4 ||
+				fifo.lvls.g[0] > 6 ||
+				fifo.lvls.g[1] > 6 ||
+				fifo.lvls.g[2] > 6 ||
+				fifo.lvls.g[3] > 6 ||
+				fifo.lvls.g[4] > 6 ||
+				fifo.lvls.g[5] > 6 ||
+				curd >= DLEN)
+			{
+
+				if(curd >= DLEN)
+					uart_print_string_blocking("\r\nSTOPPED: end of dbg - NO ERRORS\r\n");
+				else
+					uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
+
+				for(int i=0; i<6; i++)
+				{
+					uart_print_string_blocking("a: "); o_utoa16(fifo.lvls.a[i], printbuf); uart_print_string_blocking(printbuf); 
+					if(fifo.lvls.a[i] > 3) uart_print_string_blocking(" !");
+					uart_print_string_blocking("\r\n");
+				}
+				for(int i=0; i<6; i++)
+				{
+					uart_print_string_blocking("g: "); o_utoa16(fifo.lvls.g[i], printbuf); uart_print_string_blocking(printbuf);
+					if(fifo.lvls.g[i] > 5) uart_print_string_blocking(" !");
+					uart_print_string_blocking("\r\n");
+				}
+
+				uart_print_string_blocking("TRACE:\r\n");
+
+				for(int i=0; i<=curd; i++)
+				{
+					for(int j=0; j<12; j++)
+					{
+						o_utoa16(dbg[i][j], printbuf); uart_print_string_blocking(printbuf);
+//						if(j==5)
+						uart_print_string_blocking(",");
+					}
+					uart_print_string_blocking("\r\n");
+				}
+				uart_print_string_blocking("\r\nEND\r\n");
+				
+
+				error(17);
+			}
+
+			curd++;
+
+
+
+			if(
+//			    (fifo.quick.first & REQUIRED_FIRST_MASK) == REQUIRED_FIRST  && 
+//			    (fifo.quick.second & REQUIRED_SECOND_MASK) == REQUIRED_SECOND)
+				fifo.lvls.a[0] >= 2 &&
+				fifo.lvls.a[1] >= 2 &&
+				fifo.lvls.a[2] >= 2 &&
+				fifo.lvls.a[3] >= 2 &&
+				fifo.lvls.a[4] >= 2 &&
+				fifo.lvls.a[5] >= 2 &&
+				fifo.lvls.g[0] >= 4 &&
+				fifo.lvls.g[1] >= 4 &&
+				fifo.lvls.g[2] >= 4 &&
+				fifo.lvls.g[3] >= 4 &&
+				fifo.lvls.g[4] >= 4 &&
+				fifo.lvls.g[5] >= 4)
+
 			{
 /*
 				for(int i=0; i<6; i++)
@@ -942,7 +919,6 @@ void imu_fsm_inthandler()
 				// We don't need the actual FIFO level anymore, but we need the "read length" for now on,
 				// in two places (configuring the DMA channel, and later, after DMA is finished, to overwrite
 				// the n field). Let's overwrite fifo_lvls in a quick operation:
-				//fancy_shit45 = 1;
 
 				SEL_A024();
 				ag01_dma_start(fifo.lvls.a[0], &a_packet0);
@@ -952,41 +928,7 @@ void imu_fsm_inthandler()
 				cur_state++;
 			}
 			else
-			{
-
-				if(
-					fifo.lvls.a[0] > 3 ||
-					fifo.lvls.a[1] > 3 ||
-					fifo.lvls.a[2] > 3 ||
-					fifo.lvls.a[3] > 3 ||
-					fifo.lvls.a[4] > 3 ||
-					fifo.lvls.a[5] > 3 ||
-					fifo.lvls.g[0] > 5 ||
-					fifo.lvls.g[1] > 5 ||
-					fifo.lvls.g[2] > 5 ||
-					fifo.lvls.g[3] > 5 ||
-					fifo.lvls.g[4] > 5 ||
-					fifo.lvls.g[5] > 5)
-				{
-
-					uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
-					for(int i=0; i<6; i++)
-					{
-						uart_print_string_blocking("a: "); o_utoa16(fifo.lvls.a[i], printbuf); uart_print_string_blocking(printbuf); 
-						if(fifo.lvls.a[i] > 3) uart_print_string_blocking(" !");
-						uart_print_string_blocking("\r\n");
-					}
-					for(int i=0; i<6; i++)
-					{
-						uart_print_string_blocking("g: "); o_utoa16(fifo.lvls.g[i], printbuf); uart_print_string_blocking(printbuf);
-						if(fifo.lvls.g[i] > 5) uart_print_string_blocking(" !");
-						uart_print_string_blocking("\r\n");
-					}
-
-					error(17);
-				}
-
-				
+			{				
 				cur_state = 0;
 				set_timer(REPOLL_WAIT_TIME);
 			}
@@ -1049,7 +991,6 @@ void imu_fsm_inthandler()
 			cur_state = 0;
 			data_ok = 1;
 			kakka_cnt++;
-//			deep_shit = 1;
 			set_timer(FINAL_WAIT_TIME);
 		} break;
 
@@ -1574,8 +1515,8 @@ static void printings()
 //	{
 //		while(1);
 //	}
-/*
-	int as[6], gs[6];
+
+/*	int as[6], gs[6];
 	DIS_IRQ();
 	for(int i=0; i<6; i++)
 	{
@@ -1594,9 +1535,9 @@ static void printings()
 	{
 		o_utoa16(gs[i], printbuf); uart_print_string_blocking(printbuf);
 	}
-	uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("\r\n");*/
 	return;
-*/
+
 	while(!data_ok) ;
 	DIS_IRQ();
 	memcpy(&a[0], &a_packet0, sizeof(a[0]));
@@ -1632,7 +1573,6 @@ static void printings()
 
 	uart_print_string_blocking("  kakka= "); o_utoa32(kakka_cnt, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
 	uart_print_string_blocking("  kukka= "); o_utoa32(kukka_cnt, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-	uart_print_string_blocking("  kikka= "); o_utoa16_hex(kikka, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
 
 	uart_print_string_blocking("\r\n");
 
