@@ -355,9 +355,10 @@ static inline void set_timer(uint16_t tenth_us)
 	50000 too high - doens't work
 	40000 barely works, without margin
 	25000, with REPOLL_WAIT=5000, gives normally 3 or 4 polls (so 2 or 3 repolls)
-	This gives 0.56% CPU overhead
+	This gives 0.58% CPU overhead
 */
-#define FINAL_WAIT_TIME 25000 
+int final_wait_time = 25000;
+#define FINAL_WAIT_TIME 25000
 #define FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS (FINAL_WAIT_TIME - (TRIG_REG_WRITE_WAIT_TIME*2 + \
 		STATUS_READ_WAIT_TIME*2 + M_READ_PART1_WAIT_TIME*2 + M_READ_PART2_WAIT_TIME*2 + 7*3)) /*Estimate of 0.3us per code execution per state*/
 
@@ -711,6 +712,7 @@ void imu_fsm_inthandler()
 //	LED_ON();
 	TIM3->SR = 0UL;
 	static int kukka;
+	static int repolls;
 	switch(cur_state)
 	{
 		case 0: // Trig by timer: Assert A024, start reading FIFO fill level
@@ -880,6 +882,7 @@ void imu_fsm_inthandler()
 			{				
 				cur_state = 0;
 				set_timer(REPOLL_WAIT_TIME);
+				repolls++;
 			}
 		} break;
 
@@ -940,7 +943,12 @@ void imu_fsm_inthandler()
 			cur_state = 0;
 			data_ok = 1;
 			kakka_cnt++;
-			set_timer(FINAL_WAIT_TIME);
+			if(repolls == 0)
+				final_wait_time -= 1000;
+			else if(repolls >= 2)
+				final_wait_time += 500;
+			repolls = 0;
+			set_timer(final_wait_time);
 			kukka_cnt = kukka;
 			__DSB();
 			kukka = 0;
