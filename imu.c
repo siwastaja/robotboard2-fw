@@ -4,6 +4,7 @@
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
 #include "own_std.h"
+#include "timebase.h"
 
 volatile int packet_cnt;
 
@@ -218,28 +219,6 @@ typedef union __attribute__((packed))
 
 // Gyro data has no status bits to remove
 
-typedef union __attribute__((packed))
-{
-	struct __attribute__((packed))
-	{
-		int16_t x;
-		int16_t y;
-		int16_t z;
-		uint16_t rhall;
-	} coords;
-
-	struct __attribute__((packed))
-	{
-		uint32_t first;
-		uint32_t second;
-	} blocks;
-} m_dataframe_in_fifo_t;
-
-#define M_REMOVE_STATUS_BITS(_x_) do{((m_dataframe_in_fifo_t*)&(_x_))->blocks.first &= 0xfff8fff8; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0xfffcfffe; }while(0)
-
-volatile m_dataframe_in_fifo_t latest_m[6];
-volatile int8_t a_temps[6];
-
 
 /*
 	SPI FIFO access macros for non-DMA mode:
@@ -268,17 +247,6 @@ volatile int8_t a_temps[6];
 #define AGM23_RD8 (*(volatile uint8_t*)&AGM23_SPI->RXDR)
 #define AGM45_RD8 (*(volatile uint8_t*)&AGM45_SPI->RXDR)
 
-#define AG01_READ_CMD() do{AGM01_WR32 = 0x000000bf; __DMB(); AGM01_WR16 = 0x0000; __DMB(); AGM01_WR8 = 0x00; __DMB();}while(0)
-#define AG23_READ_CMD() do{AGM23_WR32 = 0x000000bf; __DMB(); AGM23_WR16 = 0x0000; __DMB(); AGM23_WR8 = 0x00; __DMB();}while(0)
-#define AG45_READ_CMD() do{AGM45_WR32 = 0x000000bf; __DMB(); AGM45_WR16 = 0x0000; __DMB(); AGM45_WR8 = 0x00; __DMB();}while(0)
-
-#define M01_READ_CMD_PART1() do{AGM01_WR32 = 0x000000c2; __DMB(); AGM01_WR32 = 0x0000; __DMB();}while(0)
-#define M23_READ_CMD_PART1() do{AGM23_WR32 = 0x000000c2; __DMB(); AGM23_WR32 = 0x0000; __DMB();}while(0)
-#define M45_READ_CMD_PART1() do{AGM45_WR32 = 0x000000c2; __DMB(); AGM45_WR32 = 0x0000; __DMB();}while(0)
-
-#define M01_READ_CMD_PART2() do{AGM01_WR8 = 0x00; __DMB();}while(0)
-#define M23_READ_CMD_PART2() do{AGM23_WR8 = 0x00; __DMB();}while(0)
-#define M45_READ_CMD_PART2() do{AGM45_WR8 = 0x00; __DMB();}while(0)
 
 static inline void set_timer(uint16_t tenth_us)
 {
@@ -332,8 +300,6 @@ static inline void set_timer(uint16_t tenth_us)
 */
 int final_wait_time = 20000;
 #define FINAL_WAIT_TIME 25000
-#define FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS (FINAL_WAIT_TIME - (TRIG_REG_WRITE_WAIT_TIME*2 + \
-		STATUS_READ_WAIT_TIME*2 + M_READ_PART1_WAIT_TIME*2 + M_READ_PART2_WAIT_TIME*2 + 7*3)) /*Estimate of 0.3us per code execution per state*/
 
 //#if ((FINAL_WAIT_TIME < 3000) || (FINAL_WAIT_TIME_WITH_TEMP_AND_M_READOUTS < 2000))
 //#error "You really shouldn't be doing this. The ISR will hog up the CPU."
@@ -344,9 +310,13 @@ int final_wait_time = 20000;
 // 1.28us per byte -> add 10% extra: 1.4us per byte. Then, add 10 us extra to the total.
 #define A_DMA_WAIT_TIME ((7*6+1)*14 + 100)
 #define G_DMA_WAIT_TIME ((7*6+1)*14 + 100)
+#define M_DMA_WAIT_TIME ((1*8+1)*14 + 100)
 
+// Estimate of time spent running the extra cycle of Magnetometer read, temperature read, and magnetometer trigger.
+// Better to overestimate a bit, causing extra repolling.
+// Assume 0.5us per state for executing code between timer stop and re-enable.
+#define M_T_CYCLE_DURATION (2*M_DMA_WAIT_TIME + 2*STATUS_READ_WAIT_TIME + 2*TRIG_REG_WRITE_WAIT_TIME + 6*5) 
 
-volatile int trig_m;
 
 /*
 	Both gyro and accelerometer in BMX055 are free-running, on internal, non-precision oscillator.
@@ -394,8 +364,6 @@ volatile int trig_m;
 static void ag_do_fifo_lvl_read() __attribute__((section(".text_itcm")));
 static void ag_do_fifo_lvl_read()
 {
-//	delay_us(4);
-
 	AGM01_WR16 = 0x008e;
 	AGM23_WR16 = 0x008e;
 	AGM45_WR16 = 0x008e;
@@ -444,6 +412,34 @@ typedef struct __attribute__((packed))
 	xyz_i16_packed_t xyz[8]; //3
 } a_dma_packet_t;
 
+typedef union __attribute__((packed))
+{
+	struct __attribute__((packed))
+	{
+		uint8_t dummy;
+		int16_t x;
+		int16_t y;
+		int16_t z;
+		uint16_t rhall;
+		uint16_t align1;
+		uint8_t  align2;
+	} coords;
+
+	struct __attribute__((packed))
+	{
+		uint8_t dummy;
+		uint32_t first;
+		uint32_t second;
+		uint16_t align1;
+		uint8_t  align2;
+	} blocks;
+} m_dma_packet_t;
+
+#define M_REMOVE_STATUS_BITS(_x_) do{((m_dataframe_in_fifo_t*)&(_x_))->blocks.first &= 0xfff8fff8; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0xfffcfffe; }while(0)
+
+volatile int8_t a_temps[6];
+
+
 /*
 
 STM32H7 MASSIVE TRAP WARNING:
@@ -458,20 +454,37 @@ https://community.st.com/s/article/FAQ-DMA-is-not-working-on-STM32H7-devices
 
 volatile a_dma_packet_t a_packet0 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile g_dma_packet_t g_packet0 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
+volatile m_dma_packet_t m_packet0 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
+
 volatile a_dma_packet_t a_packet1 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile g_dma_packet_t g_packet1 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
+volatile m_dma_packet_t m_packet1 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
+
 volatile a_dma_packet_t a_packet2 __attribute__((aligned(4))) __attribute__((section(".sram4_bss")));
 volatile g_dma_packet_t g_packet2 __attribute__((aligned(4))) __attribute__((section(".sram4_bss")));
+volatile m_dma_packet_t m_packet2 __attribute__((aligned(4))) __attribute__((section(".sram4_bss")));
+
 volatile a_dma_packet_t a_packet3 __attribute__((aligned(4))) __attribute__((section(".sram4_bss")));
 volatile g_dma_packet_t g_packet3 __attribute__((aligned(4))) __attribute__((section(".sram4_bss")));
+volatile m_dma_packet_t m_packet3 __attribute__((aligned(4))) __attribute__((section(".sram4_bss")));
+
 volatile a_dma_packet_t a_packet4 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile g_dma_packet_t g_packet4 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
+volatile m_dma_packet_t m_packet4 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
+
 volatile a_dma_packet_t a_packet5 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile g_dma_packet_t g_packet5 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
+volatile m_dma_packet_t m_packet5 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 
 
-static const g_dma_packet_t dma_command __attribute__((aligned(4))) __attribute__((section(".sram3_data"))) = {0xbf, {{0}}};
-static const g_dma_packet_t bdma_command __attribute__((aligned(4))) __attribute__((section(".sram4_data"))) = {0xbf, {{0}}};
+// A & G read commands are the same: start with 0xbf, then don't care.
+static const g_dma_packet_t ag_dma_command  __attribute__((aligned(4))) __attribute__((section(".sram3_data"))) = {0xbf, {{0}}};
+static const g_dma_packet_t ag_bdma_command __attribute__((aligned(4))) __attribute__((section(".sram4_data"))) = {0xbf, {{0}}};
+
+// M read command is different:
+static const m_dma_packet_t  m_dma_command  __attribute__((aligned(4))) __attribute__((section(".sram3_data"))) = {.blocks={0xc2, 0,0,0,0}};
+static const m_dma_packet_t  m_bdma_command __attribute__((aligned(4))) __attribute__((section(".sram4_data"))) = {.blocks={0xc2, 0,0,0,0}};
+
 
 
 #define TX_DMA_CONFIG  (0b01UL<<16 /*med prio*/ | 0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ | 1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/ | 0b110 /*err interrupts*/)
@@ -482,6 +495,7 @@ static const g_dma_packet_t bdma_command __attribute__((aligned(4))) __attribute
 
 #define SPI_CR_OFF (1UL<<12 /*SSI*/)
 #define SPI_CR_ON (SPI_CR_OFF | 1UL /*ena*/)
+#define SPI_CR_ON_START (SPI_CR_ON | (1UL<<9))
 
 #define SPI_CFG1_NONDMA (SPI_CLKDIV_REGVAL<<28 | 0UL<<15 /*TX DMA*/ | 0UL<<14 /*RX DMA*/ | \
                         (1/*FIFO threshold*/   -1)<<5 | (8/*bits per frame*/   -1))
@@ -492,43 +506,91 @@ static const g_dma_packet_t bdma_command __attribute__((aligned(4))) __attribute
 #define SPI_CFG1_RXTXDMA (SPI_CLKDIV_REGVAL<<28 | 1UL<<15 /*TX DMA*/ | 1UL<<14 /*RX DMA*/ | \
                         (4/*FIFO threshold*/   -1)<<5 | (8/*bits per frame*/   -1))
 
+
+
+// 0 = BOSCH regular preset: 0.5 mA
+// 1 = BOSCH enhanced regular preset: 0.8 mA
+// 2 = midway between 1 and 3: around 2.5 mA
+// 3 = BOSCH high accuracy preset: 4.9 mA
+#define M_ACCURACY 1
+
+#if M_ACCURACY == 0
+#define M_NUM_XY_REPETITIONS 9
+#define M_NUM_Z_REPETITIONS  15
+#define M_INTERVAL_MS 100
+#endif
+
+#if M_ACCURACY == 1
+#define M_NUM_XY_REPETITIONS 15
+#define M_NUM_Z_REPETITIONS  27
+#define M_INTERVAL_MS 100
+#endif
+
+#if M_ACCURACY == 2
+#define M_NUM_XY_REPETITIONS 31
+#define M_NUM_Z_REPETITIONS  55
+#define M_INTERVAL_MS 75
+#endif
+
+#if M_ACCURACY == 3
+#define M_NUM_XY_REPETITIONS 47
+#define M_NUM_Z_REPETITIONS  83
+#define M_INTERVAL_MS 50
+#endif
+
+
+#define M_CONV_TIME_US (145*M_NUM_XY_REPETITIONS + 500*M_NUM_Z_REPETITIONS + 980 + 100 /*a bit extra on our own*/)
+
+#define M_NUM_XY_REPETITIONS_REGVAL ((M_NUM_XY_REPETITIONS-1)/2)
+#define M_NUM_Z_REPETITIONS_REGVAL  (M_NUM_Z_REPETITIONS-1)
+
 static void ag01_nondma() __attribute__((section(".text_itcm")));
 static void ag01_nondma()
 {
 	AGM01_SPI->CR1 = SPI_CR_OFF;
-//	__DSB();
 	AGM01_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM01_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM01_SPI->TSIZE = 0;
 	AGM01_SPI->CR1 = SPI_CR_ON;
-//	__DSB();
-	AGM01_SPI->CR1 |= 1UL<<9;
+	AGM01_SPI->CR1 = SPI_CR_ON_START;
 }
 
 static void ag23_nondma() __attribute__((section(".text_itcm")));
 static void ag23_nondma()
 {
 	AGM23_SPI->CR1 = SPI_CR_OFF;
-//	__DSB();
 	AGM23_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM23_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM23_SPI->TSIZE = 0;
 	AGM23_SPI->CR1 = SPI_CR_ON;
-//	__DSB();
-	AGM23_SPI->CR1 |= 1UL<<9;
+	AGM23_SPI->CR1 = SPI_CR_ON_START;
 }
 
 static void ag45_nondma() __attribute__((section(".text_itcm")));
 static void ag45_nondma()
 {
 	AGM45_SPI->CR1 = SPI_CR_OFF;
-//	__DSB();
 	AGM45_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
 	AGM45_SPI->CFG1 = SPI_CFG1_NONDMA;
 	AGM45_SPI->TSIZE = 0;
 	AGM45_SPI->CR1 = SPI_CR_ON;
-//	__DSB();
-	AGM45_SPI->CR1 |= 1UL<<9;
+	AGM45_SPI->CR1 = SPI_CR_ON_START;
+}
+
+static inline void set_dma_cmd_for_ag()
+{
+	AGM01_TX_DMA_STREAM->M0AR = (uint32_t)&ag_dma_command;
+	AGM23_TX_DMA_STREAM->CM0AR = (uint32_t)&ag_bdma_command;
+	AGM45_TX_DMA_STREAM->M0AR = (uint32_t)&ag_dma_command;
+	__DSB();
+}
+
+static inline void set_dma_cmd_for_m()
+{
+	AGM01_TX_DMA_STREAM->M0AR = (uint32_t)&m_dma_command;
+	AGM23_TX_DMA_STREAM->CM0AR = (uint32_t)&m_bdma_command;
+	AGM45_TX_DMA_STREAM->M0AR = (uint32_t)&m_dma_command;
+	__DSB();
 }
 
 static void ag23_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
@@ -541,29 +603,52 @@ static void ag23_dma_start(uint8_t n_samples, void* p_packet)
 	uint16_t len = n_samples*6+1;
 
 	AGM23_SPI->CR1 = SPI_CR_OFF;
-//	__DSB();
 	AGM23_SPI->CFG1 = SPI_CFG1_RXDMA;
 	AGM23_SPI->TSIZE = len;
 
-	AGM23_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
+	AGM23_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags!
 
 	AGM23_RX_DMA_STREAM->CM0AR = (uint32_t)p_packet;
 	AGM23_RX_DMA_STREAM->CNDTR = (len+3)/4;
-//	BDMA_CLEAR_INTFLAGS(AGM23_RX_DMA, AGM23_RX_DMA_STREAM_NUM);
 	__DSB();
 	AGM23_RX_DMA_STREAM->CCR = RX_BDMA_CONFIG | 1UL;
 
 	AGM23_TX_DMA_STREAM->CNDTR = (len+3)/4;
-//	BDMA_CLEAR_INTFLAGS(AGM23_TX_DMA, AGM23_TX_DMA_STREAM_NUM);
 	AGM23_TX_DMA_STREAM->CCR = TX_BDMA_CONFIG | 1UL;
 
-//	__DSB();
 	AGM23_SPI->CFG1 = SPI_CFG1_RXTXDMA;
 
 	__DSB();
 	AGM23_SPI->CR1 = SPI_CR_ON;
-//	__DSB();
-	AGM23_SPI->CR1 = SPI_CR_ON | (1UL<<9);
+	AGM23_SPI->CR1 = SPI_CR_ON_START;
+}
+
+static void m23_dma_start(void* p_packet) __attribute__((section(".text_itcm")));
+static void m23_dma_start(void* p_packet)
+{
+	// BDMA doesn't clear the enable bit after completion, so we need to do it manually before starting the new transfer:
+	AGM23_RX_DMA_STREAM->CCR = RX_BDMA_CONFIG;
+	AGM23_TX_DMA_STREAM->CCR = TX_BDMA_CONFIG;
+
+	AGM23_SPI->CR1 = SPI_CR_OFF;
+	AGM23_SPI->CFG1 = SPI_CFG1_RXDMA;
+	AGM23_SPI->TSIZE = 9;
+
+	AGM23_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags!
+
+	AGM23_RX_DMA_STREAM->CM0AR = (uint32_t)p_packet;
+	AGM23_RX_DMA_STREAM->CNDTR = 3;
+	__DSB();
+	AGM23_RX_DMA_STREAM->CCR = RX_BDMA_CONFIG | 1UL;
+
+	AGM23_TX_DMA_STREAM->CNDTR = 3;
+	AGM23_TX_DMA_STREAM->CCR = TX_BDMA_CONFIG | 1UL;
+
+	AGM23_SPI->CFG1 = SPI_CFG1_RXTXDMA;
+
+	__DSB();
+	AGM23_SPI->CR1 = SPI_CR_ON;
+	AGM23_SPI->CR1 = SPI_CR_ON_START;
 }
 
 
@@ -573,14 +658,10 @@ static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 	uint16_t len = n_samples*6+1;
 
 	AGM01_SPI->CR1 = SPI_CR_OFF;
-//	__DSB();
 	AGM01_SPI->CFG1 = SPI_CFG1_RXDMA;
 	AGM01_SPI->TSIZE = len;
 
-	// STM32 SPI TOTAL BROKENNESS CRAP TRAP WARNING:
-	// SPI just is broken and doesn't start to do anything (neither gives errors; just doensn't start)
-	// if you don't manually clear these informative flag bits:
-	AGM01_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
+	AGM01_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags!
 
 	AGM01_RX_DMA_STREAM->M0AR = (uint32_t)p_packet;
 	AGM01_RX_DMA_STREAM->NDTR = (len+3)/4;
@@ -591,13 +672,36 @@ static void ag01_dma_start(uint8_t n_samples, void* p_packet)
 	DMA_CLEAR_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM);
 	AGM01_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 1UL;
 
-//	__DSB();
 	AGM01_SPI->CFG1 = SPI_CFG1_RXTXDMA;
 
 	__DSB();
 	AGM01_SPI->CR1 = SPI_CR_ON;
-//	__DSB();
-	AGM01_SPI->CR1 = SPI_CR_ON | (1UL<<9);
+	AGM01_SPI->CR1 = SPI_CR_ON_START;
+}
+
+static void m01_dma_start(void* p_packet) __attribute__((section(".text_itcm")));
+static void m01_dma_start(void* p_packet)
+{
+	AGM01_SPI->CR1 = SPI_CR_OFF;
+	AGM01_SPI->CFG1 = SPI_CFG1_RXDMA;
+	AGM01_SPI->TSIZE = 9;
+
+	AGM01_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags!
+
+	AGM01_RX_DMA_STREAM->M0AR = (uint32_t)p_packet;
+	AGM01_RX_DMA_STREAM->NDTR = 3;
+	DMA_CLEAR_INTFLAGS(AGM01_RX_DMA, AGM01_RX_DMA_STREAM_NUM);
+	AGM01_RX_DMA_STREAM->CR = RX_DMA_CONFIG | 1UL;
+
+	AGM01_TX_DMA_STREAM->NDTR = 3;
+	DMA_CLEAR_INTFLAGS(AGM01_TX_DMA, AGM01_TX_DMA_STREAM_NUM);
+	AGM01_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 1UL;
+
+	AGM01_SPI->CFG1 = SPI_CFG1_RXTXDMA;
+
+	__DSB();
+	AGM01_SPI->CR1 = SPI_CR_ON;
+	AGM01_SPI->CR1 = SPI_CR_ON_START;
 }
 
 static void ag45_dma_start(uint8_t n_samples, void* p_packet) __attribute__((section(".text_itcm")));
@@ -606,11 +710,10 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 	uint16_t len = n_samples*6+1;
 
 	AGM45_SPI->CR1 = SPI_CR_OFF;
-//	__DSB();
 	AGM45_SPI->CFG1 = SPI_CFG1_RXDMA;
 	AGM45_SPI->TSIZE = len;
 
-	AGM45_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags
+	AGM45_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags!
 
 	AGM45_RX_DMA_STREAM->M0AR = (uint32_t)p_packet;
 	AGM45_RX_DMA_STREAM->NDTR = (len+3)/4;
@@ -621,13 +724,36 @@ static void ag45_dma_start(uint8_t n_samples, void* p_packet)
 	DMA_CLEAR_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM);
 	AGM45_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 1UL;
 
-//	__DSB();
 	AGM45_SPI->CFG1 = SPI_CFG1_RXTXDMA;
 
 	__DSB();
 	AGM45_SPI->CR1 = SPI_CR_ON;
-//	__DSB();
-	AGM45_SPI->CR1 = SPI_CR_ON | (1UL<<9);
+	AGM45_SPI->CR1 = SPI_CR_ON_START;
+}
+
+static void m45_dma_start(void* p_packet) __attribute__((section(".text_itcm")));
+static void m45_dma_start(void* p_packet)
+{
+	AGM45_SPI->CR1 = SPI_CR_OFF;
+	AGM45_SPI->CFG1 = SPI_CFG1_RXDMA;
+	AGM45_SPI->TSIZE = 9;
+
+	AGM45_SPI->IFCR = 0b11000; // Clear EOT and TXTF flags!
+
+	AGM45_RX_DMA_STREAM->M0AR = (uint32_t)p_packet;
+	AGM45_RX_DMA_STREAM->NDTR = 3;
+	DMA_CLEAR_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM);
+	AGM45_RX_DMA_STREAM->CR = RX_DMA_CONFIG | 1UL;
+
+	AGM45_TX_DMA_STREAM->NDTR = 3;
+	DMA_CLEAR_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM);
+	AGM45_TX_DMA_STREAM->CR = TX_DMA_CONFIG | 1UL;
+
+	AGM45_SPI->CFG1 = SPI_CFG1_RXTXDMA;
+
+	__DSB();
+	AGM45_SPI->CR1 = SPI_CR_ON;
+	AGM45_SPI->CR1 = SPI_CR_ON_START;
 }
 
 volatile int data_ok;
@@ -648,6 +774,12 @@ static void inthandler5() __attribute__((section(".text_itcm")));
 static void inthandler6() __attribute__((section(".text_itcm")));
 static void inthandler7() __attribute__((section(".text_itcm")));
 static void inthandler8() __attribute__((section(".text_itcm")));
+static void inthandler9() __attribute__((section(".text_itcm")));
+static void inthandler10() __attribute__((section(".text_itcm")));
+static void inthandler11() __attribute__((section(".text_itcm")));
+static void inthandler12() __attribute__((section(".text_itcm")));
+static void inthandler13() __attribute__((section(".text_itcm")));
+static void inthandler14() __attribute__((section(".text_itcm")));
 
 static int repolls;
 
@@ -795,6 +927,7 @@ static void inthandler4()
 
 		data_ok = 0;
 		SEL_A024();
+		set_dma_cmd_for_ag();
 		ag01_dma_start(fifo.lvls.a[0], &a_packet0);
 		ag23_dma_start(fifo.lvls.a[2], &a_packet2);
 		ag45_dma_start(fifo.lvls.a[4], &a_packet4);
@@ -859,17 +992,141 @@ static void inthandler7()
 	__DSB();
 }
 
+static volatile uint32_t m_conv_start_ms;
+
+volatile int ms;
+
+
 static void inthandler8()
 {
 	TIM3->SR = 0UL;
 	DESEL_G135();
 
-	ag01_nondma();
-	ag23_nondma();
-	ag45_nondma();
 	g_packet1.n = fifo.lvls.g[1];
 	g_packet3.n = fifo.lvls.g[3];
 	g_packet5.n = fifo.lvls.g[5];
+
+	uint32_t dt = ms_cnt - m_conv_start_ms;
+	if(dt >= M_INTERVAL_MS) // Purposedly wrapping uint32 subtraction as per C specification
+	{
+		ms++;
+		SEL_M024();
+		set_dma_cmd_for_m();
+		m01_dma_start(&m_packet0);
+		m23_dma_start(&m_packet2);
+		m45_dma_start(&m_packet4);
+		set_timer(M_DMA_WAIT_TIME);
+		SET_TIM3_VECTOR(inthandler9);
+		__DSB();
+	}
+	else
+	{
+		ag01_nondma();
+		ag23_nondma();
+		ag45_nondma();
+
+		SET_TIM3_VECTOR(inthandler0);
+		data_ok = 1;
+		packet_cnt++;
+		if(repolls == 0)
+			final_wait_time -= 1000;
+		else if(repolls >= 2)
+			final_wait_time += 500;
+		repolls = 0;
+		set_timer(final_wait_time);
+		__DSB();
+	}
+}
+
+static void inthandler9()
+{
+	TIM3->SR = 0UL;
+	DESEL_M024();
+	SEL_M135();
+	m01_dma_start(&m_packet1);
+	m23_dma_start(&m_packet3);
+	m45_dma_start(&m_packet5);
+	set_timer(M_DMA_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler10);
+	__DSB();
+}
+
+static void inthandler10()
+{
+	TIM3->SR = 0UL;
+	DESEL_M135();
+	ag01_nondma();
+	ag23_nondma();
+	ag45_nondma();
+	SEL_A024();
+	// Temperature read command:
+	AGM01_WR16 = 0x0088;
+	AGM23_WR16 = 0x0088;
+	AGM45_WR16 = 0x0088;
+	set_timer(STATUS_READ_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler11);
+	__DSB();
+}
+
+static void inthandler11()
+{
+	TIM3->SR = 0UL;
+	DESEL_A024();
+	a_temps[0] = ((int8_t)(AGM01_RD16>>8))+23;
+	a_temps[2] = ((int8_t)(AGM23_RD16>>8))+23;
+	a_temps[4] = ((int8_t)(AGM45_RD16>>8))+23;
+	SEL_A135();
+	// Temperature read command:
+	AGM01_WR16 = 0x0088;
+	AGM23_WR16 = 0x0088;
+	AGM45_WR16 = 0x0088;
+	set_timer(STATUS_READ_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler12);
+	__DSB();
+}
+
+static void inthandler12()
+{
+	TIM3->SR = 0UL;
+	DESEL_A135();
+	m_conv_start_ms = ms_cnt;
+	a_temps[1] = ((int8_t)(AGM01_RD16>>8))+23;
+	a_temps[3] = ((int8_t)(AGM23_RD16>>8))+23;
+	a_temps[5] = ((int8_t)(AGM45_RD16>>8))+23;
+	SEL_M024();
+
+	// Magnetometer acquire trigger command
+	AGM01_WR16 = WR_REG(0x4c, M_OP_FORCED);
+	AGM23_WR16 = WR_REG(0x4c, M_OP_FORCED);
+	AGM45_WR16 = WR_REG(0x4c, M_OP_FORCED);
+	set_timer(TRIG_REG_WRITE_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler13);
+	__DSB();
+}
+
+static void inthandler13()
+{
+	TIM3->SR = 0UL;
+	DESEL_M024();
+	SEL_M135();
+	// Magnetometer acquire trigger command
+	AGM01_WR16 = WR_REG(0x4c, M_OP_FORCED);
+	AGM23_WR16 = WR_REG(0x4c, M_OP_FORCED);
+	AGM45_WR16 = WR_REG(0x4c, M_OP_FORCED);
+	set_timer(TRIG_REG_WRITE_WAIT_TIME);
+	SET_TIM3_VECTOR(inthandler14);
+	__DSB();
+}
+
+static void inthandler14()
+{
+	TIM3->SR = 0UL;
+	DESEL_M135();
+	// empty the RX fifo of both TRIG operation dummy replies at once:
+	AGM01_RD32;
+	AGM23_RD32;
+	AGM45_RD32;
+
 	SET_TIM3_VECTOR(inthandler0);
 	data_ok = 1;
 	packet_cnt++;
@@ -878,505 +1135,9 @@ static void inthandler8()
 	else if(repolls >= 2)
 		final_wait_time += 500;
 	repolls = 0;
-	set_timer(final_wait_time);
+	set_timer(final_wait_time-M_T_CYCLE_DURATION);
 	__DSB();
 }
-
-#if 0
-
-		case 8: // Trig by DMA completion: Deassert G135, wait to start over? or Assert & Trig M024?
-		{
-		} break;
-
-		case 9: // Trig by timer: Deassert M024, Assert & Trig M135
-		{
-
-		} break;
-
-		case 10: // Trig by timer: Deassert M135, Assert & DMA read M024
-		{
-
-		} break;
-
-		case 11: // Trig by DMA completion: Deassert M024, Assert & DMA read M135
-		{
-
-		} break;
-
-		case 12: // Trig by DMA completion: Deassert M135, Assert A024 & start temperature read
-		{
-
-		} break;
-
-		case 13: // Trig by timer: Deassert A024, read temp, assert A135 & start temp read
-		{
-
-		} break;
-
-		case 14: // Trig by timer: Deassert A135, read temp, start final wait
-		{
-
-		} break;
-
-		case 15: // Trig by timer:
-		{
-
-		} break;
-
-		case 16: // Trig by timer:
-		{
-
-		} break;
-
-		case START_A024_STATUS_READ:
-		{
-			SEL_A024();
-			__DSB();
-			AGM01_WR16 = 0x008e;
-			AGM23_WR16 = 0x008e;
-			AGM45_WR16 = 0x008e;
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case READ_A024_STATUS__START_DATA_READ:
-		{
-			uint16_t status0 = AGM01_RD16;
-			uint16_t status2 = AGM23_RD16;
-			uint16_t status4 = AGM45_RD16;
-
-			SEL_A024();
-			__DSB();
-			reading0 = reading1 = reading2 = 0;
-			if(status0 & STATUS_FILL_LEVEL_MASK)
-			{
-				a_status_cnt[0]++;
-				reading0 = 1;
-				AG01_READ_CMD();
-			}
-			else
-				a_nonstatus_cnt[0]++;
-
-			if(status2 & STATUS_FILL_LEVEL_MASK)
-			{
-				a_status_cnt[2]++;
-				reading1 = 1;
-				AG23_READ_CMD();
-			}
-			else
-				a_nonstatus_cnt[2]++;
-
-			if(status4 & STATUS_FILL_LEVEL_MASK)
-			{
-				a_status_cnt[4]++;
-				reading2 = 1;
-				AG45_READ_CMD();
-			}
-			else
-				a_nonstatus_cnt[4]++;
-
-			set_timer(DATA_READ_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case READ_A024_DATA__START_A135_STATUS_READ:
-		{
-			if(reading0)
-			{
-				latest_a[0].blocks.first  = AGM01_RD32; __DMB();
-				latest_a[0].blocks.second = AGM01_RD32;
-				A_REMOVE_STATUS_BITS(latest_a[0]);
-			}
-			if(reading1)
-			{
-				latest_a[2].blocks.first  = AGM23_RD32; __DMB();
-				latest_a[2].blocks.second = AGM23_RD32;
-				A_REMOVE_STATUS_BITS(latest_a[2]);
-			}
-			if(reading2)
-			{
-				latest_a[4].blocks.first  = AGM45_RD32; __DMB();
-				latest_a[4].blocks.second = AGM45_RD32;
-				A_REMOVE_STATUS_BITS(latest_a[4]);
-			}
-
-			SEL_A135();
-			__DSB();
-			AGM01_WR16 = 0x008e;
-			AGM23_WR16 = 0x008e;
-			AGM45_WR16 = 0x008e;
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case READ_A135_STATUS__START_DATA_READ:
-		{
-			uint16_t status1 = AGM01_RD16;
-			uint16_t status3 = AGM23_RD16;
-			uint16_t status5 = AGM45_RD16;
-
-			SEL_A135();
-			__DSB();
-			reading0 = reading1 = reading2 = 0;
-			if(status1 & STATUS_FILL_LEVEL_MASK)
-			{
-				a_status_cnt[1]++;
-				reading0 = 1;
-				AG01_READ_CMD();
-			}
-			else
-				a_nonstatus_cnt[1]++;
-
-			if(status3 & STATUS_FILL_LEVEL_MASK)
-			{
-				a_status_cnt[3]++;
-				reading1 = 1;
-				AG23_READ_CMD();
-			}
-			else
-				a_nonstatus_cnt[3]++;
-
-			if(status5 & STATUS_FILL_LEVEL_MASK)
-			{
-				a_status_cnt[5]++;
-				reading2 = 1;
-				AG45_READ_CMD();
-			}
-			else
-				a_nonstatus_cnt[5]++;
-
-			set_timer(DATA_READ_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case READ_A135_DATA__START_G024_STATUS_READ:
-		{
-			if(reading0)
-			{
-				latest_a[1].blocks.first  = AGM01_RD32; __DMB();
-				latest_a[1].blocks.second = AGM01_RD32;
-				A_REMOVE_STATUS_BITS(latest_a[1]);
-			}
-			if(reading1)
-			{
-				latest_a[3].blocks.first  = AGM23_RD32; __DMB();
-				latest_a[3].blocks.second = AGM23_RD32;
-				A_REMOVE_STATUS_BITS(latest_a[3]);
-			}
-			if(reading2)
-			{
-				latest_a[5].blocks.first  = AGM45_RD32; __DMB();
-				latest_a[5].blocks.second = AGM45_RD32;
-				A_REMOVE_STATUS_BITS(latest_a[5]);
-			}
-
-			SEL_G024();
-			__DSB();
-			AGM01_WR16 = 0x008e;
-			AGM23_WR16 = 0x008e;
-			AGM45_WR16 = 0x008e;
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;
-
-		} break;
-
-		case READ_G024_STATUS__START_DATA_READ:
-		{
-			uint16_t status0 = AGM01_RD16;
-			uint16_t status2 = AGM23_RD16;
-			uint16_t status4 = AGM45_RD16;
-
-			SEL_G024();
-			__DSB();
-			reading0 = reading1 = reading2 = 0;
-			if(status0 & STATUS_FILL_LEVEL_MASK)
-			{
-				g_status_cnt[0]++;
-				reading0 = 1;
-				AG01_READ_CMD();
-			}
-			else
-				g_nonstatus_cnt[0]++;
-
-			if(status2 & STATUS_FILL_LEVEL_MASK)
-			{
-				g_status_cnt[2]++;
-				reading1 = 1;
-				AG23_READ_CMD();
-			}
-			else
-				g_nonstatus_cnt[2]++;
-
-			if(status4 & STATUS_FILL_LEVEL_MASK)
-			{
-				g_status_cnt[4]++;
-				reading2 = 1;
-				AG45_READ_CMD();
-			}
-			else
-				g_nonstatus_cnt[4]++;
-
-			set_timer(DATA_READ_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case READ_G024_DATA__START_G135_STATUS_READ:
-		{
-			if(reading0)
-			{
-				latest_g[0].blocks.first  = AGM01_RD32; __DMB();
-				latest_g[0].blocks.second = AGM01_RD32;
-			}
-			if(reading1)
-			{
-				latest_g[2].blocks.first  = AGM23_RD32; __DMB();
-				latest_g[2].blocks.second = AGM23_RD32;
-			}
-			if(reading2)
-			{
-				latest_g[4].blocks.first  = AGM45_RD32; __DMB();
-				latest_g[4].blocks.second = AGM45_RD32;
-			}
-
-			SEL_G135();
-			__DSB();
-			AGM01_WR16 = 0x008e;
-			AGM23_WR16 = 0x008e;
-			AGM45_WR16 = 0x008e;
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;
-
-		} break;
-
-		case READ_G135_STATUS__START_DATA_READ:
-		{
-			uint16_t status1 = AGM01_RD16;
-			uint16_t status3 = AGM23_RD16;
-			uint16_t status5 = AGM45_RD16;
-
-			SEL_G135();
-			__DSB();
-			reading0 = reading1 = reading2 = 0;
-			if(status1 & STATUS_FILL_LEVEL_MASK)
-			{
-				g_status_cnt[1]++;
-				reading0 = 1;
-				AG01_READ_CMD();
-			}
-			else
-				g_nonstatus_cnt[1]++;
-
-			if(status3 & STATUS_FILL_LEVEL_MASK)
-			{
-				g_status_cnt[3]++;
-				reading1 = 1;
-				AG23_READ_CMD();
-			}
-			else
-				g_nonstatus_cnt[3]++;
-
-			if(status5 & STATUS_FILL_LEVEL_MASK)
-			{
-				g_status_cnt[5]++;
-				reading2 = 1;
-				AG45_READ_CMD();
-			}
-			else
-				g_nonstatus_cnt[5]++;
-
-			set_timer(DATA_READ_WAIT_TIME);
-			cur_state++;
-
-		} break;
-
-		case READ_G135_DATA__TRIG_M024__OR__START_WAIT:
-		{
-			if(reading0)
-			{
-				latest_g[1].blocks.first  = AGM01_RD32; __DMB();
-				latest_g[1].blocks.second = AGM01_RD32;
-			}
-			if(reading1)
-			{
-				latest_g[3].blocks.first  = AGM23_RD32; __DMB();
-				latest_g[3].blocks.second = AGM23_RD32;
-			}
-			if(reading2)
-			{
-				latest_g[5].blocks.first  = AGM45_RD32; __DMB();
-				latest_g[5].blocks.second = AGM45_RD32;
-			}
-
-			if(trig_m)
-			{
-				trig_m = 0;
-				SEL_M024();
-				__DSB();
-				AGM01_WR16 = WR_REG(0x4c, M_OP_FORCED);
-				AGM23_WR16 = WR_REG(0x4c, M_OP_FORCED);
-				AGM45_WR16 = WR_REG(0x4c, M_OP_FORCED);
-				set_timer(TRIG_REG_WRITE_WAIT_TIME);
-				cur_state++;
-			}
-			else
-			{
-				set_timer(FINAL_WAIT_TIME);
-				cur_state = START_A024_STATUS_READ;
-			}
-
-		} break;
-
-		case TRIG_M135:
-		{
-			SEL_M135();
-			__DSB();
-			AGM01_WR16 = WR_REG(0x4c, M_OP_FORCED);
-			AGM23_WR16 = WR_REG(0x4c, M_OP_FORCED);
-			AGM45_WR16 = WR_REG(0x4c, M_OP_FORCED);
-			set_timer(TRIG_REG_WRITE_WAIT_TIME);
-			cur_state++;
-
-		} break;
-
-		case START_A024_TEMP_READ:
-		{
-			// empty the RX fifo for both TRIG operations at once:
-			AGM01_RD32;
-			AGM23_RD32;
-			AGM45_RD32;
-
-			SEL_A024();
-			__DSB();
-			AGM01_WR16 = 0x0088;
-			AGM23_WR16 = 0x0088;
-			AGM45_WR16 = 0x0088;
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;
-
-		} break;
-
-		case READ_A024_TEMP__START_A135_TEMP_READ:
-		{
-			a_temps[0] = ((int8_t)(AGM01_RD16>>8))+23;
-			a_temps[2] = ((int8_t)(AGM23_RD16>>8))+23;
-			a_temps[4] = ((int8_t)(AGM45_RD16>>8))+23;
-			SEL_A135();
-			__DSB();
-			AGM01_WR16 = 0x0088;
-			AGM23_WR16 = 0x0088;
-			AGM45_WR16 = 0x0088;
-			set_timer(STATUS_READ_WAIT_TIME);
-			cur_state++;
-
-		} break;
-
-		case READ_A135_TEMP__START_M024_DATA_READ:
-		{
-			a_temps[1] = ((int8_t)(AGM01_RD16>>8))+23;
-			a_temps[3] = ((int8_t)(AGM23_RD16>>8))+23;
-			a_temps[5] = ((int8_t)(AGM45_RD16>>8))+23;
-
-			SEL_M024();
-			__DSB();
-			M01_READ_CMD_PART1();
-			M23_READ_CMD_PART1();
-			M45_READ_CMD_PART1();
-			set_timer(M_READ_PART1_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case CONTINUE_M024_DATA_READ:
-		{
-			// SPI FIFO is 8 bytes long.
-			// Transaction length is 9 bytes, first of which is dummy, to be thrown away
-			// Before the FIFO is full, we read out this dummy, and get the 8-byte payload
-			// nicely in our 8-byte FIFO. At the same time, there is now space in the TX fifo
-			// as well to fit the last byte of the read CMD.
-			AGM01_RD8;
-			AGM23_RD8;
-			AGM45_RD8;
-			__DSB();
-			// chip selects are already active here
-			M01_READ_CMD_PART2();
-			M23_READ_CMD_PART2();
-			M45_READ_CMD_PART2();
-			set_timer(M_READ_PART2_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case READ_M024_DATA__START_M135_DATA_READ:
-		{
-			latest_m[0].blocks.first  = AGM01_RD32; __DMB();
-			latest_m[0].blocks.second = AGM01_RD32;
-			__DMB();
-			M_REMOVE_STATUS_BITS(latest_m[0]);
-
-			latest_m[2].blocks.first  = AGM23_RD32; __DMB();
-			latest_m[2].blocks.second = AGM23_RD32;
-			__DMB();
-			M_REMOVE_STATUS_BITS(latest_m[2]);
-
-			latest_m[4].blocks.first  = AGM45_RD32; __DMB();
-			latest_m[4].blocks.second = AGM45_RD32;
-			__DMB();
-			M_REMOVE_STATUS_BITS(latest_m[4]);
-
-			SEL_M135();
-			__DSB();
-			M01_READ_CMD_PART1();
-			M23_READ_CMD_PART1();
-			M45_READ_CMD_PART1();
-			set_timer(M_READ_PART1_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case CONTINUE_M135_DATA_READ:
-		{
-			AGM01_RD8;
-			AGM23_RD8;
-			AGM45_RD8;
-			__DSB();
-			// chip selects are already active here
-			M01_READ_CMD_PART2();
-			M23_READ_CMD_PART2();
-			M45_READ_CMD_PART2();
-			set_timer(M_READ_PART2_WAIT_TIME);
-			cur_state++;
-		} break;
-
-		case READ_M135_DATA__START_WAIT:
-		{
-			latest_m[1].blocks.first  = AGM01_RD32; __DMB();
-			latest_m[1].blocks.second = AGM01_RD32;
-			__DMB();
-			M_REMOVE_STATUS_BITS(latest_m[1]);
-
-			latest_m[3].blocks.first  = AGM23_RD32; __DMB();
-			latest_m[3].blocks.second = AGM23_RD32;
-			__DMB();
-			M_REMOVE_STATUS_BITS(latest_m[3]);
-
-			latest_m[5].blocks.first  = AGM45_RD32; __DMB();
-			latest_m[5].blocks.second = AGM45_RD32;
-			__DMB();
-			M_REMOVE_STATUS_BITS(latest_m[5]);
-
-			set_timer(FINAL_WAIT_TIME);
-			cur_state = START_A024_STATUS_READ;
-		} break;
-
-		default:
-		{
-			DESEL_A024();
-			DESEL_G024();
-			DESEL_M024();
-			DESEL_A135();
-			DESEL_G135();
-			DESEL_M135();
-			set_timer(DESEL_WAIT_TIME);
-			cur_state++;
-		} break;
-#endif
 
 
 static void printings()
@@ -1386,9 +1147,11 @@ static void printings()
 //	int mx[6], my[6], mz[6];
 
 	static int cnt = 0;
+	cnt++;
 
 	a_dma_packet_t a[6];
 	g_dma_packet_t g[6];
+	m_dma_packet_t m[6];
 
 	while(!data_ok) ;
 	DIS_IRQ();
@@ -1399,15 +1162,22 @@ static void printings()
 	memcpy(&a[4], &a_packet4, sizeof(a[0]));
 	memcpy(&a[5], &a_packet5, sizeof(a[0]));
 
-	memcpy(&g[0], &g_packet0, sizeof(a[0]));
-	memcpy(&g[1], &g_packet1, sizeof(a[0]));
-	memcpy(&g[2], &g_packet2, sizeof(a[0]));
-	memcpy(&g[3], &g_packet3, sizeof(a[0]));
-	memcpy(&g[4], &g_packet4, sizeof(a[0]));
-	memcpy(&g[5], &g_packet5, sizeof(a[0]));
+	memcpy(&g[0], &g_packet0, sizeof(g[0]));
+	memcpy(&g[1], &g_packet1, sizeof(g[0]));
+	memcpy(&g[2], &g_packet2, sizeof(g[0]));
+	memcpy(&g[3], &g_packet3, sizeof(g[0]));
+	memcpy(&g[4], &g_packet4, sizeof(g[0]));
+	memcpy(&g[5], &g_packet5, sizeof(g[0]));
+
+	memcpy(&m[0], &m_packet0, sizeof(m[0]));
+	memcpy(&m[1], &m_packet1, sizeof(m[0]));
+	memcpy(&m[2], &m_packet2, sizeof(m[0]));
+	memcpy(&m[3], &m_packet3, sizeof(m[0]));
+	memcpy(&m[4], &m_packet4, sizeof(m[0]));
+	memcpy(&m[5], &m_packet5, sizeof(m[0]));
 	ENA_IRQ();
 
-	uart_print_string_blocking("A# ");
+	uart_print_string_blocking("\r\nA# ");
 
 	for(int i=0; i<6; i++)
 	{
@@ -1431,6 +1201,16 @@ static void printings()
 	{
 		uart_print_string_blocking("A"); o_utoa16(imu, printbuf); uart_print_string_blocking(printbuf); 
 		uart_print_string_blocking(": ");
+
+
+		uart_print_string_blocking("T="); o_itoa8_fixed(a_temps[imu], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking("  ");
+
+		if(a[imu].n > 7)
+		{
+			uart_print_string_blocking(" INVALID LEN\r\n\r\n\r\n");
+			goto SKIP_PRINTING;
+		}
 		
 		for(int i=0; i<a[imu].n; i++)
 		{
@@ -1450,6 +1230,13 @@ static void printings()
 		uart_print_string_blocking("G"); o_utoa16(imu, printbuf); uart_print_string_blocking(printbuf); 
 		uart_print_string_blocking(": ");
 		
+
+		if(g[imu].n > 7)
+		{
+			uart_print_string_blocking(" INVALID LEN\r\n\r\n\r\n");
+			goto SKIP_PRINTING;
+		}
+
 		for(int i=0; i<g[imu].n; i++)
 		{
 			uart_print_string_blocking("x="); 
@@ -1463,7 +1250,38 @@ static void printings()
 			uart_print_string_blocking("\r\n");
 	}
 
+	for(int imu=0; imu<6; imu++)
+	{
+		uart_print_string_blocking("M"); o_utoa16(imu, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(": ");
+		
+		uart_print_string_blocking("x="); 
+		o_itoa16_fixed(m[imu].coords.x, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" y="); 
+		o_itoa16_fixed(m[imu].coords.y, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" z="); 
+		o_itoa16_fixed(m[imu].coords.z, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" R="); 
+		o_itoa16_fixed(m[imu].coords.rhall, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking("\r\n");
+	}
+
 	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("ms_cnt="); 
+	o_utoa32_fixed(ms_cnt, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("\r\n");
+
+
+	uart_print_string_blocking("m_conv_start_ms="); 
+	o_utoa32_fixed(m_conv_start_ms, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("\r\n");
+
+
+	uart_print_string_blocking("ms="); 
+	o_utoa32_fixed(ms, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("\r\n");
+
 
 	TIM4->CNT = 0;
 	__DSB();
@@ -1480,9 +1298,9 @@ static void printings()
 	p_joo[-2] = '.';
 	p_joo[1] = 0;
 
-	uart_print_string_blocking(printbuf); uart_print_string_blocking(" % \r\n");
+	uart_print_string_blocking(printbuf); uart_print_string_blocking(" %");
 
-
+	SKIP_PRINTING:
 	delay_ms(200);
 
 }
@@ -1543,41 +1361,6 @@ static const uint16_t g_init_seq[] =
 #define M_ODR_25HZ (0b110<<3)
 #define M_ODR_30HZ (0b111<<3)
 
-// 0 = BOSCH regular preset: 0.5 mA
-// 1 = BOSCH enhanced regular preset: 0.8 mA
-// 2 = midway between 1 and 3: around 2.5 mA
-// 3 = BOSCH high accuracy preset: 4.9 mA
-#define M_ACCURACY 1
-
-#if M_ACCURACY == 0
-#define M_NUM_XY_REPETITIONS 9
-#define M_NUM_Z_REPETITIONS  15
-#define M_INTERVAL_MS 100
-#endif
-
-#if M_ACCURACY == 1
-#define M_NUM_XY_REPETITIONS 15
-#define M_NUM_Z_REPETITIONS  27
-#define M_INTERVAL_MS 100
-#endif
-
-#if M_ACCURACY == 2
-#define M_NUM_XY_REPETITIONS 31
-#define M_NUM_Z_REPETITIONS  55
-#define M_INTERVAL_MS 75
-#endif
-
-#if M_ACCURACY == 3
-#define M_NUM_XY_REPETITIONS 47
-#define M_NUM_Z_REPETITIONS  83
-#define M_INTERVAL_MS 50
-#endif
-
-
-#define M_CONV_TIME_US (145*M_NUM_XY_REPETITIONS + 500*M_NUM_Z_REPETITIONS + 980 + 100 /*a bit extra on our own*/)
-
-#define M_NUM_XY_REPETITIONS_REGVAL ((M_NUM_XY_REPETITIONS-1)/2)
-#define M_NUM_Z_REPETITIONS_REGVAL  (M_NUM_Z_REPETITIONS-1)
 
 static const uint16_t m_init_seq[] =
 {
@@ -1759,7 +1542,7 @@ static void ag_sensor_init(int bunch)
 
 void init_imu()
 {
-	SET_TIM3_VECTOR(inthandler0);
+	SET_TIM3_VECTOR(inthandler12);
 
 	#if defined(IMU0_PRESENT) || defined(IMU1_PRESENT)
 
@@ -1787,11 +1570,10 @@ void init_imu()
 		__DSB();
 		AGM01_SPI->CR1 = SPI_CR_ON;
 		__DSB();
-		AGM01_SPI->CR1 |= 1UL<<9;
+		AGM01_SPI->CR1 = SPI_CR_ON_START;
 
 		AGM01_TX_DMA_STREAM->PAR = (uint32_t)&(AGM01_SPI->TXDR);
 		AGM01_RX_DMA_STREAM->PAR = (uint32_t)&(AGM01_SPI->RXDR);
-		AGM01_TX_DMA_STREAM->M0AR = (uint32_t)&dma_command;
 
 		// FIFO error interrupt - Unofficial errata: happens on non-FIFO related, including undocumented errors as well!
 		// ST declines to update errata or correct the manual, playing dumb instead:
@@ -1839,12 +1621,10 @@ void init_imu()
 		__DSB();
 		AGM23_SPI->CR1 = SPI_CR_ON;
 		__DSB();
-		AGM23_SPI->CR1 |= 1UL<<9;
+		AGM23_SPI->CR1 = SPI_CR_ON_START;
 
 		AGM23_TX_DMA_STREAM->CPAR = (uint32_t)&(AGM23_SPI->TXDR);
 		AGM23_RX_DMA_STREAM->CPAR = (uint32_t)&(AGM23_SPI->RXDR);
-
-		AGM23_TX_DMA_STREAM->CM0AR = (uint32_t)&bdma_command;
 
 		AGM23_TX_DMAMUX();
 		AGM23_RX_DMAMUX();
@@ -1888,12 +1668,10 @@ void init_imu()
 		__DSB();
 		AGM45_SPI->CR1 = SPI_CR_ON;
 		__DSB();
-		AGM45_SPI->CR1 |= 1UL<<9;
+		AGM45_SPI->CR1 = SPI_CR_ON_START;
 
 		AGM45_TX_DMA_STREAM->PAR = (uint32_t)&(AGM45_SPI->TXDR);
 		AGM45_RX_DMA_STREAM->PAR = (uint32_t)&(AGM45_SPI->RXDR);
-
-		AGM45_TX_DMA_STREAM->M0AR = (uint32_t)&dma_command;
 
 		AGM45_TX_DMA_STREAM->FCR |= 1UL<<7;
 		AGM45_RX_DMA_STREAM->FCR |= 1UL<<7;

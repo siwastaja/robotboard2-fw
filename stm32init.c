@@ -23,6 +23,7 @@ extern void epc_rx_dma_inthandler();
 extern void epc_i2c_inthandler();
 extern void epc_dcmi_dma_inthandler();
 extern void imu_fsm_inthandler();
+extern void timebase_inthandler();
 
 extern void agm01_errhandler();
 extern void agm23_errhandler();
@@ -101,7 +102,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x00FC DMA1 STREAM7       */ (unsigned int *) agm45_errhandler,
 /* 0x0100                    */ (unsigned int *) invalid_handler,
 /* 0x0104                    */ (unsigned int *) invalid_handler,
-/* 0x0108 TIM5               */ (unsigned int *) invalid_handler,
+/* 0x0108 TIM5               */ (unsigned int *) timebase_inthandler,
 /* 0x010C SPI3               */ (unsigned int *) invalid_handler,
 /* 0x0110 UART4              */ (unsigned int *) invalid_handler,
 /* 0x0114 UART5              */ (unsigned int *) invalid_handler,

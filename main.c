@@ -252,7 +252,7 @@ void main()
 	init_imu();
 	uart_print_string_blocking("init ok\r\n"); 
 	extern void timer_test();
-//	init_timebase();
+	init_timebase();
 	timer_test();
 	delay_ms(10);
 //	tof_ctrl_init();

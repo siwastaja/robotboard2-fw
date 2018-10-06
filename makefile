@@ -1,6 +1,6 @@
 # This makefile is made to work with the toolchain downloadable at https://launchpad.net/gcc-arm-embedded
 
-DEVIP = 192.168.1.6
+DEVIP = 192.168.1.5
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
