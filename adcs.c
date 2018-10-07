@@ -384,7 +384,7 @@ void init_adcs()
 	__DSB();
 	ADC3->CR |= ADSTART;
 
-	while(1)
-		adc_test();
+//	while(1)
+//		adc_test();
 
 }

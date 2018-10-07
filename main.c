@@ -255,6 +255,7 @@ void main()
 	init_timebase();
 //	timer_test();
 	init_adcs();
+	init_charger();
 	delay_ms(10);
 //	tof_ctrl_init();
 //	sbc_comm_test();
