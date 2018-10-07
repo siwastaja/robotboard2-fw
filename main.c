@@ -206,16 +206,16 @@ void main()
 		IO_TO_ALTFUNC(GPIOB, 15);
 		IO_SET_ALTFUNC(GPIOB, 14, 4);
 		IO_SET_ALTFUNC(GPIOB, 15, 4);
-		USART1->BRR = 100000000/230400; //115200;
+		USART1->BRR = 100000000/460800; //115200;
 		USART1->CR1 = 0UL<<5 /*RX interrupt*/ | 1UL<<3 /*TX ena*/ | 1UL<<2 /*RX ena*/ |  1UL /*USART ENA*/;
 
 	#endif
 
 	// Enable FPU
 
-//	SCB->CPACR |= 0b1111UL<<20;
-//	__DSB();
-//	__ISB();
+	SCB->CPACR |= 0b1111UL<<20;
+	__DSB();
+	__ISB();
 
 
 	/*

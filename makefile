@@ -70,4 +70,4 @@ e:
 	gedit --new-window makefile linker.ld misc.h imu_m_compensation.c `echo "$(OBJ)" | sed s/"\.o"/"\.c"/g` `echo "$(OBJ)" | sed s/"\.o"/"\.h"/g` &
 
 s:
-	screen /dev/ttyUSB0 230400
+	screen /dev/ttyUSB0 460800

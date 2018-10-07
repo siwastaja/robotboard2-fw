@@ -1,10 +1,16 @@
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 #include "ext_include/stm32h7xx.h"
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
 #include "own_std.h"
 #include "timebase.h"
+
+
+
+#include "imu_m_compensation.c"
+
 
 volatile int packet_cnt;
 
@@ -1072,9 +1078,10 @@ static void inthandler11()
 {
 	TIM3->SR = 0UL;
 	DESEL_A024();
-	a_temps[0] = ((int8_t)(AGM01_RD16>>8))+23;
-	a_temps[2] = ((int8_t)(AGM23_RD16>>8))+23;
-	a_temps[4] = ((int8_t)(AGM45_RD16>>8))+23;
+	// Keep the temperature replies in SPI FIFOs, read in the next state.
+//	a_temps[0] = ((int8_t)(AGM01_RD16>>8))+23;
+//	a_temps[2] = ((int8_t)(AGM23_RD16>>8))+23;
+//	a_temps[4] = ((int8_t)(AGM45_RD16>>8))+23;
 	SEL_A135();
 	// Temperature read command:
 	AGM01_WR16 = 0x0088;
@@ -1090,9 +1097,21 @@ static void inthandler12()
 	TIM3->SR = 0UL;
 	DESEL_A135();
 	m_conv_start_ms = ms_cnt;
-	a_temps[1] = ((int8_t)(AGM01_RD16>>8))+23;
-	a_temps[3] = ((int8_t)(AGM23_RD16>>8))+23;
-	a_temps[5] = ((int8_t)(AGM45_RD16>>8))+23;
+//	a_temps[1] = ((int8_t)(AGM01_RD16>>8))+23;
+//	a_temps[3] = ((int8_t)(AGM23_RD16>>8))+23;
+//	a_temps[5] = ((int8_t)(AGM45_RD16>>8))+23;
+
+	// Read all six temperatures out of SPI FIFOs at once.
+	uint32_t temp01 = AGM01_RD32;
+	uint32_t temp23 = AGM23_RD32;
+	uint32_t temp45 = AGM45_RD32;
+	// TODO: Verify that 0&1, 2&3, 4&5 are not swapped.
+	a_temps[0] = ((int8_t)((temp01&0x0000ff00)>>8))+23;
+	a_temps[1] = ((int8_t)((temp01&0xff000000)>>24))+23;
+	a_temps[2] = ((int8_t)((temp23&0x0000ff00)>>8))+23;
+	a_temps[3] = ((int8_t)((temp23&0xff000000)>>24))+23;
+	a_temps[4] = ((int8_t)((temp45&0x0000ff00)>>8))+23;
+	a_temps[5] = ((int8_t)((temp45&0xff000000)>>24))+23;
 	SEL_M024();
 
 	// Magnetometer acquire trigger command
@@ -1196,7 +1215,7 @@ static void printings()
 	uart_print_string_blocking("  packet_cnt= "); o_utoa32(packet_cnt, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
 
 	uart_print_string_blocking("\r\n");
-
+/*
 	for(int imu=0; imu<6; imu++)
 	{
 		uart_print_string_blocking("A"); o_utoa16(imu, printbuf); uart_print_string_blocking(printbuf); 
@@ -1224,11 +1243,12 @@ static void printings()
 		}
 			uart_print_string_blocking("\r\n");
 	}
-
+*/
+/*
 	for(int imu=0; imu<6; imu++)
 	{
 		uart_print_string_blocking("G"); o_utoa16(imu, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking(": ");
+		uart_print_string_blocking(":         ");
 		
 
 		if(g[imu].n > 7)
@@ -1249,11 +1269,16 @@ static void printings()
 		}
 			uart_print_string_blocking("\r\n");
 	}
-
+*/
+	static int min_x[6] = {10000, 10000, 10000, 10000, 10000, 10000};
+	static int min_y[6] = {10000, 10000, 10000, 10000, 10000, 10000};
+	static int max_x[6] = {-10000, -10000, -10000, -10000, -10000, -10000};
+	static int max_y[6] = {-10000, -10000, -10000, -10000, -10000, -10000};
+	static const int dirs[6] = {270, 90, 0, 180, 0, 180};
 	for(int imu=0; imu<6; imu++)
 	{
 		uart_print_string_blocking("M"); o_utoa16(imu, printbuf); uart_print_string_blocking(printbuf); 
-		uart_print_string_blocking(": ");
+		uart_print_string_blocking(" RAW : ");
 		
 		uart_print_string_blocking("x="); 
 		o_itoa16_fixed(m[imu].coords.x, printbuf); uart_print_string_blocking(printbuf); 
@@ -1263,6 +1288,55 @@ static void printings()
 		o_itoa16_fixed(m[imu].coords.z, printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking(" R="); 
 		o_itoa16_fixed(m[imu].coords.rhall, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" COMP: ");
+		int16_t x = m_compensate_x(m[imu].coords.x, m[imu].coords.rhall, imu);
+		int16_t y = m_compensate_y(m[imu].coords.y, m[imu].coords.rhall, imu);
+		int16_t z = m_compensate_z(m[imu].coords.z, m[imu].coords.rhall, imu);
+
+//		int x = m[imu].coords.x>>3;
+//		int y = m[imu].coords.y>>3;
+//		int z = m[imu].coords.z>>3;
+
+		if(cnt > 5)
+		{
+			if(x > max_x[imu]) max_x[imu] = x;
+			if(x < min_x[imu]) min_x[imu] = x;
+			if(y > max_y[imu]) max_y[imu] = y;
+			if(y < min_y[imu]) min_y[imu] = y;
+		}
+
+		int offs_x = (max_x[imu] + min_x[imu])/2;
+		int offs_y = (max_y[imu] + min_y[imu])/2;
+
+		uart_print_string_blocking("x="); 
+		o_itoa16_fixed(x, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" y="); 
+		o_itoa16_fixed(y, printbuf); uart_print_string_blocking(printbuf); 
+//		uart_print_string_blocking(" z="); 
+//		o_itoa16_fixed(z, printbuf); uart_print_string_blocking(printbuf);
+
+		uart_print_string_blocking(" min_y="); 
+		o_itoa16_fixed(min_y[imu], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" max_y="); 
+		o_itoa16_fixed(max_y[imu], printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" offs_y="); 
+		o_itoa16_fixed(offs_y, printbuf); uart_print_string_blocking(printbuf); 
+
+		x -= offs_x;
+		y -= offs_y;
+
+		uart_print_string_blocking(" offs-> x="); 
+		o_itoa16_fixed(x, printbuf); uart_print_string_blocking(printbuf); 
+		uart_print_string_blocking(" y="); 
+		o_itoa16_fixed(y, printbuf); uart_print_string_blocking(printbuf); 
+
+		float heading = (360.0 * atan2(y, x)/(2.0*M_PI))+180.0;
+		int heading_int = heading + dirs[imu];
+		if(heading_int > 360) heading_int-=360;
+		uart_print_string_blocking(" heading="); 
+		o_itoa16_fixed(heading_int, printbuf); uart_print_string_blocking(printbuf);
+
+
 		uart_print_string_blocking("\r\n");
 	}
 
@@ -1272,13 +1346,7 @@ static void printings()
 	o_utoa32_fixed(ms_cnt, printbuf); uart_print_string_blocking(printbuf); 
 	uart_print_string_blocking("\r\n");
 
-
-	uart_print_string_blocking("m_conv_start_ms="); 
-	o_utoa32_fixed(m_conv_start_ms, printbuf); uart_print_string_blocking(printbuf); 
-	uart_print_string_blocking("\r\n");
-
-
-	uart_print_string_blocking("ms="); 
+	uart_print_string_blocking("m count="); 
 	o_utoa32_fixed(ms, printbuf); uart_print_string_blocking(printbuf); 
 	uart_print_string_blocking("\r\n");
 
@@ -1369,9 +1437,6 @@ static const uint16_t m_init_seq[] =
 	WR_REG(0x51, M_NUM_XY_REPETITIONS_REGVAL),
 	WR_REG(0x52, M_NUM_Z_REPETITIONS_REGVAL)
 };
-
-
-#include "imu_m_compensation.c"
 
 static void m_sensor_init(int bunch)
 {
