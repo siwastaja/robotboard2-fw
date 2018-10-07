@@ -29,6 +29,13 @@ extern void agm01_errhandler();
 extern void agm23_errhandler();
 extern void agm45_errhandler();
 
+extern void adc12_inthandler();
+extern void adc3_inthandler();
+
+extern void adc1_dma_errhandler();
+extern void adc2_dma_errhandler();
+extern void adc3_dma_errhandler();
+
 extern unsigned int _STACKTOP;
 
 #define VECTOR_TBL_LEN 166
@@ -70,7 +77,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x007C            4       */ (unsigned int *) agm01_errhandler,
 /* 0x0080            5       */ (unsigned int *) agm45_errhandler,
 /* 0x0084            6       */ (unsigned int *) agm01_errhandler,
-/* 0x0088 ADC1&2             */ (unsigned int *) invalid_handler,
+/* 0x0088 ADC1&2             */ (unsigned int *) adc12_inthandler,
 /* 0x008C                    */ (unsigned int *) invalid_handler,
 /* 0x0090                    */ (unsigned int *) invalid_handler,
 /* 0x0094                    */ (unsigned int *) invalid_handler,
@@ -109,9 +116,9 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x0118 TIM6&DAC UNDERRUN  */ (unsigned int *) invalid_handler,
 /* 0x011C TIM7               */ (unsigned int *) invalid_handler,
 /* 0x0120 DMA2 STREAM0       */ (unsigned int *) epc_dcmi_dma_inthandler,
-/* 0x0124            1       */ (unsigned int *) invalid_handler,
-/* 0x0128            2       */ (unsigned int *) invalid_handler,
-/* 0x012C            3       */ (unsigned int *) invalid_handler,
+/* 0x0124            1       */ (unsigned int *) adc1_dma_errhandler,
+/* 0x0128            2       */ (unsigned int *) adc2_dma_errhandler,
+/* 0x012C            3       */ (unsigned int *) adc3_dma_errhandler,
 /* 0x0130            4       */ (unsigned int *) invalid_handler,
 /* 0x0134                    */ (unsigned int *) invalid_handler,
 /* 0x0138                    */ (unsigned int *) invalid_handler,
@@ -179,7 +186,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x0230                    */ (unsigned int *) invalid_handler,
 /* 0x0234                    */ (unsigned int *) invalid_handler,
 /* 0x0238                    */ (unsigned int *) invalid_handler,
-/* 0x023C                    */ (unsigned int *) invalid_handler,
+/* 0x023C ADC3               */ (unsigned int *) adc3_inthandler,
 /* 0x0240                    */ (unsigned int *) invalid_handler,
 /* 0x0244 BDMA 0             */ (unsigned int *) agm23_errhandler,
 /* 0x0248      1             */ (unsigned int *) agm23_errhandler,

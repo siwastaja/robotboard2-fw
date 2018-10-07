@@ -249,11 +249,12 @@ void main()
 
 
 
-	init_imu();
+//	init_imu();
 	uart_print_string_blocking("init ok\r\n"); 
 	extern void timer_test();
 	init_timebase();
-	timer_test();
+//	timer_test();
+	init_adcs();
 	delay_ms(10);
 //	tof_ctrl_init();
 //	sbc_comm_test();

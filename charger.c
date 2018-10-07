@@ -34,10 +34,10 @@
 	switching frequency to halve, with obvious disadvantages.
 
 	Freerunning the conversion with no fixed timebase fixes the issue; it can be a hysteretic controller (oscillating
-	between minimum and maximum current), or a constant off-time, or a constant on-time converter. However,
-	it will nontrivial to synchronize two such converters as they will be running slightly at different frequencies.
+	between minimum and maximum inductor current), or a constant off-time, or a constant on-time converter. However,
+	it will be nontrivial to synchronize two such converters as they will be running slightly at different frequencies.
 
-	In any case, we'll implement a constant off-time converter, even though the phase synchronization is non-trivial.
+	In any case, we implement a constant off-time converter, even though the phase synchronization is non-trivial.
  	Because the input voltage, output voltage and output current are very close between the phases, and components
 	are nearly identical, the frequencies will be close enough so we can measure and calculate the phase difference
 	which will be close enough to run another phase.
@@ -57,7 +57,10 @@
 	  difference would be 180 degrees only with 50% duty cycle, but it doesn't matter too much; as long as the
 	  duty is 50% or less, there will be no overlap, guaranteed. With duty cycle over 50%, there will be the
 	  minimum amount of unavoidable overlap.
-	- When the slave phase trips its current setpoint, there is no off-time counter. It's not needed.
+	- When the slave phase trips its current setpoint (comparator), its SW is forced low. But, there is no off-time
+	  counter. It's not needed.
+
+	ADC is triggered when the off-time starts.
 
 	
 
@@ -69,7 +72,8 @@
 	if there is any problem in the control scheme, so that the duty cycle is too low or cannot react to load changes.
 	Input overvoltage protection drives the gate driver enable signals low, driving both lo- and hiside FETs off,
 	causing the inductor current to decay through the freewheeling diodes. The input capacitance limits the voltage rise
-	during this incident.
+	during this incident (i.e., the input capacitors can store all the energy stored in the inductors without too much
+	voltage rise).
 
 
 
