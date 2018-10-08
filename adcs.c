@@ -34,27 +34,72 @@ volatile adc3_group_t adc3 __attribute__((aligned(4))) __attribute__((section(".
 
 void adc12_inthandler()
 {
-	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
-	uart_print_string_blocking(__func__);
-	uart_print_string_blocking("\r\n");
+	if(ADC1->ISR & (1UL<<7)) // ADC1 AWD1
+	{
+		uart_print_string_blocking("\r\nADC1 AWD1\r\n");
+		ADC1->ISR = 1UL<<7;	
+	}
 
-	uart_print_string_blocking("\r\nADC1 intflags = "); o_btoa16_fixed(ADC1->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("\r\nADC2 intflags = "); o_btoa16_fixed(ADC2->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	if(ADC1->ISR & (1UL<<8)) // ADC1 AWD2
+	{
+		uart_print_string_blocking("\r\nADC1 AWD2\r\n");	
+		ADC1->ISR = 1UL<<8;
+	}
 
-	uart_print_string_blocking("DMA for ADC1: ");
+	if(ADC1->ISR & (1UL<<9)) // ADC1 AWD3
+	{
+		uart_print_string_blocking("\r\nADC1 AWD3\r\n");	
+		ADC1->ISR = 1UL<<9;
+	}
 
-	if(ADC1_DMA_STREAM->CR & 1) uart_print_string_blocking("STREAM ON"); else uart_print_string_blocking("STREAM OFF"); 
-	uart_print_string_blocking("\r\nintflags = "); o_btoa8_fixed(DMA_INTFLAGS(ADC1_DMA, ADC1_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("NDTR  = "); o_utoa16(ADC1_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	if(ADC2->ISR & (1UL<<7)) // ADC2 AWD1
+	{
+		uart_print_string_blocking("\r\nADC1 AWD1\r\n");	
+		ADC2->ISR = 1UL<<7;
 
-	uart_print_string_blocking("DMA for ADC2: ");
-	if(ADC2_DMA_STREAM->CR & 1) uart_print_string_blocking("STREAM ON"); else uart_print_string_blocking("STREAM OFF"); 
-	uart_print_string_blocking("\r\nintflags = "); o_btoa8_fixed(DMA_INTFLAGS(ADC2_DMA, ADC2_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	uart_print_string_blocking("NDTR  = "); o_utoa16(ADC2_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	}
+
+	if(ADC2->ISR & (1UL<<8)) // ADC2 AWD2
+	{
+		uart_print_string_blocking("\r\nADC1 AWD2\r\n");	
+		ADC2->ISR = 1UL<<8;
+	}
+
+	if(ADC2->ISR & (1UL<<9)) // ADC2 AWD3
+	{
+		uart_print_string_blocking("\r\nADC1 AWD3\r\n");	
+		ADC2->ISR = 1UL<<9;
+	}
+
+	__DSB();
+
+	if((ADC1->ISR & (1UL<<4)) || (ADC2->ISR & (1UL<<4)) )
+	{
+		// Overrun is the only real error condition
+
+		uart_print_string_blocking("\r\n\r\nSTOPPED: ");
+		uart_print_string_blocking(__func__);
+		uart_print_string_blocking("\r\n");
+
+		uart_print_string_blocking("\r\nADC1 intflags = "); o_btoa16_fixed(ADC1->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("\r\nADC2 intflags = "); o_btoa16_fixed(ADC2->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+		uart_print_string_blocking("DMA for ADC1: ");
+
+		if(ADC1_DMA_STREAM->CR & 1) uart_print_string_blocking("STREAM ON"); else uart_print_string_blocking("STREAM OFF"); 
+		uart_print_string_blocking("\r\nintflags = "); o_btoa8_fixed(DMA_INTFLAGS(ADC1_DMA, ADC1_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("NDTR  = "); o_utoa16(ADC1_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+		uart_print_string_blocking("DMA for ADC2: ");
+		if(ADC2_DMA_STREAM->CR & 1) uart_print_string_blocking("STREAM ON"); else uart_print_string_blocking("STREAM OFF"); 
+		uart_print_string_blocking("\r\nintflags = "); o_btoa8_fixed(DMA_INTFLAGS(ADC2_DMA, ADC2_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("NDTR  = "); o_utoa16(ADC2_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 
-	uart_print_string_blocking("\r\n");
-	error(20);
+		uart_print_string_blocking("\r\n");
+		error(20);
+
+	}
 }
 
 
@@ -159,7 +204,7 @@ static void init_calib_adc(ADC_TypeDef *adc)
 #define AWD1_CHAN(_x_) ((_x_)<<26)
 
 #define DISCON          (1UL<<16)
-
+#define DISCLEN(x_)     ((x_)<<17)
 
 #define RESO_16B (0b000UL<<2)
 #define RESO_14B (0b001UL<<2)
@@ -178,6 +223,7 @@ static void init_calib_adc(ADC_TypeDef *adc)
 
 void adc_test()
 {
+
 	uart_print_string_blocking("\r\nADC1:\r\n");
 	for(int i=0; i < ADC1_SEQ_LEN; i++)
 	{
@@ -254,22 +300,29 @@ void init_adcs()
 	CONF_ADC_SMPTIMES(ADC1, ADC1_SMPTIMES);
 	ADC1->PCSEL = ADC1_CHANNELS_IN_USE;
 
+	ADC1->LTR1 = AWD_VBAT_LO;
+	ADC1->HTR1 = AWD_VBAT_HI;
+
 	ADC1->CFGR = 
-//		EN_AWD1 |
-//		AWD1_ON_SINGLE_CHAN |
-//		AWD1_CHAN(0) |
-		CONTINUOUS |
-		TRIG_SW |
-//		TRIG_EVENT(0) |
+		EN_AWD1 |
+		AWD1_ON_SINGLE_CHAN |
+		AWD1_CHAN(18) |  // VBAT
+//		CONTINUOUS |
+//		TRIG_SW |
+		TRIG_RISING |
+		TRIG_EVENT(0b01010) | // TIM1_TRGO2
 		RESO_14B |
-//		DISCON |
+		DISCON |
+		DISCLEN(ADC1_DISCONTINUOUS_GROUP_LEN) |
 		DMA_CIRCULAR;
 
-	// Analog watchdog 2 enabled on channels (bit index = channel number):
-	ADC1->AWD2CR = 0; 
-	ADC1->LTR2 = 0;
-	ADC1->HTR2 = 65535;
 
+	// Analog watchdog 2 enabled on channels (bit index = channel number):
+	ADC1->AWD2CR = 1UL<<8; // ch8 = vinbus_meas
+	ADC1->LTR2 = AWD_CHA_VINBUS_LO;
+	ADC1->HTR2 = AWD_CHA_VINBUS_HI;
+
+	// AWD3 reserved for MC overcurrents
 	ADC1->AWD3CR = 0; 
 	ADC1->LTR3 = 0;
 	ADC1->HTR3 = 65535;

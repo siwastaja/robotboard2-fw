@@ -97,6 +97,42 @@
 	8-bit	4.5	135
 */
 
+
+#define VREF_MV 3300
+#define ADC_BITS 14
+#define DAC_BITS 14
+#define ADCRANGE 16384
+#define DACRANGE 4096
+
+#define ADC_RDIV_LSB_TO_MV(val_, rhi_, rlo_) ( ( ((rhi_)+(rlo_))*((val_*VREF_MV) / (rlo_)) ) >> ADC_BITS)
+#define ADC_RDIV_MV_TO_LSB(val_, rhi_, rlo_)  ( (  (rlo_)  *  (((val_)*ADCRANGE)/VREF_MV)  )/((rhi_)+(rlo_)) )
+#define DAC_RDIV_LSB_TO_MV(val_, rhi_, rlo_) ( ( ((rhi_)+(rlo_))*((val_*VREF_MV) / (rlo_)) ) >> DAC_BITS)
+#define DAC_RDIV_MV_TO_LSB(val_, rhi_, rlo_)  ( (  (rlo_)  *  (((val_)*DACRANGE)/VREF_MV)  )/((rhi_)+(rlo_)) )
+
+
+#define CHA_VINBUS_MEAS_TO_MV(x_) (ADC_RDIV_LSB_TO_MV((x_), 470, 22))
+#define CHA_VIN_MEAS_TO_MV(x_)    (ADC_RDIV_LSB_TO_MV((x_), 470, 22))
+#define VBAT_MEAS_TO_MV(x_)       (ADC_RDIV_LSB_TO_MV((x_), 470, 68))
+
+#define MV_TO_CHA_VINBUS_MEAS(x_) (ADC_RDIV_MV_TO_LSB((x_), 470, 22))
+#define MV_TO_CHA_VIN_MEAS(x_)    (ADC_RDIV_MV_TO_LSB((x_), 470, 22))
+#define MV_TO_VBAT_MEAS(x_)       (ADC_RDIV_MV_TO_LSB((x_), 470, 68))
+
+#define AWD_VBAT_LO    MV_TO_VBAT_MEAS(15000) // 15.0V = 2.5 V/cell
+#define AWD_VBAT_HI    MV_TO_VBAT_MEAS(26000) // 26.0V = 4.33 V/cell
+
+#define AWD_CHA_VINBUS_LO   MV_TO_CHA_VINBUS_MEAS(14000) // 14.0V -> more than diode drop less from VBAT low limit
+#define AWD_CHA_VINBUS_HI   MV_TO_CHA_VINBUS_MEAS(55000) // 55V quick-reacting absolute maximum on Vinbus (Vdsmax for MOSFETs = 80V)
+
+// Hard-coded sanity limit checks, so that the AWDs have a chance of working at all.
+#if (AWD_VBAT_LO < 100 || AWD_VBAT_HI > 16364)
+	#error Please recheck AWD_VBAT settings.
+#endif
+
+#if (AWD_CHA_VINBUS_LO < 100 || AWD_CHA_VINBUS_HI > 16364)
+	#error Please recheck AWD_CHA_VINBUS settings.
+#endif
+
 #define ADC1_SEQ_LEN 10
 #define ADC1_SEQ  2, 7,16,17, 4,15,14,18,12, 8, 0, 0, 0, 0, 0, 0
 #define ADC1_DISCONTINUOUS_GROUP_LEN 5
@@ -177,10 +213,10 @@ extern volatile adc2_group_t adc2;
 extern volatile adc3_group_t adc3;
 
 // Sample times from channel 0 to channel 19
-#define ADC1_SMPTIMES 1,1,1,1,1, \
-                      1,1,1,1,1, \
-                      1,1,1,1,1, \
-                      1,1,1,1,1
+#define ADC1_SMPTIMES 2,2,2,2,2, \
+                      2,2,2,2,2, \
+                      2,2,2,2,2, \
+                      2,2,2,2,2
 
 
 
@@ -195,10 +231,10 @@ extern volatile adc3_group_t adc3;
 
 
 // Sample times from channel 0 to channel 19
-#define ADC3_SMPTIMES 1,1,1,1,1, \
-                      1,1,1,1,1, \
-                      1,1,1,1,1, \
-                      1,1,1,1,1
+#define ADC3_SMPTIMES 4,4,4,4,4, \
+                      4,4,4,4,4, \
+                      4,4,4,4,4, \
+                      4,4,4,5,4
 
 #ifdef DEFINE_VARS
 const char* const adc1_names[ADC1_SEQ_LEN] =

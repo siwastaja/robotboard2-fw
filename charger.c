@@ -115,7 +115,16 @@
 #define pulseout_0() do{ LO(GPIOE, 11); }while(0)
 #define pulseout_1() do{ HI(GPIOE, 11); }while(0)
 
+
+/*
+	Current ADC (14-bit): 1 LSB = 0.806mA
+	Current limit DAC (12-bit) 1 LSB = 3.223 mA
+
+*/
 #define CURRLIM_DAC DAC1->DHR12R1
+
+#define ADC_TO_MA(x_) ((x_)*806/1000)
+
 
 static char printbuf[128];
 
@@ -124,15 +133,15 @@ void charger_test()
 {
 
 	uart_print_string_blocking("PHA curr = ");
-	o_utoa16_fixed(adc2.s.cha_currmeasa[0], printbuf); uart_print_string_blocking(printbuf);
+	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasa[0]), printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("  ");
-	o_utoa16_fixed(adc2.s.cha_currmeasa[1], printbuf); uart_print_string_blocking(printbuf);
+	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasa[1]), printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
 
 	uart_print_string_blocking("PHB curr = ");
-	o_utoa16_fixed(adc2.s.cha_currmeasb[0], printbuf); uart_print_string_blocking(printbuf);
+	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasb[0]), printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("  ");
-	o_utoa16_fixed(adc2.s.cha_currmeasb[1], printbuf); uart_print_string_blocking(printbuf);
+	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasb[1]), printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
 
 	uart_print_string_blocking("PHA COMP = ");
@@ -141,6 +150,24 @@ void charger_test()
 
 	uart_print_string_blocking("PHA COMP = ");
 	o_utoa16((COMP12->SR&2)>>1, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("cha_vin_meas = ");
+	o_utoa32(CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas), printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("  raw = ");
+	o_utoa32(adc1.s.cha_vin_meas, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("cha_vinbus_meas = ");
+	o_utoa32(CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas), printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("  raw = ");
+	o_utoa32(adc1.s.cha_vinbus_meas, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("vbat_meas = ");
+	o_utoa32(VBAT_MEAS_TO_MV(adc1.s.vbat_meas), printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("  raw = ");
+	o_utoa32(adc1.s.vbat_meas, printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
 
 	delay_ms(50);
@@ -185,15 +212,6 @@ void init_charger()
 		CHARGER_CURRENT_COMPARATOR_HYSTERESIS<<8 | 1UL /* enable the thing!*/;
 
 	// The HRTIM peripheral controls the gate signals:
-
-	// Code for running the HRTIM calibration: it seems the relevant registers and documentation has been removed
-	// from the STM32H743 device, but the code is here Just In Case (as used in an earlier project):
-
-#if 0
-	HRTIM1->HRTIM_COMMON.DLLCR |= 1UL; // Start calibration
-	while(!(HRTIM1->HRTIM_COMMON.ISR & (1UL<<16))) ; // Wait for calibration complete
-	HRTIM1->HRTIM_COMMON.DLLCR = 0b1110UL; // Turn on calibration every 14 us as recommended in HRTIM cookbook.
-#endif
 
 #define HRTIM_MASTER HRTIM1->sMasterRegs
 #define HRTIM_CHA    HRTIM1->sTimerxRegs[0]

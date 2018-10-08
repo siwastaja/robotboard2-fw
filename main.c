@@ -83,7 +83,7 @@ void shutdown_handler()
 void delay_us(uint32_t i) __attribute__((section(".text_itcm")));
 void delay_us(uint32_t i)
 {
-	i *= 90;
+	i *= 100;
 	i -= 7;
 	while(i--)
 		__asm__ __volatile__ ("nop");
@@ -255,7 +255,13 @@ void main()
 	init_timebase();
 //	timer_test();
 	init_adcs();
-	init_charger();
+//	init_charger();
+	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
+
+	extern void adc_test();
+	while(1)
+		adc_test();
+
 	delay_ms(10);
 //	tof_ctrl_init();
 //	sbc_comm_test();
