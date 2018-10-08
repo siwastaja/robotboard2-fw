@@ -100,9 +100,9 @@ void update_subs(uint64_t *subs_vector)
 {
 	for(int i=0; i<B2S_MAX_MSGIDS; i++)
 	{
-	   if (b2s_msgs[i].p_accessor != NULL) {
-	      *(b2s_msgs[i].p_accessor) = NULL;
-	   } // if
+		if (b2s_msgs[i].p_accessor != NULL) {
+			*(b2s_msgs[i].p_accessor) = NULL;
+		} // if
 	}
 
 
@@ -191,8 +191,8 @@ void tx_fifo_push()
 		for(int s=i*64; s<(i+1)*64; s++)
 		{
 			if (t & 1) {     // id #s is enabled
-			   *(b2s_msgs[s].p_accessor) = tx_fifo[tx_fifo_cpu] + offs;
-			   offs += b2s_msgs[s].size;
+				*(b2s_msgs[s].p_accessor) = tx_fifo[tx_fifo_cpu] + offs;
+				offs += b2s_msgs[s].size;
 			} // if
 			t >>= 1;
 		}
@@ -330,17 +330,17 @@ void sbc_spi_cs_end_inthandler()
 	// Disable the DMAs (but keep the configuration):
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 		#ifdef SPI_DMA_1BYTE_AT_TIME
-			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+	                   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 		#else
-			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+	                   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
 		#endif
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
 
 	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 		#ifdef SPI_DMA_1BYTE_AT_TIME
-			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+	                   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 		#else
-			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+	                   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
 		#endif
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
@@ -737,9 +737,9 @@ void init_sbc_comm()
 	DMA1_Stream0->PAR = (uint32_t)&(SPI1->TXDR);
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 		#ifdef SPI_DMA_1BYTE_AT_TIME
-			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+	                   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 		#else
-			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+	                   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
 		#endif
 	                   1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/;
 
@@ -756,9 +756,9 @@ void init_sbc_comm()
 	DMA1_Stream1->M0AR = DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
 	DMA1_Stream1->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
 		#ifdef SPI_DMA_1BYTE_AT_TIME
-			   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
+	                   0b00UL<<13 /*8-bit mem*/ | 0b00UL<<11 /*8-bit periph*/ |
 		#else
-			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+	                   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
 		#endif
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
