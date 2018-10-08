@@ -1,10 +1,11 @@
 #include <stdint.h>
 #include "ext_include/stm32h7xx.h"
 #include "own_std.h"
-#include "flash.h"
 #include "stm32_cmsis_extension.h"
+#include "misc.h"
 
-#define PWM_MID 512
+#define PWM_MAX 8192
+#define PWM_MID (PWM_MAX/2)
 #define MIN_FREQ 1*65536
 #define MAX_FREQ 100*65536
 
@@ -16,9 +17,10 @@
 #define MC1_DIS_GATE() LO(GPIOI,4)
 
 // Read hall sensor signals HALLC,HALLB,HALLA and concatenate to a 3-bit value, to index a table
-#define MC0_HALL_CBA() ( (GPIOD->IDR & (0b11<<14))>>14) | (GPIOG & (1<<2)) )
-#define MC1_HALL_CBA() ( (GPIOE->IDR & (0b11<<5))>>5) | ((GPIOP & (1<<8))>>6) )
+#define MC0_HALL_CBA() ( (GPIOD->IDR & (0b11<<14))>>14) | (GPIOG->IDR & (1<<2)) )
+#define MC1_HALL_CBA() ( (GPIOE->IDR & (0b11<<5))>>5) | ((GPIOP->IDR & (1<<8))>>6) )
 
+#define DLED_ON() {}
 
 int timing_shift = 5000*65536; // hall sensors are not exactly where you could think they are.
 
@@ -96,6 +98,7 @@ const int sine[256] =
 // 1024 equals 3V3; after gain=40, it's 82.5mV; with 1.5mOhm, it's 55.0A.
 // i.e., 55mA per unit.
 
+/*
 #ifdef PCB1A
 #define CUR_LIM_DIV 81
 #endif
@@ -125,6 +128,7 @@ void set_curr_lim(int ma)
 	// Protection limit set at 1.25x soft limit + 2A constant extra.
 	set_prot_lim(((ma*5)>>2)+2000);
 }
+*/
 
 static volatile uint8_t pid_i_max = 30;
 static volatile uint8_t pid_feedfwd = 30;
@@ -132,7 +136,7 @@ static volatile uint8_t pid_p = 80;
 static volatile uint8_t pid_i = 50;
 static volatile uint8_t pid_d = 50;
 
-
+#if 0
 void tim1_inthandler()
 {
 	static int reverse = 0;
@@ -236,12 +240,12 @@ void tim1_inthandler()
 	if(hall_pos == expected_fwd_hall_pos)
 	{
 		pos_info++;
-		spi_tx_data.pos = pos_info;
+//		spi_tx_data.pos = pos_info;
 	}
 	else if(hall_pos == expected_back_hall_pos)
 	{
 		pos_info--;
-		spi_tx_data.pos = pos_info;
+//		spi_tx_data.pos = pos_info;
 	}
 
 
@@ -272,7 +276,7 @@ void tim1_inthandler()
 
 	ferr = pid_f_set - pid_f_meas;
 
-	spi_tx_data.speed = pid_f_meas>>8;
+//	spi_tx_data.speed = pid_f_meas>>8;
 
 	// Run the speed PID loop - not on every ISR cycle
 	if(!(cnt & 15))
@@ -334,12 +338,12 @@ void tim1_inthandler()
 
 	int32_t current_ma = (current_flt>>8)*CUR_LIM_DIV;
 	if(current_ma > 32767) current_ma = 32767; else if(current_ma < -32768) current_ma = -32768;
-	spi_tx_data.current = current_ma;
+//	spi_tx_data.current = current_ma;
 
 
 	if(OVERCURR()) // hard overcurrent, protection has acted, quickly ramp down the multiplier to avoid hitting it again
 	{
-		spi_tx_data.num_hard_limits++;
+//		spi_tx_data.num_hard_limits++;
 		LED_ON(); led_short = 0;
 		currlim_mult-=40;
 	}
@@ -361,11 +365,12 @@ void tim1_inthandler()
 
 	currlim_mult_flt = ((currlim_mult<<8) + 63*currlim_mult_flt)>>6;
 
-	spi_tx_data.cur_limit_mul = currlim_mult_flt>>8;
+//	spi_tx_data.cur_limit_mul = currlim_mult_flt>>8;
 
 
 	DLED_OFF();
 }
+#endif
 
 /*
 
@@ -396,11 +401,23 @@ need to create two ADC triggers per cycle, which will be:
 	  and underflow).
 
 
+Timers run at 200MHz
+Timer is up/down counting, halving the freq.
+With PWM_MAX = 8192, PWM will run at 12.2kHz
 
 
 */
-int init_bldc()
+void init_bldc()
 {
+	MC0_DIS_GATE();
+	MC1_DIS_GATE();
+	IO_TO_GPO(GPIOG,8);
+	IO_TO_GPO(GPIOI,4);
+
+	RCC->APB2ENR |= 0b11; // TIM8, TIM1
+	__DSB();
+	
+
 	TIM1->CR1 = 0b01UL<<5 /*centermode 1*/;
 	TIM1->CR2 = 0b0010UL<<20 /*TRGO2: Update event*/ | 0b100UL<<4 /*TRGO: OC1REF*/;
 
@@ -411,58 +428,69 @@ int init_bldc()
 	              1UL<<4 /*OC2 on*/ | 1UL<<6 /*OC2 complementary output enable*/ |
 		      1UL<<8 /*OC3 on*/ | 1UL<<10 /*OC3 complementary output enable*/;
 
-	TIM1->ARR = 1024; // 23.4 kHz
 
+//	TIM1->CCR1 = PWM_MID; // Sync pulse for 90 deg phase diff
+	TIM1->CCR1 = PWM_MAX-10; // Sync pulse for 180 deg phase diff.
 
+	// Tested that "1" is actually long enough to sync. Using a bit wider pulse to be sure.
 
-	TIM1->CCR1 = 512;
-	TIM1->CCR2 = 512;
-	TIM1->CCR3 = 512;
+	TIM1->ARR = PWM_MAX;
+
+//	TIM1->CCR1 = PWM_MID;
+	TIM1->CCR2 = PWM_MID/2;
+	TIM1->CCR3 = PWM_MID;
 	TIM1->CCR4 = 1020; // Generate the ADC trigger near the middle of the PWM waveforms
 	TIM1->BDTR = 1UL<<15 /*Main output enable*/ | 1UL /*21ns deadtime*/;
 	TIM1->EGR |= 1; // Generate Reinit+update
-	TIM1->DIER = 1UL /*Update interrupt enable*/;
+//	TIM1->DIER = 1UL /*Update interrupt enable*/;
+	__DSB();
 	TIM1->CR1 |= 1; // Enable the timer
+	__DSB();
 
-	set_prot_lim(5000);
-	DAC->CR |= 1; // enable, defaults good otherwise.
 
-	// DMA: channel 3 for SPI TX.
-	DMA1_Channel3->CPAR = (uint32_t)&(SPI1->DR);
-	DMA1_Channel3->CMAR = (uint32_t)(&spi_tx_data);
-	DMA1_Channel3->CNDTR = SPI_DATAGRAM_LEN;
-	DMA1_Channel3->CCR = 0b10<<12 /*hi prio*/ | 0b01<<10 /*16-bit mem*/ | 0b01<<8 /*16-bit periph*/ | 1<<7 /* mem increment*/ |
-	                     1<<5 /*circular*/ | 1<<4 /*dir: mem->spi*/;
 
-	// DMA: channel 2 for SPI RX
-	DMA1_Channel2->CPAR = (uint32_t)&(SPI1->DR);
-	DMA1_Channel2->CMAR = (uint32_t)(&spi_rx_data);
-	DMA1_Channel2->CNDTR = SPI_DATAGRAM_LEN;
-	DMA1_Channel2->CCR = 0b10<<12 /*hi prio*/ | 0b01<<10 /*16-bit mem*/ | 0b01<<8 /*16-bit periph*/ | 1<<7 /* mem increment*/ |
-	                     1<<5 /*circular*/ | 0<<4 /*dir: spi->mem*/;
+	TIM8->CR1 = 0b01UL<<5 /*centermode 1*/;
+	TIM8->SMCR = 0UL<<7 /*unclearly documented mystery bit, let's keep it off*/ | 
+		0UL<<16 | 0b110UL<<0 /*Slave mode 0110: Trigger mode: only start is triggered*/;
+		// ITR0 as trigger sourceby zeroes
 
-	delay_ms(100); // let the main cpu boot, so that nCS is definitely up.
+	TIM8->CCMR1 = 1UL<<3 /*OC1 Preload enable*/  | 0b110UL<<4  /*OC1 PWMmode 1*/ |
+	              1UL<<11 /*OC2 Preload Enable*/ | 0b110UL<<12 /*OC2 PWMmode 1*/;
+	TIM8->CCMR2 = 1UL<<3 /*OC3 Preload enable*/  | 0b110UL<<4  /*OC3 PWMmode 1*/;
+	TIM8->CCER =  1UL<<0 /*OC1 on*/ | 1UL<<2 /*OC1 complementary output enable*/ |
+	              1UL<<4 /*OC2 on*/ | 1UL<<6 /*OC2 complementary output enable*/ |
+		      1UL<<8 /*OC3 on*/ | 1UL<<10 /*OC3 complementary output enable*/;
 
-	DMA1_Channel3->CCR |= 1; // enable
-	DMA1_Channel2->CCR |= 1; // enable
+	TIM8->ARR = PWM_MAX;
 
-	SPI1->CR2 = 0b1111UL<<8 /*16-bit*/ | 1UL<<1 /* TX DMA enable */ | 1UL<<0 /* RX DMA enable*/;
-	SPI1->CR1 = 1UL<<6; // Enable SPI - zeroes good otherwise.
-
-	NVIC_EnableIRQ(SPI1_IRQn);
-	NVIC_EnableIRQ(TIM1_BRK_UP_TRG_COM_IRQn);
-	__enable_irq();
+	TIM8->CCR1 = PWM_MID;
+	TIM8->CCR2 = PWM_MID+PWM_MID/2;
+	TIM8->CCR3 = PWM_MID;
+	TIM8->CCR4 = 1020; // Generate the ADC trigger near the middle of the PWM waveforms
+	TIM8->BDTR = 1UL<<15 /*Main output enable*/ | 1UL /*21ns deadtime*/;
+	TIM8->EGR |= 1; // Generate Reinit+update
+//	TIM8->DIER = 1UL /*Update interrupt enable*/;
+	__DSB();
+	// Don't enable the timer, let it sync to TIM1
 
 	LED_ON();
-	EN_GATE();
-	delay_ms(50);
-	run_dccal();
-	DIS_GATE();
-	delay_ms(10);	
+	while(!(TIM8->CR1 & 1UL)) ;
+	__DSB();
 	LED_OFF();
 
-	// todo: pullup in NSS (PA15)
+	TIM1->CCR1 = PWM_MID;
 
-	set_curr_lim(18000);
+
+	// TIM1:
+	IO_ALTFUNC(GPIOA,8,  1);
+	IO_ALTFUNC(GPIOA,9,  1);
+	IO_ALTFUNC(GPIOA,10, 1);
+
+	// TIM8:
+	IO_ALTFUNC(GPIOI,5,  3);
+	IO_ALTFUNC(GPIOI,6,  3);
+	IO_ALTFUNC(GPIOI,7,  3);
+
+//	NVIC_EnableIRQ(TIM1_BRK_UP_TRG_COM_IRQn);
 
 }
