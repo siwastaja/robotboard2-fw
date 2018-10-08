@@ -18,3 +18,9 @@ void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
 
 void uart_print_string_blocking(const char *buf);
 
+
+#define VECTORS 0x0000FC00UL
+#define SET_TIM3_VECTOR(v) do{*((uint32_t*)(VECTORS+0x00B4)) = (uint32_t)(v);}while(0)
+
+
+

@@ -23,12 +23,25 @@ extern void epc_rx_dma_inthandler();
 extern void epc_i2c_inthandler();
 extern void epc_dcmi_dma_inthandler();
 extern void imu_fsm_inthandler();
+extern void timebase_inthandler();
 
+extern void agm01_errhandler();
+extern void agm23_errhandler();
+extern void agm45_errhandler();
+
+extern void adc12_inthandler();
+extern void adc3_inthandler();
+
+extern void adc1_dma_errhandler();
+extern void adc2_dma_errhandler();
+extern void adc3_dma_errhandler();
 
 extern unsigned int _STACKTOP;
 
+#define VECTOR_TBL_LEN 166
+
 // Vector table on page 730 on the Reference Manual RM0433
-unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
+unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_vector"))) =
 {
 /* 0x0000                    */ (unsigned int *) &_STACKTOP,
 /* 0x0004 RESET              */ (unsigned int *) stm32init,
@@ -61,10 +74,10 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0070            1       */ (unsigned int *) invalid_handler,
 /* 0x0074            2       */ (unsigned int *) invalid_handler,
 /* 0x0078            3       */ (unsigned int *) epc_rx_dma_inthandler,
-/* 0x007C            4       */ (unsigned int *) invalid_handler,
-/* 0x0080            5       */ (unsigned int *) invalid_handler,
-/* 0x0084            6       */ (unsigned int *) invalid_handler,
-/* 0x0088 ADC1&2             */ (unsigned int *) invalid_handler,
+/* 0x007C            4       */ (unsigned int *) agm01_errhandler,
+/* 0x0080            5       */ (unsigned int *) agm45_errhandler,
+/* 0x0084            6       */ (unsigned int *) agm01_errhandler,
+/* 0x0088 ADC1&2             */ (unsigned int *) adc12_inthandler,
 /* 0x008C                    */ (unsigned int *) invalid_handler,
 /* 0x0090                    */ (unsigned int *) invalid_handler,
 /* 0x0094                    */ (unsigned int *) invalid_handler,
@@ -75,14 +88,14 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00A8                    */ (unsigned int *) invalid_handler,
 /* 0x00AC                    */ (unsigned int *) invalid_handler,
 /* 0x00B0 TIM2               */ (unsigned int *) invalid_handler,
-/* 0x00B4 TIM3               */ (unsigned int *) imu_fsm_inthandler,
+/* 0x00B4 TIM3               */ (unsigned int *) invalid_handler, //imu_fsm_inthandler,
 /* 0x00B8 TIM4               */ (unsigned int *) invalid_handler,
 /* 0x00BC I2C1 EVENT         */ (unsigned int *) epc_i2c_inthandler,
 /* 0x00C0      ERR           */ (unsigned int *) invalid_handler,
 /* 0x00C4 I2C2 EVENT         */ (unsigned int *) invalid_handler,
 /* 0x00C8      ERR           */ (unsigned int *) invalid_handler,
-/* 0x00CC SPI1               */ (unsigned int *) invalid_handler, //sbc_spi_eot_inthandler,
-/* 0x00D0 SPI2               */ (unsigned int *) invalid_handler,
+/* 0x00CC SPI1               */ (unsigned int *) invalid_handler,
+/* 0x00D0 SPI2               */ (unsigned int *) agm45_errhandler,
 /* 0x00D4 USART1             */ (unsigned int *) invalid_handler,
 /* 0x00D8 USART2             */ (unsigned int *) invalid_handler,
 /* 0x00DC USART3             */ (unsigned int *) invalid_handler,
@@ -93,19 +106,19 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x00F0                    */ (unsigned int *) invalid_handler,
 /* 0x00F4                    */ (unsigned int *) invalid_handler,
 /* 0x00F8                    */ (unsigned int *) invalid_handler,
-/* 0x00FC DMA1 STREAM7       */ (unsigned int *) invalid_handler,
+/* 0x00FC DMA1 STREAM7       */ (unsigned int *) agm45_errhandler,
 /* 0x0100                    */ (unsigned int *) invalid_handler,
 /* 0x0104                    */ (unsigned int *) invalid_handler,
-/* 0x0108 TIM5               */ (unsigned int *) invalid_handler,
+/* 0x0108 TIM5               */ (unsigned int *) timebase_inthandler,
 /* 0x010C SPI3               */ (unsigned int *) invalid_handler,
 /* 0x0110 UART4              */ (unsigned int *) invalid_handler,
 /* 0x0114 UART5              */ (unsigned int *) invalid_handler,
 /* 0x0118 TIM6&DAC UNDERRUN  */ (unsigned int *) invalid_handler,
 /* 0x011C TIM7               */ (unsigned int *) invalid_handler,
 /* 0x0120 DMA2 STREAM0       */ (unsigned int *) epc_dcmi_dma_inthandler,
-/* 0x0124            1       */ (unsigned int *) invalid_handler,
-/* 0x0128            2       */ (unsigned int *) invalid_handler,
-/* 0x012C            3       */ (unsigned int *) invalid_handler,
+/* 0x0124            1       */ (unsigned int *) adc1_dma_errhandler,
+/* 0x0128            2       */ (unsigned int *) adc2_dma_errhandler,
+/* 0x012C            3       */ (unsigned int *) adc3_dma_errhandler,
 /* 0x0130            4       */ (unsigned int *) invalid_handler,
 /* 0x0134                    */ (unsigned int *) invalid_handler,
 /* 0x0138                    */ (unsigned int *) invalid_handler,
@@ -130,9 +143,9 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0184                    */ (unsigned int *) invalid_handler,
 /* 0x0188 UART7              */ (unsigned int *) invalid_handler,
 /* 0x018C UART8              */ (unsigned int *) invalid_handler,
-/* 0x0190 SPI4               */ (unsigned int *) invalid_handler,
+/* 0x0190 SPI4               */ (unsigned int *) agm01_errhandler,
 /* 0x0194 SPI5               */ (unsigned int *) invalid_handler,
-/* 0x0198 SPI6               */ (unsigned int *) invalid_handler,
+/* 0x0198 SPI6               */ (unsigned int *) agm23_errhandler,
 /* 0x019C                    */ (unsigned int *) invalid_handler,
 /* 0x01A0                    */ (unsigned int *) invalid_handler,
 /* 0x01A4                    */ (unsigned int *) invalid_handler,
@@ -173,16 +186,16 @@ unsigned int * the_nvic_vector[166] __attribute__ ((section(".nvic_vector"))) =
 /* 0x0230                    */ (unsigned int *) invalid_handler,
 /* 0x0234                    */ (unsigned int *) invalid_handler,
 /* 0x0238                    */ (unsigned int *) invalid_handler,
-/* 0x023C                    */ (unsigned int *) invalid_handler,
+/* 0x023C ADC3               */ (unsigned int *) adc3_inthandler,
 /* 0x0240                    */ (unsigned int *) invalid_handler,
-/* 0x0244                    */ (unsigned int *) invalid_handler,
-/* 0x0248                    */ (unsigned int *) invalid_handler,
-/* 0x024C                    */ (unsigned int *) invalid_handler,
-/* 0x0250                    */ (unsigned int *) invalid_handler,
-/* 0x0254                    */ (unsigned int *) invalid_handler,
-/* 0x0258                    */ (unsigned int *) invalid_handler,
-/* 0x025C                    */ (unsigned int *) invalid_handler,
-/* 0x0260                    */ (unsigned int *) invalid_handler,
+/* 0x0244 BDMA 0             */ (unsigned int *) agm23_errhandler,
+/* 0x0248      1             */ (unsigned int *) agm23_errhandler,
+/* 0x024C      2             */ (unsigned int *) invalid_handler,
+/* 0x0250      3             */ (unsigned int *) invalid_handler,
+/* 0x0254      4             */ (unsigned int *) invalid_handler,
+/* 0x0258      5             */ (unsigned int *) invalid_handler,
+/* 0x025C      6             */ (unsigned int *) invalid_handler,
+/* 0x0260      7             */ (unsigned int *) invalid_handler,
 /* 0x0264                    */ (unsigned int *) invalid_handler,
 /* 0x0268                    */ (unsigned int *) invalid_handler,
 /* 0x026C                    */ (unsigned int *) invalid_handler,
@@ -282,8 +295,29 @@ void refresh_settings()
 	__DSB(); __ISB();
 }
 */
+
+#define _RELOCATED_VECTORS_BEGIN 0x0000FC00UL
+#define ROM_ORIGIN 0x08000000UL
+
 void stm32init(void)
 {
+	/*
+		For some reason, reading at address 0 causes gcc to not generate any code at all, without any warnings,
+		so we start copying at 4.
+	*/
+	uint32_t* vect_begin  = (uint32_t*)(_RELOCATED_VECTORS_BEGIN+4);
+	uint32_t* vect_end    = (uint32_t*)(_RELOCATED_VECTORS_BEGIN+VECTOR_TBL_LEN*4);
+	uint32_t* vecti_begin = (uint32_t*)(ROM_ORIGIN+4);
+
+	while(vect_begin < vect_end)
+	{
+		*vect_begin = *vecti_begin;
+		vect_begin++;
+		vecti_begin++;
+	}
+
+	SCB->VTOR = _RELOCATED_VECTORS_BEGIN;
+
 
 	RCC->APB4ENR |= 1UL<<1 /*SYSCFG needs to be on for some configuration thingies often needed when fighting against
 		 device errata*/;

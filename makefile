@@ -1,6 +1,6 @@
 # This makefile is made to work with the toolchain downloadable at https://launchpad.net/gcc-arm-embedded
 
-DEVIP = 192.168.0.12
+DEVIP = 192.168.1.5
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
@@ -70,4 +70,4 @@ e:
 	gedit --new-window makefile linker.ld misc.h imu_m_compensation.c `echo "$(OBJ)" | sed s/"\.o"/"\.c"/g` `echo "$(OBJ)" | sed s/"\.o"/"\.h"/g` &
 
 s:
-	screen /dev/ttyUSB0 230400
+	screen /dev/ttyUSB0 460800

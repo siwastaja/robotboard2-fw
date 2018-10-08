@@ -41,9 +41,10 @@
 	there is some freedom in reorganizing channels shared by multiple ADCs (e.g.,
 	there are quite a few ADC12 channels, and even some ADC123.)
 
-*/
 
-/*
+	ADC1: MOTOR CONTROLLERS
+
+
 	ADC1 is "dedicated" for motor controllers - i.e., synchronized (triggered) by advanced control timers
 	(TIM1&TIM8). ADC1 is chosen for this purpose because one of the current sense signals (mc0_imeasb) is
 	available to ADC1 only.
@@ -51,58 +52,197 @@
 	To reduce DC link ripple, MC0 and MC1 run their PWMs 180 degrees out of phase. Hence, mc0_imeas* and
 	mc1_imeas* are measured with a half a PWM cycle timing offset.
 
-	The ADC is triggered in the middle of the PWM cycle, once for MC0, then once for MC1.
+	ADC1 is triggered in the middle of the PWM cycle, once for MC0, then once for MC1.
 	Due to this, ADC1 is run in discontinuous-grouped mode. Each trigger runs 5 conversions out of 10.
 
 
-	Similarly, ADC2 is dedicated to the charger
 
+	ADC2: CHARGER
+
+	Similarly, ADC2 is dedicated to the charger. Charger is a dual-phase synchronous buck converter.
+	The phases are 180 degrees offset. ADC2 is triggered by the charger HRTIM, twice per full PWM cycle, 
+	in two discountinuous groups.
+
+	Charger fsw = 350kHz
+	Charger period = around 3 us
+	Min duty cycle is 18V/50V = 36%
+	Increasing current for at least around 1 us
+	Max duty cycle is around 25.2V/34V = 74%, let's say 80%
+	-> minimum off-time will be 20%*3us = 600ns
+
+	With 14-bit resolution, and 75 ns sampling, total time = 300ns
+	-> two samples fit during off-time.
+
+
+
+	ADC sampling times at 33.33MHz
+
+	set	clk	ns
+	0	1.5	45
+	1	2.5	75
+	2	8.5	255
+	3	16.5	495
+	4	32.5	975
+			us
+	5	64.5	1.935
+	6	387.5	11.626
+	7	810.5	24.317
+
+	Conversion times
+	reso	clk	ns
+	16-bit	8.5	255
+	14-bit	7.5	225
+	12-bit	6.5	195
+	10-bit	5.5	165
+	8-bit	4.5	135
 */
-typedef struct __attribute__((packed))
+
+#define ADC1_SEQ_LEN 10
+#define ADC1_SEQ  2, 7,16,17, 4,15,14,18,12, 8, 0, 0, 0, 0, 0, 0
+#define ADC1_DISCONTINUOUS_GROUP_LEN 5
+
+// Which channels are used? LSb = ch 0
+#define ADC1_CHANNELS_IN_USE ((1<<2)|(1<<7)|(1<<16)|(1<<17)|(1<<4)|(1<<15)|(1<<14)|(1<<18)|(1<<12)|(1<<8))
+
+#define ADC2_SEQ_LEN 4
+#define ADC2_SEQ  9, 9, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+#define ADC2_DISCONTINUOUS_GROUP_LEN 2
+#define ADC2_CHANNELS_IN_USE ((1<<9)|(1<<5))
+
+#define ADC3_SEQ_LEN 9
+#define ADC3_SEQ  5, 6,10, 1,14,15,16,13,18,0,0,0,0,0,0,0
+#define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<14)|(1<<15)|(1<<16)|(1<<13)|(1<<18))
+
+typedef union
 {
-	uint16_t mc0_imeasb;            // ADC1   2+  PF11  Motor controller 0 phase B current measurement
-	uint16_t mc0_imeasc;            // ADC12  7+  PA7   Motor controller 0 phase C current measurement
+	struct __attribute__((packed))
+	{
+		// CONVERSION GROUP 1: 5 items
 
-	uint16_t bms_temp_contacts;     // ADC1   16+ PA0   Charger contact temperature NTC
-	uint16_t bms_temp_plat_mosfets; // ADC1   17+ PA1   Platform power switch MOSFET&fuse temperature NTC
-	uint16_t cha_vin_meas;          // ADC12  4+  PC4   Charger input voltage
+		uint16_t mc0_imeasb;            // ADC1   2+  PF11  Motor controller 0 phase B current measurement
+		uint16_t mc0_imeasc;            // ADC12  7+  PA7   Motor controller 0 phase C current measurement
 
-	uint16_t mc1_imeasb;            // ADC12  15+ PA3   Motor controller 1 phase B current measurement
-	uint16_t mc1_imeasc;            // ADC12  14+ PA2   Motor controller 1 phase C current measurement
+		uint16_t bms_temp_contacts;     // ADC1   16+ PA0   Charger contact temperature NTC
+		uint16_t bms_temp_plat_mosfets; // ADC1   17+ PA1   Platform power switch MOSFET&fuse temperature NTC
+		uint16_t cha_vin_meas;          // ADC12  4+  PC4   Charger input voltage
 
-	uint16_t vbat_meas;             // ADC12  18+ PA4   Battery voltage
-	uint16_t bms_temp_battery;      // ADC123 12+ PC2   Battery temperature NTC
-	uint16_t cha_vinbus_meas;       // ADC12  8+  PC5   Charger input voltage after the input ideal diode MOSFET
+		// CONVERSION GROUP 2: 5 items
+
+		uint16_t mc1_imeasb;            // ADC12  15+ PA3   Motor controller 1 phase B current measurement
+		uint16_t mc1_imeasc;            // ADC12  14+ PA2   Motor controller 1 phase C current measurement
+
+		uint16_t vbat_meas;             // ADC12  18+ PA4   Battery voltage
+		uint16_t bms_temp_battery;      // ADC123 12+ PC2   Battery temperature NTC
+		uint16_t cha_vinbus_meas;       // ADC12  8+  PC5   Charger input voltage after the input ideal diode MOSFET
+	} s;
+	uint16_t b[ADC1_SEQ_LEN];
 } adc1_group_t;
 
-typedef struct __attribute__((packed))
+typedef union
 {
-	uint16_t cha_currmeasa;         // ADC12  9+  PB0   Charger sync buck phase A inductor current
-	uint16_t cha_currmeasb;         // ADC12  5+  PB1   Charger sync buck phase B inductor current
+	struct __attribute__((packed))
+	{
+		// CONVERSION GROUP 1:
+		uint16_t cha_currmeasa[2];      // ADC12  9+  PB0   Charger sync buck phase A inductor current
+		// free time to convert other things
+
+		// CONVERSION GROUP 2:
+		uint16_t cha_currmeasb[2];      // ADC12  5+  PB1   Charger sync buck phase B inductor current
+		// free time to convert other things
+
+	} s;
+	uint16_t b[ADC2_SEQ_LEN];
 } adc2_group_t;
 
-typedef struct __attribute__((packed))
+typedef union
 {
-	uint16_t epc_stray_estimate;    // ADC3   5+  PF3   3DTOF sensor stray light estimate measurement (phototransistor), muxed from active sensor
-	uint16_t eb_analog1;            // ADC3   6+  PF10  Extension B analog in 1
-	uint16_t eb_analog2;            // ADC123 10+ PC0   Extension B analog in 2
-	uint16_t bms_mainfet_g_meas;    // ADC3   1+  PC3   Main power switch MOSFET gate voltage
-	uint16_t bms_appfet_g_meas;     // ADC3   14+ PH3   Application power switch MOSFET gate voltage
-	uint16_t bms_vref3;             // ADC3   15+ PH4   TI BMS chip 3.0V reference voltage
-	uint16_t bms_vmeas;             // ADC3   16+ PH5   TI BMS chip cell measurement voltage
-	uint16_t bms_temp_app_mosfets;  // ADC3   13+ PH2   Application power switch MOSFET&fuse temperature NTC
-	uint16_t cpu_temp;              // ADC3   18+ internal
+	struct __attribute__((packed))
+	{
+		uint16_t epc_stray_estimate;    // ADC3   5+  PF3   3DTOF sensor stray light estimate measurement (phototransistor), muxed from active sensor
+		uint16_t eb_analog1;            // ADC3   6+  PF10  Extension B analog in 1
+		uint16_t eb_analog2;            // ADC123 10+ PC0   Extension B analog in 2
+		uint16_t bms_mainfet_g_meas;    // ADC3   1+  PC3   Main power switch MOSFET gate voltage
+		uint16_t bms_appfet_g_meas;     // ADC3   14+ PH3   Application power switch MOSFET gate voltage
+		uint16_t bms_vref3;             // ADC3   15+ PH4   TI BMS chip 3.0V reference voltage
+		uint16_t bms_vmeas;             // ADC3   16+ PH5   TI BMS chip cell measurement voltage
+		uint16_t bms_temp_app_mosfets;  // ADC3   13+ PH2   Application power switch MOSFET&fuse temperature NTC
+		uint16_t cpu_temp;              // ADC3   18+ internal
+	} s;
+	uint16_t b[ADC3_SEQ_LEN];
+
 } adc3_group_t;
 
-#define ADC1_SEQ_LEN 4
-#define ADC1_SEQ 16,17,2,7,0,0,0,0,0,0,0,0,0,0,0,0
+extern volatile adc1_group_t adc1;
+extern volatile adc2_group_t adc2;
+extern volatile adc3_group_t adc3;
 
-#define ADC2_SEQ_LEN 7
-#define ADC2_SEQ 15,14,18,4,8,9,5,0,0,0,0,0,0,0,0,0
+// Sample times from channel 0 to channel 19
+#define ADC1_SMPTIMES 1,1,1,1,1, \
+                      1,1,1,1,1, \
+                      1,1,1,1,1, \
+                      1,1,1,1,1
 
-#define ADC3_SEQ_LEN 10
-#define ADC3_SEQ 5,6,10,1,14,15,16,13,12,18,0,0,0,0,0,0
 
 
 
+
+// Sample times from channel 0 to channel 19
+#define ADC2_SMPTIMES 1,1,1,1,1, \
+                      1,1,1,1,1, \
+                      1,1,1,1,1, \
+                      1,1,1,1,1
+
+
+
+// Sample times from channel 0 to channel 19
+#define ADC3_SMPTIMES 1,1,1,1,1, \
+                      1,1,1,1,1, \
+                      1,1,1,1,1, \
+                      1,1,1,1,1
+
+#ifdef DEFINE_VARS
+const char* const adc1_names[ADC1_SEQ_LEN] =
+{
+	"mc0_imeasb",
+	"mc0_imeasc",
+	"bms_temp_contacts",
+	"bms_temp_plat_mosfets",
+	"cha_vin_meas",
+	"mc1_imeasb",
+	"mc1_imeasc",
+	"vbat_meas",
+	"bms_temp_battery",
+	"cha_vinbus_meas"
+};
+
+const char* const adc2_names[ADC2_SEQ_LEN] =
+{
+	"cha_currmeasa[0]",
+	"cha_currmeasa[1]",
+	"cha_currmeasb[0]",
+	"cha_currmeasb[1]"
+};
+
+const char* const adc3_names[ADC3_SEQ_LEN] =
+{
+	"epc_stray_estimate",
+	"eb_analog1",
+	"eb_analog2",
+	"bms_mainfet_g_meas",
+	"bms_appfet_g_meas",
+	"bms_vref3",
+	"bms_vmeas",
+	"bms_temp_app_mosfets",
+	"cpu_temp"
+};
+
+#else
+extern const char* const adc1_names[ADC1_SEQ_LEN];
+extern const char* const adc2_names[ADC2_SEQ_LEN];
+extern const char* const adc3_names[ADC3_SEQ_LEN];
+
+#endif
+
+
+void init_adcs();
 

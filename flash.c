@@ -473,7 +473,6 @@ void flasher()
 	}
 }
 
-
 void run_flasher()
 {
 	__disable_irq();
