@@ -8,15 +8,26 @@ Timebase: 1kHz handler
 #include "ext_include/stm32h7xx.h"
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
+#include "charger.h"
 
 volatile uint32_t ms_cnt;
 
 void timebase_inthandler() __attribute__((section(".text_itcm")));
 void timebase_inthandler()
 {
+	static int cnt;
 	TIM5->SR = 0;
 	__DSB();
-	ms_cnt++;
+
+	cnt++;
+
+	if(cnt >= 10)
+	{
+		ms_cnt++;
+		cnt = 0;
+	}
+
+	charger_10khz();
 }
 
 void init_timebase()
@@ -34,7 +45,7 @@ void init_timebase()
 	RCC->APB1LENR |= 1UL<<3;
 
 	TIM5->DIER |= 1UL; // Update interrupt
-	TIM5->ARR = 200000-1; // 200MHz -> 1 kHz
+	TIM5->ARR = 20000-1; // 200MHz -> 10 kHz
 	TIM5->CR1 |= 1UL; // Enable
 
 	NVIC_SetPriority(TIM5_IRQn, 14);

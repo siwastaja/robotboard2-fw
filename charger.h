@@ -26,3 +26,4 @@ void init_charger();
 void deinit_charger();
 
 
+void charger_10khz();

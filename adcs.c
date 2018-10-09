@@ -13,24 +13,6 @@ volatile adc1_group_t adc1 __attribute__((aligned(4))) __attribute__((section(".
 volatile adc2_group_t adc2 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile adc3_group_t adc3 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 
-#define ADC1_DMA DMA2
-#define ADC1_DMA_STREAM DMA2_Stream1
-#define ADC1_DMA_STREAM_NUM 1
-#define ADC1_DMA_STREAM_IRQ DMA2_Stream1_IRQn
-#define ADC1_DMAMUX() do{DMAMUX1_Channel9->CCR = 9;}while(0)
-
-#define ADC2_DMA DMA2
-#define ADC2_DMA_STREAM DMA2_Stream2
-#define ADC2_DMA_STREAM_NUM 2
-#define ADC2_DMA_STREAM_IRQ DMA2_Stream2_IRQn
-#define ADC2_DMAMUX() do{DMAMUX1_Channel10->CCR = 10;}while(0)
-
-#define ADC3_DMA DMA2
-#define ADC3_DMA_STREAM DMA2_Stream3
-#define ADC3_DMA_STREAM_NUM 3
-#define ADC3_DMA_STREAM_IRQ DMA2_Stream3_IRQn
-#define ADC3_DMAMUX() do{DMAMUX1_Channel11->CCR = 115;}while(0)
-
 
 void adc12_inthandler()
 {
@@ -54,20 +36,20 @@ void adc12_inthandler()
 
 	if(ADC2->ISR & (1UL<<7)) // ADC2 AWD1
 	{
-		uart_print_string_blocking("\r\nADC1 AWD1\r\n");	
+		uart_print_string_blocking("\r\nADC2 AWD1\r\n");	
 		ADC2->ISR = 1UL<<7;
 
 	}
 
 	if(ADC2->ISR & (1UL<<8)) // ADC2 AWD2
 	{
-		uart_print_string_blocking("\r\nADC1 AWD2\r\n");	
+		uart_print_string_blocking("\r\nADC2 AWD2\r\n");	
 		ADC2->ISR = 1UL<<8;
 	}
 
 	if(ADC2->ISR & (1UL<<9)) // ADC2 AWD3
 	{
-		uart_print_string_blocking("\r\nADC1 AWD3\r\n");	
+		uart_print_string_blocking("\r\nADC2 AWD3\r\n");	
 		ADC2->ISR = 1UL<<9;
 	}
 
@@ -300,8 +282,8 @@ void init_adcs()
 	CONF_ADC_SMPTIMES(ADC1, ADC1_SMPTIMES);
 	ADC1->PCSEL = ADC1_CHANNELS_IN_USE;
 
-	ADC1->LTR1 = AWD_VBAT_LO;
-	ADC1->HTR1 = AWD_VBAT_HI;
+	ADC1->LTR1 = AWD_VBAT_LO<<(16-ADC_BITS);
+	ADC1->HTR1 = AWD_VBAT_HI<<(16-ADC_BITS);
 
 	ADC1->CFGR = 
 		EN_AWD1 |
@@ -319,8 +301,8 @@ void init_adcs()
 
 	// Analog watchdog 2 enabled on channels (bit index = channel number):
 	ADC1->AWD2CR = 1UL<<8; // ch8 = vinbus_meas
-	ADC1->LTR2 = AWD_CHA_VINBUS_LO;
-	ADC1->HTR2 = AWD_CHA_VINBUS_HI;
+	ADC1->LTR2 = AWD_CHA_VINBUS_LO<<(16-ADC_BITS);
+	ADC1->HTR2 = AWD_CHA_VINBUS_HI<<(16-ADC_BITS);
 
 	// AWD3 reserved for MC overcurrents
 	ADC1->AWD3CR = 0; 
@@ -328,7 +310,7 @@ void init_adcs()
 	ADC1->HTR3 = 65535;
 
 
-	ADC1->IER = 1UL<<4 /*overrun*/;
+	ADC1->IER = 1UL<<4 /*overrun*/ | AWD1IE | AWD2IE;
 
 	NVIC_SetPriority(ADC1_DMA_STREAM_IRQ, 1);
 	NVIC_EnableIRQ(ADC1_DMA_STREAM_IRQ);

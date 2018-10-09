@@ -36,6 +36,8 @@ extern void adc1_dma_errhandler();
 extern void adc2_dma_errhandler();
 extern void adc3_dma_errhandler();
 
+extern void charger_safety_errhandler();
+
 extern unsigned int _STACKTOP;
 
 #define VECTOR_TBL_LEN 166
@@ -77,7 +79,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x007C            4       */ (unsigned int *) agm01_errhandler,
 /* 0x0080            5       */ (unsigned int *) agm45_errhandler,
 /* 0x0084            6       */ (unsigned int *) agm01_errhandler,
-/* 0x0088 ADC1&2             */ (unsigned int *) adc12_inthandler,
+/* 0x0088 ADC1&2             */ (unsigned int *) charger_safety_errhandler,
 /* 0x008C                    */ (unsigned int *) invalid_handler,
 /* 0x0090                    */ (unsigned int *) invalid_handler,
 /* 0x0094                    */ (unsigned int *) invalid_handler,
@@ -162,13 +164,13 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x01D0                    */ (unsigned int *) invalid_handler,
 /* 0x01D4                    */ (unsigned int *) invalid_handler,
 /* 0x01D8                    */ (unsigned int *) invalid_handler,
-/* 0x01DC                    */ (unsigned int *) invalid_handler,
-/* 0x01E0                    */ (unsigned int *) invalid_handler,
-/* 0x01E4                    */ (unsigned int *) invalid_handler,
-/* 0x01E8                    */ (unsigned int *) invalid_handler,
-/* 0x01EC                    */ (unsigned int *) invalid_handler,
-/* 0x01F0                    */ (unsigned int *) invalid_handler,
-/* 0x01F4                    */ (unsigned int *) invalid_handler,
+/* 0x01DC HRTIM MASTER       */ (unsigned int *) invalid_handler,
+/* 0x01E0 HRTIM A            */ (unsigned int *) invalid_handler,
+/* 0x01E4       B            */ (unsigned int *) invalid_handler,
+/* 0x01E8       C            */ (unsigned int *) invalid_handler,
+/* 0x01EC       D            */ (unsigned int *) charger_safety_errhandler,
+/* 0x01F0       E            */ (unsigned int *) invalid_handler,
+/* 0x01F4 HRTIM FAULT        */ (unsigned int *) invalid_handler,
 /* 0x01F8                    */ (unsigned int *) invalid_handler,
 /* 0x01FC                    */ (unsigned int *) invalid_handler,
 /* 0x0200                    */ (unsigned int *) invalid_handler,

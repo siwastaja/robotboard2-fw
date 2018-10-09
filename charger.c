@@ -105,15 +105,35 @@
 #include "adcs.h"
 #include "own_std.h"
 
+
+#define HRTIM_MASTER HRTIM1->sMasterRegs
+#define HRTIM_CHA    HRTIM1->sTimerxRegs[0]
+#define HRTIM_CHB    HRTIM1->sTimerxRegs[1]
+#define HRTIM_CHC    HRTIM1->sTimerxRegs[2]
+#define HRTIM_CHD    HRTIM1->sTimerxRegs[3]
+#define HRTIM_CHE    HRTIM1->sTimerxRegs[4]
+#define HRTIM        HRTIM1->sCommonRegs
+
+
 #define CHARGER_CURRENT_COMPARATOR_HYSTERESIS (1UL)  // 1 (low), 2 (medium) or 3 (high)
 
 #if CHARGER_CURRENT_COMPARATOR_HYSTERESIS < 0 || CHARGER_CURRENT_COMPARATOR_HYSTERESIS > 3
 #error "Invalid CHARGER_CURRENT_COMPARATOR_HYSTERESIS"
 #endif
 
-#define INITIAL_OFFTIME (1000.0F) /*ns*/
-uint16_t charger_offtime = INITIAL_OFFTIME*2.5;
+#define INITIAL_OFFTIME (1000.0F) // ns
+uint16_t charger_offtime = INITIAL_OFFTIME/2.5;
+
+#define SAFETY_MAX_OFFTIME (5000.0F) // ns
  
+#define SAFETY_MAX_OFFTIME_REG (SAFETY_MAX_OFFTIME/2.5)
+
+#define DEADTIME_FALLING_NS (100.0F)
+#define DEADTIME_FALLING_REG ((int)((DEADTIME_FALLING_NS/2.5)+0.5))
+
+#define DEADTIME_RISING_NS (100.0F)
+#define DEADTIME_RISING_REG ((int)((DEADTIME_RISING_NS/2.5)+0.5))
+
 
 // Gate driver enables: when disabled, both fets of the relevant half bridge are off. When enabled, one is on at a time.
 #define en_gate_pha()  do{ HI(GPIOG, 1); }while(0)
@@ -144,10 +164,244 @@ uint16_t charger_offtime = INITIAL_OFFTIME*2.5;
 
 static char printbuf[128];
 
+void charger_safety_errhandler()
+{
+	dis_gate_pha();
+	dis_gate_phb();
+	IO_TO_GPO(GPIOG, 1);
+	IO_TO_GPO(GPIOG, 0);
+
+	infet_chargepump_0();
+	IO_TO_GPO(GPIOE, 10);
+
+	HRTIM.OENR = 0;
+
+	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
+	uart_print_string_blocking(__func__);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("MASTER ISR = ");
+	o_utoa32_hex(HRTIM_MASTER.MISR, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("TIMA ISR = ");
+	o_utoa32_hex(HRTIM_CHA.TIMxISR, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("TIMB ISR = ");
+	o_utoa32_hex(HRTIM_CHB.TIMxISR, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("TIMC ISR = ");
+	o_utoa32_hex(HRTIM_CHC.TIMxISR, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("TIMD ISR = ");
+	o_utoa32_hex(HRTIM_CHD.TIMxISR, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("TIME ISR = ");
+	o_utoa32_hex(HRTIM_CHE.TIMxISR, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	if(ADC1->ISR & (1UL<<7)) // ADC1 AWD1
+		uart_print_string_blocking("\r\nADC1 AWD1\r\n");
+	if(ADC1->ISR & (1UL<<8)) // ADC1 AWD2
+		uart_print_string_blocking("\r\nADC1 AWD2\r\n");	
+	if(ADC1->ISR & (1UL<<9)) // ADC1 AWD3
+		uart_print_string_blocking("\r\nADC1 AWD3\r\n");	
+	if(ADC2->ISR & (1UL<<7)) // ADC2 AWD1
+		uart_print_string_blocking("\r\nADC2 AWD1\r\n");	
+	if(ADC2->ISR & (1UL<<8)) // ADC2 AWD2
+		uart_print_string_blocking("\r\nADC2 AWD2\r\n");	
+	if(ADC2->ISR & (1UL<<9)) // ADC2 AWD3
+		uart_print_string_blocking("\r\nADC2 AWD3\r\n");	
+
+	uart_print_string_blocking("\r\nADC1 intflags = "); o_btoa16_fixed(ADC1->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("\r\nADC2 intflags = "); o_btoa16_fixed(ADC2->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("DMA for ADC1: ");
+
+	if(ADC1_DMA_STREAM->CR & 1) uart_print_string_blocking("STREAM ON"); else uart_print_string_blocking("STREAM OFF"); 
+	uart_print_string_blocking("\r\nintflags = "); o_btoa8_fixed(DMA_INTFLAGS(ADC1_DMA, ADC1_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("NDTR  = "); o_utoa16(ADC1_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("DMA for ADC2: ");
+	if(ADC2_DMA_STREAM->CR & 1) uart_print_string_blocking("STREAM ON"); else uart_print_string_blocking("STREAM OFF"); 
+	uart_print_string_blocking("\r\nintflags = "); o_btoa8_fixed(DMA_INTFLAGS(ADC2_DMA, ADC2_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("NDTR  = "); o_utoa16(ADC2_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+
+	uart_print_string_blocking("\r\n");
+
+	error(15);
+}
+
+
+void charger_10khz()
+{
+	static int cnt = 0;
+	cnt++;
+
+	if(cnt&1)
+		infet_chargepump_0();
+	else
+	{
+		// Keep the charge pump running whenever the Vin is at least 500mV below the Vinbus
+		if(CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas) > CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas)-500)
+			infet_chargepump_1();
+	}
+
+}
+
+void start_pha()
+{
+	DIS_IRQ();
+	en_gate_pha();
+	__DSB();
+	delay_us(1);
+	HRTIM_CHE.SETx1R |= 1UL;
+	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
+	__DSB();
+	delay_us(2);
+	HRTIM_CHE.SETx1R |= 1UL;
+	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
+	__DSB();
+	delay_us(2);
+	HRTIM_CHE.SETx1R |= 1UL;
+	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
+	__DSB();
+	delay_us(2);
+	HRTIM_CHE.SETx1R |= 1UL;
+	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
+	__DSB();
+	delay_us(2);
+	HRTIM_CHE.SETx1R |= 1UL;
+	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
+	__DSB();
+	delay_us(2);
+	HRTIM_CHE.SETx1R |= 1UL;
+	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
+	__DSB();
+	dis_gate_pha();
+
+	ENA_IRQ();
+}
+
+void start_phb()
+{
+	DIS_IRQ();
+	en_gate_phb();
+	__DSB();
+
+	delay_us(2);
+
+	HRTIM_CHD.SETx1R |= 1UL;
+	__DSB();
+	delay_us(1);
+
+	HRTIM_CHD.RSTx1R |= 1UL;
+	__DSB();
+	delay_us(1);
+
+
+	HRTIM_CHD.SETx1R |= 1UL;
+	__DSB();
+	delay_us(1);
+
+	HRTIM_CHD.RSTx1R |= 1UL;
+	__DSB();
+	delay_us(1);
+
+
+	dis_gate_phb();
+
+	ENA_IRQ();
+}
+
+
+/*
+	IO_ALTFUNC(GPIOG,  6,  2); // CHE1: PHA LOFET
+	IO_ALTFUNC(GPIOG,  7,  2); // CHE2: PHA HIFET
+	IO_ALTFUNC(GPIOA, 11,  2); // CHD1: PHB LOFET
+	IO_ALTFUNC(GPIOA, 12,  2); // CHD2: PHB HIFET
+*/
+#define A_LO_0() do{LO(GPIOG,6);__DSB();} while(0)
+#define A_LO_1() do{HI(GPIOG,6);__DSB();} while(0)
+#define A_HI_0() do{LO(GPIOG,7);__DSB();} while(0)
+#define A_HI_1() do{HI(GPIOG,7);__DSB();} while(0)
+#define B_LO_0() do{LO(GPIOA,11);__DSB();} while(0)
+#define B_LO_1() do{HI(GPIOA,11);__DSB();} while(0)
+#define B_HI_0() do{LO(GPIOA,12);__DSB();} while(0)
+#define B_HI_1() do{HI(GPIOA,12);__DSB();} while(0)
+
+/*
+	MP1907 gate driver errata:
+
+	MP1907 is either broken-by-design, or they just didn't bother to specify how it works.
+
+	(I guess the actual datasheet with actual information could be available under NDA???)
+	Almost all info regarding the EN pin (timing, how it works) is missing from the datasheet.
+
+	Anyway, through trial and error:
+	If the INH is high when the EN turns on, the chip enters some kind of lock-up error condition,
+	and doesn't reply to any INH/INL changes after that point. I didn't bother testing whether this
+	requires a power cycle to resolve, or if EN low -> back high is enough. Nevertheless, thanks
+	MPS for wasting my time and going through my PCB design, soldering and code over and over again
+	while there was no error anywhere whatsoever.
+
+	Hope this helps others with this malfunctioning chip.
+*/
+void gatedriver_debug()
+{
+	dis_gate_pha();
+	dis_gate_phb();
+	IO_TO_GPO(GPIOG, 0);
+	IO_TO_GPO(GPIOG, 1);
+
+	A_LO_0();
+	B_LO_0();
+	A_HI_0();
+	B_HI_0();
+	IO_TO_GPO(GPIOG, 6);
+	IO_TO_GPO(GPIOG, 7);
+	IO_TO_GPO(GPIOA, 11);
+	IO_TO_GPO(GPIOA, 12);
+
+	while(1)
+	{
+		delay_ms(50);
+		B_LO_0();
+		B_HI_1(); // <- comment this out to make it work
+		delay_ms(50);
+		en_gate_phb();
+		delay_us(1);
+
+		for(int i=0; i<3; i++)
+		{
+			B_HI_0();
+			__asm__ __volatile__ ("nop");
+			__asm__ __volatile__ ("nop");
+			__asm__ __volatile__ ("nop");
+			B_LO_1();
+			delay_us(1);
+			B_LO_0();
+			__asm__ __volatile__ ("nop");
+			__asm__ __volatile__ ("nop");
+			__asm__ __volatile__ ("nop");
+			B_HI_1();
+			delay_us(1);
+		}
+		B_HI_0();
+		delay_us(1);
+		dis_gate_phb();		
+	}
+}
 
 void charger_test()
 {
-	uart_print_string_blocking("\r\n");
+	static int cnt;
+	uart_print_string_blocking("\r\n\r\n");
 
 	uart_print_string_blocking("PHA curr = ");
 	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasa[0]), printbuf); uart_print_string_blocking(printbuf);
@@ -186,9 +440,20 @@ void charger_test()
 	uart_print_string_blocking("  raw = ");
 	o_utoa32(adc1.s.vbat_meas, printbuf); uart_print_string_blocking(printbuf);
 
-	delay_ms(50);
+
+	cnt++;
+
+	if(cnt > 10)
+	{
+		start_phb();
+
+		cnt = 0;
+	}
+
+	delay_ms(99);
 
 }
+
 
 void init_charger()
 {
@@ -229,14 +494,6 @@ void init_charger()
 		CHARGER_CURRENT_COMPARATOR_HYSTERESIS<<8 | 1UL /* enable the thing!*/;
 
 	// The HRTIM peripheral controls the gate signals:
-
-#define HRTIM_MASTER HRTIM1->sMasterRegs
-#define HRTIM_CHA    HRTIM1->sTimerxRegs[0]
-#define HRTIM_CHB    HRTIM1->sTimerxRegs[1]
-#define HRTIM_CHC    HRTIM1->sTimerxRegs[2]
-#define HRTIM_CHD    HRTIM1->sTimerxRegs[3]
-#define HRTIM_CHE    HRTIM1->sTimerxRegs[4]
-#define HRTIM        HRTIM1->sCommonRegs
 /*
 	For the master phase (PHA):
 
@@ -246,7 +503,7 @@ void init_charger()
 	- When the off-time counter expires, the cycle starts again.
 
 
-	COMPARATOR EVENT (high level on comparator):
+	COMPARATOR EVENT COMP1 (high level on PHA comparator):
 	- HIFET	OFF, LOFET ON, aka.  set CHE1 high (CHE2 follows automatically with deadtime)
 	- Start counter CHE (offtime counter)
 
@@ -261,6 +518,12 @@ void init_charger()
 	  minimum amount of unavoidable overlap.
 	- When the slave phase trips its current setpoint (comparator), its SW is forced low. But, there is no off-time
 	  counter. It's not needed.
+
+	COMPARATOR EVENT COMP2 (high level on PHB comparator)
+	- HIFET OFF, LOFET ON, aka. set CHD1 high (CHD2 follows automatically with deadtime)
+
+	COMPARATOR EVENT COMP1 (high level on PHA comparator)
+	- HIFET ON, LOFET OFF, aka. set CHD1 low (CHD2 follows automatically)
 
 	ADC is triggered when the off-time starts.
 
@@ -280,6 +543,9 @@ void init_charger()
 
 #define EV_ACTIVEHI 0UL
 #define EV_ACTIVELO 1UL
+
+	HRTIM_CHE.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
+	HRTIM_CHD.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
 
 	HRTIM_MASTER.MCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/;
 	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 1UL<<4 /*retrig*/;
@@ -302,24 +568,49 @@ void init_charger()
 		0UL<<17    /*OUT2 active high*/       | 0UL<<1  /*OUT1 active high*/ |
 		1UL<<8 /*Deadtime enable - OUT2 commands ignored, OUT1 is in command*/;
 
+	HRTIM_CHD.OUTxR =
+		0b10UL<<20 /*OUT2 inactive in fault*/ | 0UL<<19 /*OUT2 inactive in idle*/ |
+		0b10UL<<4  /*OUT1 inactive in fault*/ | 0UL<<3  /*OUT1 inactive in idle*/ |
+		0UL<<17    /*OUT2 active high*/       | 0UL<<1  /*OUT1 active high*/ |
+		1UL<<8 /*Deadtime enable - OUT2 commands ignored, OUT1 is in command*/;
+
 
 	// Confusion warning: RST1R is _output_ turn-off register. RSTR is counter reset register
 	HRTIM_CHE.SETx1R = 1UL<<26 /*EEV6*/;  // Overcurrent turns on bottom FET
 	HRTIM_CHE.RSTxR  = 1UL<<14 /*EEV6*/;  // Overcurrent resets the offtime counter
-	HRTIM_CHE.PERxR  = INITIAL_OFFTIME;
-	HRTIM_CHE.RSTx1R = 1UL<<2 /*PER (of CHE)*/;
+	HRTIM_CHE.PERxR  = INITIAL_OFFTIME/2.5;
+	HRTIM_CHE.RSTx1R = 1UL<<2 /*PER (of CHE)*/; // turn current-increasing
 
+
+/*
+	COMPARATOR EVENT COMP2 (high level on PHB comparator)
+	- HIFET OFF, LOFET ON, aka. set CHD1 high (CHD2 follows automatically with deadtime)
+
+	COMPARATOR EVENT COMP1 (high level on PHA comparator)
+	- HIFET ON, LOFET OFF, aka. set CHD1 low (CHD2 follows automatically)
+*/
+	HRTIM_CHD.SETx1R = 1UL<<27 /*EEV7*/; // Overcurrent turns on bottom FET
+	HRTIM_CHD.RSTx1R = 1UL<<26 /*EEV6*/; // Overcurrent of the master phase turns off the bottom FET, starting current-increasing cycle on the slave phase
+	HRTIM_CHD.RSTxR  = 1UL<<15 /*EEV7*/; // Our own overcurrent also starts a backup safety off-time counter
+	HRTIM_CHD.PERxR  = SAFETY_MAX_OFFTIME_REG;
+	HRTIM_CHD.CMP1xR = SAFETY_MAX_OFFTIME_REG-1;
+	HRTIM_CHD.TIMxDIER = 1UL; // Compare 1 interrupt
 
 	IO_ALTFUNC(GPIOG,  6,  2); // CHE1: PHA LOFET
 	IO_ALTFUNC(GPIOG,  7,  2); // CHE2: PHA HIFET
 	IO_ALTFUNC(GPIOA, 11,  2); // CHD1: PHB LOFET
 	IO_ALTFUNC(GPIOA, 12,  2); // CHD2: PHB HIFET
 
+
 	HRTIM.CR2 = 0b11111100111111UL; // Force software update on all timers & reset counters.
+
+	NVIC_SetPriority(HRTIM1_TIMD_IRQn, 0);
+//	NVIC_EnableIRQ(HRTIM1_TIMD_IRQn);
+
 
 
 	// Output enables - aka RUN:
-	HRTIM.OENR = 0b11UL<<8 /*CHE*/ | 0b00UL<<6 /*CHD*/;
+	HRTIM.OENR = 0b11UL<<8 /*CHE*/ | 0b11UL<<6 /*CHD*/;
 
 //	HRTIM_CHE.PERxR = CHARGER_OFFTIME;  // PHA = CHE
 //	HRTIM_CHD.PERxR = CHARGER_OFFTIME;
@@ -327,30 +618,11 @@ void init_charger()
 	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/ | 1UL<<20 /*Enable CHD*/;
 	while(1)
 	{
-//		delay_ms(5000);
-//		HRTIM_CHE.SETx1R = 1UL;
-		
-		delay_ms(50);
-		HRTIM_CHE.PERxR  = 1000.0 * 2.5;
-		delay_ms(50);
-		HRTIM_CHE.PERxR  = 3000.0 * 2.5;
-		delay_ms(50);
-		HRTIM_CHE.PERxR  = 1500.0 * 2.5;
-		delay_ms(50);
-
-		HRTIM_CHE.PERxR  = 100.0 * 2.5;
-		delay_ms(50);
-
-		HRTIM_CHE.PERxR  = 5000.0 * 2.5;
-		delay_ms(50);
-
-		HRTIM_CHE.PERxR  = 3000.0 * 2.5;
 
 		charger_test();
 	}
 
 }
-
 
 void deinit_charger()
 {

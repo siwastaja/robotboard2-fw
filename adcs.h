@@ -110,19 +110,19 @@
 #define DAC_RDIV_MV_TO_LSB(val_, rhi_, rlo_)  ( (  (rlo_)  *  (((val_)*DACRANGE)/VREF_MV)  )/((rhi_)+(rlo_)) )
 
 
-#define CHA_VINBUS_MEAS_TO_MV(x_) (ADC_RDIV_LSB_TO_MV((x_), 470, 22))
-#define CHA_VIN_MEAS_TO_MV(x_)    (ADC_RDIV_LSB_TO_MV((x_), 470, 22))
-#define VBAT_MEAS_TO_MV(x_)       (ADC_RDIV_LSB_TO_MV((x_), 470, 68))
+#define CHA_VINBUS_MEAS_TO_MV(x_) (ADC_RDIV_LSB_TO_MV((x_), 464, 22))
+#define CHA_VIN_MEAS_TO_MV(x_)    (ADC_RDIV_LSB_TO_MV((x_), 474, 22))
+#define VBAT_MEAS_TO_MV(x_)       (ADC_RDIV_LSB_TO_MV((x_), 475, 68))
 
-#define MV_TO_CHA_VINBUS_MEAS(x_) (ADC_RDIV_MV_TO_LSB((x_), 470, 22))
-#define MV_TO_CHA_VIN_MEAS(x_)    (ADC_RDIV_MV_TO_LSB((x_), 470, 22))
-#define MV_TO_VBAT_MEAS(x_)       (ADC_RDIV_MV_TO_LSB((x_), 470, 68))
+#define MV_TO_CHA_VINBUS_MEAS(x_) (ADC_RDIV_MV_TO_LSB((x_), 464, 22))
+#define MV_TO_CHA_VIN_MEAS(x_)    (ADC_RDIV_MV_TO_LSB((x_), 474, 22))
+#define MV_TO_VBAT_MEAS(x_)       (ADC_RDIV_MV_TO_LSB((x_), 475, 68))
 
 #define AWD_VBAT_LO    MV_TO_VBAT_MEAS(15000) // 15.0V = 2.5 V/cell
-#define AWD_VBAT_HI    MV_TO_VBAT_MEAS(26000) // 26.0V = 4.33 V/cell
+#define AWD_VBAT_HI    MV_TO_VBAT_MEAS(18000) // 26.0V = 4.33 V/cell
 
-#define AWD_CHA_VINBUS_LO   MV_TO_CHA_VINBUS_MEAS(14000) // 14.0V -> more than diode drop less from VBAT low limit
-#define AWD_CHA_VINBUS_HI   MV_TO_CHA_VINBUS_MEAS(55000) // 55V quick-reacting absolute maximum on Vinbus (Vdsmax for MOSFETs = 80V)
+#define AWD_CHA_VINBUS_LO   MV_TO_CHA_VINBUS_MEAS(15000) // 14.0V -> more than diode drop less from VBAT low limit
+#define AWD_CHA_VINBUS_HI   MV_TO_CHA_VINBUS_MEAS(20000) // 55V quick-reacting absolute maximum on Vinbus (Vdsmax for MOSFETs = 80V)
 
 // Hard-coded sanity limit checks, so that the AWDs have a chance of working at all.
 #if (AWD_VBAT_LO < 100 || AWD_VBAT_HI > 16364)
@@ -277,6 +277,25 @@ extern const char* const adc2_names[ADC2_SEQ_LEN];
 extern const char* const adc3_names[ADC3_SEQ_LEN];
 
 #endif
+
+
+#define ADC1_DMA DMA2
+#define ADC1_DMA_STREAM DMA2_Stream1
+#define ADC1_DMA_STREAM_NUM 1
+#define ADC1_DMA_STREAM_IRQ DMA2_Stream1_IRQn
+#define ADC1_DMAMUX() do{DMAMUX1_Channel9->CCR = 9;}while(0)
+
+#define ADC2_DMA DMA2
+#define ADC2_DMA_STREAM DMA2_Stream2
+#define ADC2_DMA_STREAM_NUM 2
+#define ADC2_DMA_STREAM_IRQ DMA2_Stream2_IRQn
+#define ADC2_DMAMUX() do{DMAMUX1_Channel10->CCR = 10;}while(0)
+
+#define ADC3_DMA DMA2
+#define ADC3_DMA_STREAM DMA2_Stream3
+#define ADC3_DMA_STREAM_NUM 3
+#define ADC3_DMA_STREAM_IRQ DMA2_Stream3_IRQn
+#define ADC3_DMAMUX() do{DMAMUX1_Channel11->CCR = 115;}while(0)
 
 
 void init_adcs();
