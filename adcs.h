@@ -174,6 +174,12 @@ typedef union
 	uint16_t b[ADC1_SEQ_LEN];
 } adc1_group_t;
 
+// Sample times from channel 0 to channel 19
+#define ADC1_SMPTIMES 2,2,2,2,2, \
+                      2,2,2,2,2, \
+                      2,2,2,2,2, \
+                      2,2,2,3,2
+
 typedef union
 {
 	struct __attribute__((packed))
@@ -211,13 +217,6 @@ typedef union
 extern volatile adc1_group_t adc1;
 extern volatile adc2_group_t adc2;
 extern volatile adc3_group_t adc3;
-
-// Sample times from channel 0 to channel 19
-#define ADC1_SMPTIMES 2,2,2,2,2, \
-                      2,2,2,2,2, \
-                      2,2,2,2,2, \
-                      2,2,2,2,2
-
 
 
 

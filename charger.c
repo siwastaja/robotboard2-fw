@@ -1,5 +1,23 @@
 /*
 
+	STM32 CONFUSION WARNING:
+
+	The HRTIM in STM23H7 series is a completely different thing than the earlier HRTIM, for example, in
+	STM32F334. The new HRTIM has been completely stripped away of the actual core of the HRTIM - the high
+	resolution part! Only the external functionality looks the same.
+
+	So it's just a regular timer, but sophisticated and flexible one.
+
+	To compensate somewhat, 400MHz input clock (2.5 ns resolution) can be used. While it's good, it's of
+	course nothing compared to the old 4.6GHz-equivalent clock (217 ps resolution).
+
+	Some copy-pasta confusion exists in the reference manual.
+
+	Luckily, this doens't matter in our case at all, and is actually a simplification.
+	Just be careful when designing on these parts!
+
+
+
 	The Charger
 
 	Since a proper IC solution does not exist, the complete DC/DC converter was designed from scratch from
@@ -93,11 +111,9 @@
 #error "Invalid CHARGER_CURRENT_COMPARATOR_HYSTERESIS"
 #endif
 
-#define CHARGER_OFFTIME 1234
-#if CHARGER_OFFTIME < 1000 || CHARGER_OFFTIME > 50000
-#error "Invalid CHARGER_OFFTIME"
-#endif
-
+#define INITIAL_OFFTIME (1000.0F) /*ns*/
+uint16_t charger_offtime = INITIAL_OFFTIME*2.5;
+ 
 
 // Gate driver enables: when disabled, both fets of the relevant half bridge are off. When enabled, one is on at a time.
 #define en_gate_pha()  do{ HI(GPIOG, 1); }while(0)
@@ -131,6 +147,7 @@ static char printbuf[128];
 
 void charger_test()
 {
+	uart_print_string_blocking("\r\n");
 
 	uart_print_string_blocking("PHA curr = ");
 	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasa[0]), printbuf); uart_print_string_blocking(printbuf);
@@ -168,7 +185,6 @@ void charger_test()
 	o_utoa32(VBAT_MEAS_TO_MV(adc1.s.vbat_meas), printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("  raw = ");
 	o_utoa32(adc1.s.vbat_meas, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\n");
 
 	delay_ms(50);
 
@@ -177,13 +193,14 @@ void charger_test()
 void init_charger()
 {
 
+	RCC->CFGR |= 1UL<<14; // Use CPU clock (400MHz) as HRTIM clock.
+	__DSB();
+
 	RCC->APB2ENR  |= 1UL<<29; // Enable HRTIM clock
 	RCC->APB4ENR  |= 1UL<<14; // Enable COMP1,2 clock
 	RCC->APB1LENR |= 1UL<<29; // Enable DAC1,2 clock. Only DAC1 is used by us; DAC2 may be used by others (audio 
 				  // when writing this comment)
-
 	
-
 	dis_gate_pha();
 	dis_gate_phb();
 	IO_TO_GPO(GPIOG, 0);
@@ -200,7 +217,7 @@ void init_charger()
 
 	// DAC1: Current setpoint (don't touch channel 2, beware: configuration registers are shared)
 	DAC1->MCR |= 0b011UL<<0 /*Channel 1: Connected to on-chip peripherals only, with buffer disabled*/;
-	CURRLIM_DAC = 500;
+	CURRLIM_DAC = 250;
 	DAC1->CR |= 1UL<<0; // Enable channel 1
 
 	// Comparator 1: PHA current
@@ -219,9 +236,78 @@ void init_charger()
 #define HRTIM_CHC    HRTIM1->sTimerxRegs[2]
 #define HRTIM_CHD    HRTIM1->sTimerxRegs[3]
 #define HRTIM_CHE    HRTIM1->sTimerxRegs[4]
+#define HRTIM        HRTIM1->sCommonRegs
+/*
+	For the master phase (PHA):
 
-	HRTIM_CHE.PERxR = CHARGER_OFFTIME;  // PHA = CHE
-	HRTIM_CHD.PERxR = CHARGER_OFFTIME;
+	- Cycle starts. SWitch node (SW) is driven high. Current starts increasing. Aux counter starts measuring the on time.
+	- Current exceeds the maximum setpoint (set by a DAC) and trips the comparator
+	- Comparator forces the SW to low, and starts the off-time counter. On-time counter is stopped and read out.
+	- When the off-time counter expires, the cycle starts again.
+
+
+	COMPARATOR EVENT (high level on comparator):
+	- HIFET	OFF, LOFET ON, aka.  set CHE1 high (CHE2 follows automatically with deadtime)
+	- Start counter CHE (offtime counter)
+
+	CHE PERiod EVENT: (offtime ends)
+	- HIFET ON, LOFET OFF, aka. set CHE1 low (CHE2 follows automatically)
+
+	For the slave phase (PHB):
+
+	- When the master phase trips the current setpoint, the slave phase starts its cycle. This way, the phase
+	  difference would be 180 degrees only with 50% duty cycle, but it doesn't matter too much; as long as the
+	  duty is 50% or less, there will be no overlap, guaranteed. With duty cycle over 50%, there will be the
+	  minimum amount of unavoidable overlap.
+	- When the slave phase trips its current setpoint (comparator), its SW is forced low. But, there is no off-time
+	  counter. It's not needed.
+
+	ADC is triggered when the off-time starts.
+
+*/
+
+	// prescaler bitfield must be written before compare and period registers
+	// period and compare registers must be between 3 and FFFD.
+
+
+	// PHA overcurr: COMP1 -> EEV6 (SRC2)
+	// PHB overcurr: COMP2 -> EEV7 (SRC2)
+
+#define EV_LEVEL   0b00
+#define EV_RISING  0b01
+#define EV_FALLING 0b10
+#define EV_BOTH    0b11
+
+#define EV_ACTIVEHI 0UL
+#define EV_ACTIVELO 1UL
+
+	HRTIM_MASTER.MCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/;
+	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 1UL<<4 /*retrig*/;
+	HRTIM_CHD.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 1UL<<4 /*retrig*/;
+
+	/*
+		The event mapping documentation is completely fucked up by random
+		name changes, incoherent, and partially non-documented. By reverse-engineering
+		by trial and error, we found out the following:
+		COMP1: EEV6, source regval=1
+		
+	*/
+	HRTIM.EECR2 =
+		1UL<<0 /*EEV6 source*/ | EV_ACTIVEHI<<2 | EV_LEVEL<<3 |
+		1UL<<6 /*EEV7 source*/ | EV_ACTIVEHI<<8 | EV_LEVEL<<9;
+
+	HRTIM_CHE.OUTxR =
+		0b10UL<<20 /*OUT2 inactive in fault*/ | 0UL<<19 /*OUT2 inactive in idle*/ |
+		0b10UL<<4  /*OUT1 inactive in fault*/ | 0UL<<3  /*OUT1 inactive in idle*/ |
+		0UL<<17    /*OUT2 active high*/       | 0UL<<1  /*OUT1 active high*/ |
+		1UL<<8 /*Deadtime enable - OUT2 commands ignored, OUT1 is in command*/;
+
+
+	// Confusion warning: RST1R is _output_ turn-off register. RSTR is counter reset register
+	HRTIM_CHE.SETx1R = 1UL<<26 /*EEV6*/;  // Overcurrent turns on bottom FET
+	HRTIM_CHE.RSTxR  = 1UL<<14 /*EEV6*/;  // Overcurrent resets the offtime counter
+	HRTIM_CHE.PERxR  = INITIAL_OFFTIME;
+	HRTIM_CHE.RSTx1R = 1UL<<2 /*PER (of CHE)*/;
 
 
 	IO_ALTFUNC(GPIOG,  6,  2); // CHE1: PHA LOFET
@@ -229,8 +315,39 @@ void init_charger()
 	IO_ALTFUNC(GPIOA, 11,  2); // CHD1: PHB LOFET
 	IO_ALTFUNC(GPIOA, 12,  2); // CHD2: PHB HIFET
 
+	HRTIM.CR2 = 0b11111100111111UL; // Force software update on all timers & reset counters.
+
+
+	// Output enables - aka RUN:
+	HRTIM.OENR = 0b11UL<<8 /*CHE*/ | 0b00UL<<6 /*CHD*/;
+
+//	HRTIM_CHE.PERxR = CHARGER_OFFTIME;  // PHA = CHE
+//	HRTIM_CHD.PERxR = CHARGER_OFFTIME;
+
+	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/ | 1UL<<20 /*Enable CHD*/;
 	while(1)
+	{
+//		delay_ms(5000);
+//		HRTIM_CHE.SETx1R = 1UL;
+		
+		delay_ms(50);
+		HRTIM_CHE.PERxR  = 1000.0 * 2.5;
+		delay_ms(50);
+		HRTIM_CHE.PERxR  = 3000.0 * 2.5;
+		delay_ms(50);
+		HRTIM_CHE.PERxR  = 1500.0 * 2.5;
+		delay_ms(50);
+
+		HRTIM_CHE.PERxR  = 100.0 * 2.5;
+		delay_ms(50);
+
+		HRTIM_CHE.PERxR  = 5000.0 * 2.5;
+		delay_ms(50);
+
+		HRTIM_CHE.PERxR  = 3000.0 * 2.5;
+
 		charger_test();
+	}
 
 }
 
@@ -258,7 +375,4 @@ void deinit_charger()
 	// We won't turn the DACs off due to other uses for DAC2.
 
 }
-
-
-
 

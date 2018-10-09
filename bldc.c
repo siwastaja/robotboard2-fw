@@ -416,7 +416,10 @@ void init_bldc()
 
 	RCC->APB2ENR |= 0b11; // TIM8, TIM1
 	__DSB();
-	
+
+
+//	TIM1->PSC = 2-1;	
+//	TIM8->PSC = 2-1;	
 
 	TIM1->CR1 = 0b01UL<<5 /*centermode 1*/;
 	TIM1->CR2 = 0b0010UL<<20 /*TRGO2: Update event*/ | 0b100UL<<4 /*TRGO: OC1REF*/;
