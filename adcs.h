@@ -69,9 +69,13 @@
 	Increasing current for at least around 1 us
 	Max duty cycle is around 25.2V/34V = 74%, let's say 80%
 	-> minimum off-time will be 20%*3us = 600ns
+	-> minimum off-time is around 35%*3us = 1000ns
 
 	With 14-bit resolution, and 75 ns sampling, total time = 300ns
 	-> two samples fit during off-time.
+	-> three samples fit during minimum on-time.
+
+	-> 5 samples fit max.
 
 
 
@@ -141,8 +145,8 @@
 #define ADC1_CHANNELS_IN_USE ((1<<2)|(1<<7)|(1<<16)|(1<<17)|(1<<4)|(1<<15)|(1<<14)|(1<<18)|(1<<12)|(1<<8))
 
 #define ADC2_SEQ_LEN 4
-#define ADC2_SEQ  9, 9, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-#define ADC2_DISCONTINUOUS_GROUP_LEN 2
+#define ADC2_SEQ  9, 9, 9, 9, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0
+#define ADC2_DISCONTINUOUS_GROUP_LEN 4
 #define ADC2_CHANNELS_IN_USE ((1<<9)|(1<<5))
 
 #define ADC3_SEQ_LEN 9
@@ -185,11 +189,11 @@ typedef union
 	struct __attribute__((packed))
 	{
 		// CONVERSION GROUP 1:
-		uint16_t cha_currmeasa[2];      // ADC12  9+  PB0   Charger sync buck phase A inductor current
+		uint16_t cha_currmeasa[4];      // ADC12  9+  PB0   Charger sync buck phase A inductor current
 		// free time to convert other things
 
 		// CONVERSION GROUP 2:
-		uint16_t cha_currmeasb[2];      // ADC12  5+  PB1   Charger sync buck phase B inductor current
+		uint16_t cha_currmeasb[4];      // ADC12  5+  PB1   Charger sync buck phase B inductor current
 		// free time to convert other things
 
 	} s;

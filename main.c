@@ -34,6 +34,16 @@ void uart_print_string_blocking(const char *buf)
 		buf++;
 	}
 }
+
+uint8_t uart_input()
+{
+	if(USART1->ISR & (1UL<<5))
+	{
+		return USART1->RDR;
+	}
+	else
+		return 0;
+}
 #endif
 
 

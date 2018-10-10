@@ -38,6 +38,8 @@ extern void adc3_dma_errhandler();
 
 extern void charger_safety_errhandler();
 
+extern void charger_loop_inthandler();
+
 extern unsigned int _STACKTOP;
 
 #define VECTOR_TBL_LEN 166
@@ -169,7 +171,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x01E4       B            */ (unsigned int *) invalid_handler,
 /* 0x01E8       C            */ (unsigned int *) invalid_handler,
 /* 0x01EC       D            */ (unsigned int *) charger_safety_errhandler,
-/* 0x01F0       E            */ (unsigned int *) invalid_handler,
+/* 0x01F0       E            */ (unsigned int *) charger_loop_inthandler,
 /* 0x01F4 HRTIM FAULT        */ (unsigned int *) invalid_handler,
 /* 0x01F8                    */ (unsigned int *) invalid_handler,
 /* 0x01FC                    */ (unsigned int *) invalid_handler,

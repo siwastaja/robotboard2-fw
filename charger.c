@@ -313,29 +313,85 @@ void charger_10khz()
 #define HRTIM_RUN_PHB()  do{HRTIM.OENR  = 0b11UL<<6;}while(0)
 #define HRTIM_STOP_PHB() do{HRTIM.ODISR = 0b11UL<<6;}while(0)
 
+/*
+	HRTIM errata:
+	Timers cannot be shut down by zeroing MCR bits. This is non-documented and unexpected.
+
+*/
+
+//uint16_t pha_duty = 
+
 void start_pha()
 {
 	en_gate_pha();
 	delay_us(500);
 	DIS_IRQ();
-//	HRTIM_CHE.PERxR  = 2000.0/2.5; // 2us is needed to charge the bootstrap cap enough.
-	HRTIM_CHE.SETx1R |= 1UL;
-//	HRTIM.CR2 = (1UL<<5) /*update (for new PERx)*/;
-//	__DSB();
-//	HRTIM.CR2 = (1UL<<13) /* Software reset CHE */;
-//	__DSB();
-	HRTIM.CR2 = (1UL<<13) /* Software reset CHE */ | (1UL<<5) /*update (for new PERx)*/;
+	HRTIM_CHE.CMP1xR = 2000.0/2.5; // 2us is needed to charge the bootstrap cap enough.
+	HRTIM_CHE.SETx1R |= 1UL; // Software preposition to lofet on.
+	HRTIM.CR2 = (1UL<<13) /* Software reset CHE */ | (1UL<<5) /*update (for the new CMP1)*/;
 	HRTIM_RUN_PHA();
-//	HRTIM_CHE.PERxR  = INITIAL_OFFTIME/2.5;
+//	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/;
+	HRTIM_CHE.TIMxDIER = 1UL<<13; // Reset/rollover interrupt
 	ENA_IRQ();
 }
 
+#define PERIOD ((int)(3000.0/2.5))
 
+volatile int32_t current_setpoint = 100;
+
+void charger_loop_inthandler() __attribute__((section(".text_itcm")));
+void charger_loop_inthandler()
+{
+	HRTIM_CHE.TIMxICR = 1UL<<13;
+	int32_t iset = current_setpoint;
+
+	int32_t cmp_for_min_duty = PERIOD - 
+		( (PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas)-1000)) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas));
+
+	int32_t cmp_for_max_duty = PERIOD - 
+		( (PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas)+2000)) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas));
+
+	int32_t cmp_for_expected_duty = PERIOD - 
+		( (PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas)+100+(30*iset)/1000)) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas));
+
+	/*
+		The "theoretical" duty cycle can be calculated from the ratio of input and output voltage, and adding the
+		losses to the equation, the current can be modeled as an imaginary voltage offset on the output voltage.
+
+		This cannot be, and doesn't need to be accurate. Typically, something like this isn't done /at all/; instead,
+		typically a dumb feedback loop is used. By using an approximation directly feedforwarded from both input and
+		output voltage, we are really close to the real duty cycle, and can feedback (using PI loop) a fine-tuning
+		parameter only!
+
+		The following offset for output voltage was tested on the prototype.
+		+100 = 0
+		each 30 units: 1A
+
+	*/
+
+
+	static int32_t finetune = 0;
+
+
+	
+
+/*
+	uart_print_string_blocking("\r\ncmp_for_min_duty = ");
+	o_itoa32(cmp_for_min_duty, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\ncmp_for_max_duty = ");
+	o_itoa32(cmp_for_max_duty, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\ncmp_for_expected_duty = ");
+	o_itoa32(cmp_for_expected_duty, printbuf); uart_print_string_blocking(printbuf);
+*/
+	HRTIM_CHE.CMP1xR = cmp_for_expected_duty;
+
+}
 
 void stop_pha()
 {
 	HRTIM_STOP_PHA();
 	dis_gate_pha();
+	HRTIM_CHE.TIMxDIER = 0;
 }
 
 void charger_test()
@@ -379,17 +435,57 @@ void charger_test()
 	o_utoa32(VBAT_MEAS_TO_MV(adc1.s.vbat_meas), printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("  raw = ");
 	o_utoa32(adc1.s.vbat_meas, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("current_setpoint = ");
+	o_utoa32(current_setpoint, printbuf); uart_print_string_blocking(printbuf);
+
+
+	uint8_t cmd = uart_input();
+	if(cmd == 'a')
+	{
+		start_pha();
+	}
+	if(cmd == 's')
+	{
+		stop_pha();
+	}
+	if(cmd == '0')
+	{
+		current_setpoint = 500;
+	}
+	if(cmd == '1')
+	{
+		current_setpoint = 1000;
+	}
+	if(cmd == '2')
+	{
+		current_setpoint = 2000;
+	}
+	if(cmd == '3')
+	{
+		current_setpoint = 3000;
+	}
+	if(cmd == '4')
+	{
+		current_setpoint = 4000;
+	}
+	if(cmd == '5')
+	{
+		current_setpoint = 5000;
+	}
+	if(cmd == '6')
+	{
+		current_setpoint = 6000;
+	}
+	if(cmd == '7')
+	{
+		current_setpoint = 7000;
+	}
 
 
 	cnt++;
 
-	if(cnt > 10)
-	{
-		start_pha();
-		delay_us(80);
-		stop_pha();
-		cnt = 0;
-	}
 
 	delay_ms(99);
 
@@ -485,12 +581,19 @@ void init_charger()
 #define EV_ACTIVEHI 0UL
 #define EV_ACTIVELO 1UL
 
+#define RETRIG (1UL<<4)
+#define CONT   (1UL<<3)
+
+	// Before the preload is enabled:
+	HRTIM.ADC1R = 1UL<<28 /*ADC Trigger 1 on CHE CMP2*/;
+	HRTIM.ADC1R = 1UL<<28 /*ADC Trigger 1 on CHE CMP2*/;
+
 	HRTIM_CHE.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
 	HRTIM_CHD.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
 
 	HRTIM_MASTER.MCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/;
-	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 0UL<<4 /*retrig*/ | 1UL<<18 /*reset or PER triggers update*/;
-	HRTIM_CHD.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 0UL<<4 /*retrig*/ | 1UL<<18 /*reset or PER triggers update*/;
+	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | CONT | 1UL<<18 /*reset or PER triggers update*/;
+	HRTIM_CHD.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | CONT | 1UL<<18 /*reset or PER triggers update*/;
 
 	/*
 		The event mapping documentation is completely fucked up by random
@@ -529,25 +632,27 @@ void init_charger()
 
 
 	// Confusion warning: RSTx1R is _output_ turn-off register. RSTxR is _counter_ reset register
-	HRTIM_CHE.SETx1R = 1UL<<26 /*EEV6*/;  // Overcurrent turns on bottom FET
-	HRTIM_CHE.RSTxR  = 1UL<<14 /*EEV6*/;  // Overcurrent resets (i.e., starts) the offtime counter
-	HRTIM_CHE.PERxR  = INITIAL_OFFTIME/2.5;
-	HRTIM_CHE.RSTx1R = 1UL<<2 /*PER (of CHE)*/; // turn current-increasing
+
+	HRTIM_CHE.PERxR  = 3000.0/2.5;
+	HRTIM_CHE.CMP1xR = 800.0/2.5;
+	HRTIM_CHE.SETx1R = 1UL<<26 /*EEV6 (overcurr)*/ | 1UL<<2 /*PER*/;  // Overcurrent or PERiod turns on bottom FET -> current starts decresing
+	HRTIM_CHE.RSTx1R = 1UL<<3 /*CMP1*/;  // CMP1 turns off bottom FET -> current starts increasing
+
+	
+	HRTIM_CHD.PERxR  = 3000.0/2.5;
+	HRTIM_CHD.CMP1xR = 800.0/2.5;
+	HRTIM_CHD.SETx1R = 1UL<<26 /*EEV6 (overcurr)*/ | 1UL<<2 /*PER*/;  // Overcurrent or PERiod turns on bottom FET -> current starts decresing
+	HRTIM_CHD.RSTx1R = 1UL<<3 /*CMP1*/;  // CMP1 turns off bottom FET -> current starts increasing
 
 
-/*
-	COMPARATOR EVENT COMP2 (high level on PHB comparator)
-	- HIFET OFF, LOFET ON, aka. set CHD1 high (CHD2 follows automatically with deadtime)
 
-	COMPARATOR EVENT COMP1 (high level on PHA comparator)
-	- HIFET ON, LOFET OFF, aka. set CHD1 low (CHD2 follows automatically)
-*/
+
 	HRTIM_CHD.SETx1R = 1UL<<27 /*EEV7*/; // Overcurrent turns on bottom FET
 	HRTIM_CHD.RSTx1R = 1UL<<26 /*EEV6*/; // Overcurrent of the master phase turns off the bottom FET, starting current-increasing cycle on the slave phase
 	HRTIM_CHD.RSTxR  = 1UL<<15 /*EEV7*/; // Our own overcurrent also starts a backup safety off-time counter
 	HRTIM_CHD.PERxR  = SAFETY_MAX_OFFTIME_REG;
 	HRTIM_CHD.CMP1xR = SAFETY_MAX_OFFTIME_REG-1;
-	HRTIM_CHD.TIMxDIER = 1UL; // Compare 1 interrupt
+//	HRTIM_CHD.TIMxDIER = 1UL; // Compare 1 interrupt
 
 	IO_ALTFUNC(GPIOG,  6,  2); // CHE1: PHA LOFET
 	IO_ALTFUNC(GPIOG,  7,  2); // CHE2: PHA HIFET
@@ -556,9 +661,10 @@ void init_charger()
 
 
 	HRTIM.CR2 = 0b11111100111111UL; // Force software update on all timers & reset counters.
+	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/;
 
-	NVIC_SetPriority(HRTIM1_TIMD_IRQn, 0);
-//	NVIC_EnableIRQ(HRTIM1_TIMD_IRQn);
+	NVIC_SetPriority(HRTIM1_TIME_IRQn, 2);
+	NVIC_EnableIRQ(HRTIM1_TIME_IRQn);
 
 
 	// Output enables - aka RUN:
@@ -567,7 +673,6 @@ void init_charger()
 //	HRTIM_CHE.PERxR = CHARGER_OFFTIME;  // PHA = CHE
 //	HRTIM_CHD.PERxR = CHARGER_OFFTIME;
 
-	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/ | 1UL<<20 /*Enable CHD*/;
 	while(1)
 	{
 

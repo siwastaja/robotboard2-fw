@@ -324,11 +324,12 @@ void init_adcs()
 //		EN_AWD1 |
 //		AWD1_ON_SINGLE_CHAN |
 //		AWD1_CHAN(0) |
-		CONTINUOUS |
-		TRIG_SW |
-//		TRIG_EVENT(0) |
+//		CONTINUOUS |
+		TRIG_RISING |
+		TRIG_EVENT(0b10000) | // HRTIM_ADCTRG1
 		RESO_14B |
-//		DISCON |
+		DISCON |
+		DISCLEN(ADC2_DISCONTINUOUS_GROUP_LEN) |
 		DMA_CIRCULAR;
 
 	// Analog watchdog 2 enabled on channels (bit index = channel number):

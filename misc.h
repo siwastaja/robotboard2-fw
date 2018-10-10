@@ -17,6 +17,7 @@ void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
 #define LED_OFF() do{LO(GPIOC, 13);}while(0)
 
 void uart_print_string_blocking(const char *buf);
+uint8_t uart_input();
 
 
 #define VECTORS 0x0000FC00UL
