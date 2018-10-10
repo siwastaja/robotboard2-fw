@@ -18,13 +18,13 @@ void adc12_inthandler()
 {
 	if(ADC1->ISR & (1UL<<7)) // ADC1 AWD1
 	{
-		uart_print_string_blocking("\r\nADC1 AWD1\r\n");
+		uart_print_string_blocking("\r\nADC1 AWD1: Vbat out of range\r\n");
 		ADC1->ISR = 1UL<<7;	
 	}
 
 	if(ADC1->ISR & (1UL<<8)) // ADC1 AWD2
 	{
-		uart_print_string_blocking("\r\nADC1 AWD2\r\n");	
+		uart_print_string_blocking("\r\nADC1 AWD2: Charger Vinbus out of range\r\n");	
 		ADC1->ISR = 1UL<<8;
 	}
 

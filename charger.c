@@ -115,23 +115,23 @@
 #define HRTIM        HRTIM1->sCommonRegs
 
 
-#define CHARGER_CURRENT_COMPARATOR_HYSTERESIS (1UL)  // 1 (low), 2 (medium) or 3 (high)
+#define CHARGER_CURRENT_COMPARATOR_HYSTERESIS (0UL)  // 0 (no), 1 (low), 2 (medium) or 3 (high)
 
 #if CHARGER_CURRENT_COMPARATOR_HYSTERESIS < 0 || CHARGER_CURRENT_COMPARATOR_HYSTERESIS > 3
 #error "Invalid CHARGER_CURRENT_COMPARATOR_HYSTERESIS"
 #endif
 
-#define INITIAL_OFFTIME (1000.0F) // ns
+#define INITIAL_OFFTIME (2000.0F) // ns
 uint16_t charger_offtime = INITIAL_OFFTIME/2.5;
 
 #define SAFETY_MAX_OFFTIME (5000.0F) // ns
  
 #define SAFETY_MAX_OFFTIME_REG (SAFETY_MAX_OFFTIME/2.5)
 
-#define DEADTIME_FALLING_NS (100.0F)
+#define DEADTIME_FALLING_NS (30.0F)
 #define DEADTIME_FALLING_REG ((int)((DEADTIME_FALLING_NS/2.5)+0.5))
 
-#define DEADTIME_RISING_NS (100.0F)
+#define DEADTIME_RISING_NS (30.0F)
 #define DEADTIME_RISING_REG ((int)((DEADTIME_RISING_NS/2.5)+0.5))
 
 
@@ -205,9 +205,9 @@ void charger_safety_errhandler()
 	uart_print_string_blocking("\r\n");
 
 	if(ADC1->ISR & (1UL<<7)) // ADC1 AWD1
-		uart_print_string_blocking("\r\nADC1 AWD1\r\n");
+		uart_print_string_blocking("\r\nADC1 AWD1: Vbat out of range\r\n");
 	if(ADC1->ISR & (1UL<<8)) // ADC1 AWD2
-		uart_print_string_blocking("\r\nADC1 AWD2\r\n");	
+		uart_print_string_blocking("\r\nADC1 AWD2: Charger Vinbus out of range\r\n");	
 	if(ADC1->ISR & (1UL<<9)) // ADC1 AWD3
 		uart_print_string_blocking("\r\nADC1 AWD3\r\n");	
 	if(ADC2->ISR & (1UL<<7)) // ADC2 AWD1
@@ -219,6 +219,9 @@ void charger_safety_errhandler()
 
 	uart_print_string_blocking("\r\nADC1 intflags = "); o_btoa16_fixed(ADC1->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 	uart_print_string_blocking("\r\nADC2 intflags = "); o_btoa16_fixed(ADC2->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("\r\nADC1 DR = "); o_utoa16_fixed(ADC1->DR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("\r\nADC2 DR = "); o_utoa16_fixed(ADC2->DR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 	uart_print_string_blocking("DMA for ADC1: ");
 
@@ -254,70 +257,6 @@ void charger_10khz()
 
 }
 
-void start_pha()
-{
-	DIS_IRQ();
-	en_gate_pha();
-	__DSB();
-	delay_us(1);
-	HRTIM_CHE.SETx1R |= 1UL;
-	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
-	__DSB();
-	delay_us(2);
-	HRTIM_CHE.SETx1R |= 1UL;
-	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
-	__DSB();
-	delay_us(2);
-	HRTIM_CHE.SETx1R |= 1UL;
-	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
-	__DSB();
-	delay_us(2);
-	HRTIM_CHE.SETx1R |= 1UL;
-	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
-	__DSB();
-	delay_us(2);
-	HRTIM_CHE.SETx1R |= 1UL;
-	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
-	__DSB();
-	delay_us(2);
-	HRTIM_CHE.SETx1R |= 1UL;
-	HRTIM.CR2 |= (1UL<<13); // Software reset CHE
-	__DSB();
-	dis_gate_pha();
-
-	ENA_IRQ();
-}
-
-void start_phb()
-{
-	DIS_IRQ();
-	en_gate_phb();
-	__DSB();
-
-	delay_us(2);
-
-	HRTIM_CHD.SETx1R |= 1UL;
-	__DSB();
-	delay_us(1);
-
-	HRTIM_CHD.RSTx1R |= 1UL;
-	__DSB();
-	delay_us(1);
-
-
-	HRTIM_CHD.SETx1R |= 1UL;
-	__DSB();
-	delay_us(1);
-
-	HRTIM_CHD.RSTx1R |= 1UL;
-	__DSB();
-	delay_us(1);
-
-
-	dis_gate_phb();
-
-	ENA_IRQ();
-}
 
 
 /*
@@ -338,64 +277,65 @@ void start_phb()
 /*
 	MP1907 gate driver errata:
 
-	MP1907 is either broken-by-design, or they just didn't bother to specify how it works.
+	MP1907 is either broken-by-design, or they just didn't bother to specify how they designed it to work, which
+	is a very nonstandard way for a gate driver.
 
 	(I guess the actual datasheet with actual information could be available under NDA???)
 	Almost all info regarding the EN pin (timing, how it works) is missing from the datasheet.
 
-	Anyway, through trial and error:
-	If the INH is high when the EN turns on, the chip enters some kind of lock-up error condition,
+	Anyway, this is what I found out by reverse-engineering through trial and error:
+	If either the INH or INL is high when the EN turns on, the chip enters some kind of lock-up error condition,
 	and doesn't reply to any INH/INL changes after that point. I didn't bother testing whether this
 	requires a power cycle to resolve, or if EN low -> back high is enough. Nevertheless, thanks
-	MPS for wasting my time and going through my PCB design, soldering and code over and over again
-	while there was no error anywhere whatsoever.
+	MPS for wasting my time and going through my PCB design, prototype soldering and code over and over again
+	while there was no error anywhere whatsoever on my part.
+
+	This bug / "feature" makes working with this chip really cumbersome, as the enable pin cannot be used
+	as an independent way to start the driver. Robustness of the system configuration is reduced as the
+	PWM cannot simply run in the standard deadtime'd configuration, but needs extra states when "enabling"
+	the device.
+
+	Additionally, there seems to be a HUUUUUUUUUUUUUUUUUUGE delay of the EN pin responding: measured at
+	around 60 us. Disabling seems to happen instantly, thank god...
+
+	If you try to change the inputs during this massive wait, sometimes it starts working after around 60us,
+	sometimes strange glitches appear on the waveform!
+
+	This random, undocumented and unexpected behavior cripples the usability of this expensive chip.
 
 	Hope this helps others with this malfunctioning chip.
+
+
 */
-void gatedriver_debug()
+
+#define HRTIM_RUN_PHA()  do{HRTIM.OENR  = 0b11UL<<8;}while(0)
+#define HRTIM_STOP_PHA() do{HRTIM.ODISR = 0b11UL<<8;}while(0)
+#define HRTIM_RUN_PHB()  do{HRTIM.OENR  = 0b11UL<<6;}while(0)
+#define HRTIM_STOP_PHB() do{HRTIM.ODISR = 0b11UL<<6;}while(0)
+
+void start_pha()
 {
+	en_gate_pha();
+	delay_us(500);
+	DIS_IRQ();
+//	HRTIM_CHE.PERxR  = 2000.0/2.5; // 2us is needed to charge the bootstrap cap enough.
+	HRTIM_CHE.SETx1R |= 1UL;
+//	HRTIM.CR2 = (1UL<<5) /*update (for new PERx)*/;
+//	__DSB();
+//	HRTIM.CR2 = (1UL<<13) /* Software reset CHE */;
+//	__DSB();
+	HRTIM.CR2 = (1UL<<13) /* Software reset CHE */ | (1UL<<5) /*update (for new PERx)*/;
+	HRTIM_RUN_PHA();
+//	HRTIM_CHE.PERxR  = INITIAL_OFFTIME/2.5;
+	ENA_IRQ();
+}
+
+
+
+void stop_pha()
+{
+	HRTIM_STOP_PHA();
 	dis_gate_pha();
-	dis_gate_phb();
-	IO_TO_GPO(GPIOG, 0);
-	IO_TO_GPO(GPIOG, 1);
-
-	A_LO_0();
-	B_LO_0();
-	A_HI_0();
-	B_HI_0();
-	IO_TO_GPO(GPIOG, 6);
-	IO_TO_GPO(GPIOG, 7);
-	IO_TO_GPO(GPIOA, 11);
-	IO_TO_GPO(GPIOA, 12);
-
-	while(1)
-	{
-		delay_ms(50);
-		B_LO_0();
-		B_HI_1(); // <- comment this out to make it work
-		delay_ms(50);
-		en_gate_phb();
-		delay_us(1);
-
-		for(int i=0; i<3; i++)
-		{
-			B_HI_0();
-			__asm__ __volatile__ ("nop");
-			__asm__ __volatile__ ("nop");
-			__asm__ __volatile__ ("nop");
-			B_LO_1();
-			delay_us(1);
-			B_LO_0();
-			__asm__ __volatile__ ("nop");
-			__asm__ __volatile__ ("nop");
-			__asm__ __volatile__ ("nop");
-			B_HI_1();
-			delay_us(1);
-		}
-		B_HI_0();
-		delay_us(1);
-		dis_gate_phb();		
-	}
 }
 
 void charger_test()
@@ -445,8 +385,9 @@ void charger_test()
 
 	if(cnt > 10)
 	{
-		start_phb();
-
+		start_pha();
+		delay_us(80);
+		stop_pha();
 		cnt = 0;
 	}
 
@@ -482,7 +423,7 @@ void init_charger()
 
 	// DAC1: Current setpoint (don't touch channel 2, beware: configuration registers are shared)
 	DAC1->MCR |= 0b011UL<<0 /*Channel 1: Connected to on-chip peripherals only, with buffer disabled*/;
-	CURRLIM_DAC = 250;
+	CURRLIM_DAC = 1500;
 	DAC1->CR |= 1UL<<0; // Enable channel 1
 
 	// Comparator 1: PHA current
@@ -548,8 +489,8 @@ void init_charger()
 	HRTIM_CHD.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
 
 	HRTIM_MASTER.MCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/;
-	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 1UL<<4 /*retrig*/;
-	HRTIM_CHD.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 1UL<<4 /*retrig*/;
+	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 0UL<<4 /*retrig*/ | 1UL<<18 /*reset or PER triggers update*/;
+	HRTIM_CHD.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 0UL<<4 /*retrig*/ | 1UL<<18 /*reset or PER triggers update*/;
 
 	/*
 		The event mapping documentation is completely fucked up by random
@@ -561,6 +502,18 @@ void init_charger()
 	HRTIM.EECR2 =
 		1UL<<0 /*EEV6 source*/ | EV_ACTIVEHI<<2 | EV_LEVEL<<3 |
 		1UL<<6 /*EEV7 source*/ | EV_ACTIVEHI<<8 | EV_LEVEL<<9;
+
+// 0: no filter
+// 1: 2 samples - 5ns extra latency
+// 2: 4 samples - 10ns extra latency
+// 3: 8 samples - 20ns extra latency
+#define COMP_DIGITAL_FILTER 3
+#if COMP_DIGITAL_FILTER < 0 || COMP_DIGITAL_FILTER > 3
+#error Invalid COMP_DIGITAL_FILTER
+#endif
+
+	HRTIM.EECR3 = COMP_DIGITAL_FILTER<<6 /*EEV7*/ | COMP_DIGITAL_FILTER /*EEV6*/;
+//	HRTIM.EEFxR = 0b0001UL<<1 /*EEV6 filter: blanking from reset to CMP1 (of our own unit)*/;
 
 	HRTIM_CHE.OUTxR =
 		0b10UL<<20 /*OUT2 inactive in fault*/ | 0UL<<19 /*OUT2 inactive in idle*/ |
@@ -575,9 +528,9 @@ void init_charger()
 		1UL<<8 /*Deadtime enable - OUT2 commands ignored, OUT1 is in command*/;
 
 
-	// Confusion warning: RST1R is _output_ turn-off register. RSTR is counter reset register
+	// Confusion warning: RSTx1R is _output_ turn-off register. RSTxR is _counter_ reset register
 	HRTIM_CHE.SETx1R = 1UL<<26 /*EEV6*/;  // Overcurrent turns on bottom FET
-	HRTIM_CHE.RSTxR  = 1UL<<14 /*EEV6*/;  // Overcurrent resets the offtime counter
+	HRTIM_CHE.RSTxR  = 1UL<<14 /*EEV6*/;  // Overcurrent resets (i.e., starts) the offtime counter
 	HRTIM_CHE.PERxR  = INITIAL_OFFTIME/2.5;
 	HRTIM_CHE.RSTx1R = 1UL<<2 /*PER (of CHE)*/; // turn current-increasing
 
@@ -608,9 +561,8 @@ void init_charger()
 //	NVIC_EnableIRQ(HRTIM1_TIMD_IRQn);
 
 
-
 	// Output enables - aka RUN:
-	HRTIM.OENR = 0b11UL<<8 /*CHE*/ | 0b11UL<<6 /*CHD*/;
+//	HRTIM.OENR = 0b11UL<<8 /*CHE*/ | 0b11UL<<6 /*CHD*/;
 
 //	HRTIM_CHE.PERxR = CHARGER_OFFTIME;  // PHA = CHE
 //	HRTIM_CHD.PERxR = CHARGER_OFFTIME;
