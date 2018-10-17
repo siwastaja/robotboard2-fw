@@ -99,6 +99,15 @@ void delay_us(uint32_t i)
 		__asm__ __volatile__ ("nop");
 }
 
+void delay_tenth_us(uint32_t i) __attribute__((section(".text_itcm")));
+void delay_tenth_us(uint32_t i)
+{
+	i *= 10;
+	i -= 7;
+	while(i--)
+		__asm__ __volatile__ ("nop");
+}
+
 void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
 void delay_ms(uint32_t i)
 {

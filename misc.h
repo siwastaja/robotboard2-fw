@@ -7,6 +7,7 @@
 
 void error(int code);
 void delay_us(uint32_t i) __attribute__((section(".text_itcm")));
+void delay_tenth_us(uint32_t i) __attribute__((section(".text_itcm")));
 void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
 
 // Priority 0 is the highest quick-safety-shutdown level which won't be disabled for atomic operations.

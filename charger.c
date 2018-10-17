@@ -415,7 +415,6 @@ PHB:         ---------_---------_---------_
 #define INITIAL_DUTY_OFF 800
 #define INITIAL_DUTY_ON  400
 
-#define ADC_TRIGGER_DELAY 50
 
 // Gives the ontime
 #define CALC_DUTY() (  ((PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas))) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas))  )
@@ -437,8 +436,19 @@ int calc_check_offtime()
 	return new_offtime;
 }
 
-#define SET_OFFTIME_PHA(x_) do{HRTIM_CHE.CMP1xR = (x_); HRTIM_CHE.CMP2xR = (x_)+ADC_TRIGGER_DELAY; }while(0)
-#define SET_OFFTIME_PHB(x_) do{HRTIM_CHD.CMP1xR = (x_); HRTIM_CHD.CMP2xR = (x_)+ADC_TRIGGER_DELAY; }while(0)
+/*
+	ADC trigger happens 900ns/2 (360units/2), ie. 180 units before the on-time midpoint.
+
+	Off-time is first in HRTIM cycle.
+	On-time starts at CMP1 (SET_OFFTIME argument value)
+	On-time lasts for PERIOD-offtime
+	On-time halfway is at offtime + (PERIOD-offtime)/2
+	ADC trigger is at offtime + (PERIOD-offtime)/2 - 180
+
+*/
+
+#define SET_OFFTIME_PHA(x_) do{HRTIM_CHE.CMP1xR = (x_); HRTIM_CHE.CMP2xR = (x_) + (PERIOD-(x_))/2 - 180;}while(0)
+#define SET_OFFTIME_PHB(x_) do{HRTIM_CHD.CMP1xR = (x_); HRTIM_CHD.CMP2xR = (x_) + (PERIOD-(x_))/2 - 180;}while(0)
 
 volatile int phase;
 
@@ -447,10 +457,16 @@ volatile int interrupt_count;
 
 volatile int latest_cur_pha, latest_cur_phb;
 
+#define TRACE_LEN 32
+volatile int traces[2][TRACE_LEN];
+volatile int trace_at;
+
 void charger_adc2_inthandler() __attribute__((section(".text_itcm")));
 void charger_adc2_inthandler()
 {
+	LED_ON();
 	interrupt_count++;
+#if 0
 	if((ADC1->ISR & (1UL<<4)) || (ADC2->ISR & (1UL<<4)) )
 	{
 		// Overrun is the only real error condition
@@ -482,23 +498,31 @@ void charger_adc2_inthandler()
 		uart_print_string_blocking("\r\nADC2 intflags = "); o_btoa16_fixed(ADC2->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		error(15);
 	}
-	
+#endif	
 	int32_t cur = ADC2->DR;
+
+	int vratio_offtime = calc_check_offtime();
 
 	if(phase == 0)
 	{
+#if 0
 		if(ADC2->ISR & 1UL<<3)
 		{
 			charger_safety_shutdown();
 			uart_print_string_blocking("\r\nphase variable disagrees with End-of-Sequence flag: phase==0\r\n");
 			error(15);
 		}
+#endif
 
-		latest_cur_pha = cur;
+		SET_OFFTIME_PHA(vratio_offtime);
+
+//		latest_cur_pha = cur;
+//		traces[0][trace_at] = cur;
 		phase = 1;
 	}
 	else
 	{
+#if 0
 		if(! (ADC2->ISR & 1UL<<3))
 		{
 			charger_safety_shutdown();
@@ -506,7 +530,13 @@ void charger_adc2_inthandler()
 			error(15);
 		}
 
-		latest_cur_phb = cur;
+#endif
+		SET_OFFTIME_PHB(vratio_offtime);
+
+//		latest_cur_phb = cur;
+//		traces[1][trace_at] = cur;
+//		if(trace_at < TRACE_LEN-1)
+//			trace_at++;
 
 		phase = 0;
 		ADC2->ISR = 1UL<<3; // Clear the end-of-seq flag: it's used in failure diagnostics.
@@ -544,6 +574,8 @@ void charger_adc2_inthandler()
 	o_itoa32(cmp_for_expected_duty, printbuf); uart_print_string_blocking(printbuf);
 */
 //	HRTIM_CHE.CMP1xR = cmp_for_expected_duty;
+
+	LED_OFF();
 
 }
 
@@ -652,8 +684,24 @@ void charger_test()
 	if(cnt==10)
 	{
 		start_phab();
-		delay_us(100);
+		delay_us(20);
 		stop_phab();
+
+		uart_print_string_blocking("\r\n\r\ncur_a_raw,cur_b_raw,cur_a_ma,cur_b_ma\r\n");
+		int end = trace_at;
+		for(int i=0; i<end; i++)
+		{
+			o_itoa32(traces[0][i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(",");
+			o_itoa32(traces[1][i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(",");
+			o_itoa32(ADC_TO_MA(traces[0][i]), printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(",");
+			o_itoa32(ADC_TO_MA(traces[1][i]), printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking("\r\n");
+		}
+		uart_print_string_blocking("\r\n");
+
 		cnt = 0;
 	}
 
@@ -682,6 +730,7 @@ void init_charger()
 
 }
 
+void start_phab() __attribute__((section(".text_itcm")));
 void start_phab()
 {
 	start_pump();
@@ -910,26 +959,29 @@ void start_phab()
 	HRTIM_CHE.SETx1R |= 1UL; // Software preposition the lofet on.
 	HRTIM_CHD.SETx1R |= 1UL; // Software preposition the lofet on.
 	DIS_IRQ();
-	HRTIM_OUTEN_PHA();
-	HRTIM_OUTEN_PHB();
 	HRTIM_MASTER.MCNTR = PERIOD-1; // Make the master wrap around almost instantly.
 
 //	HRTIM.CR2 = 1UL<<5 /*SW update CHE for the new CMPs*/ | 1UL<<4 /*same for CHD*/ |
 //	            0UL<<8 /* SW reset MASTER*/ | 1UL<<13 /*SW reset CHE*/ | 1UL<<12 /*SW reset CHD*/;
 
+	HRTIM_OUTEN_PHA();
 	HRTIM.CR2 = 0b11111100111111UL; // Force software update on all timers & reset counters.
 	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/ | 1UL<<20 /*Enable CHD*/ | 1UL<<16 /*Enable MASTER*/;
-	ENA_IRQ();
+	delay_tenth_us(27); //finetuned for exact 1.5us delay for the first cycle
+	HRTIM_OUTEN_PHB();
+//	HRTIM_MASTER.MCR |= 1UL<<20 /*Enable CHD*/;
 	// To the shadow registers, applies to the next cycle:
 	SET_OFFTIME_PHA(actual_second_offtime);
+	delay_tenth_us(8); //finetuned so that register update doesn't happen at CHD reset, which happens during this wait. Tested: "1" not enough, "2" is enough.
 	SET_OFFTIME_PHB(actual_second_offtime);
-	phase = 0;
-
 	ENA_IRQ();
+	phase = 0;
+	trace_at = 0;
 
 }
 
 
+void stop_phab() __attribute__((section(".text_itcm")));
 void stop_phab()
 {
 	HRTIM_OUTDIS_PHA();

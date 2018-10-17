@@ -276,8 +276,17 @@ void init_adc2()
 void deinit_adc2()
 {
 	ADC2->IER = 0;
+
+	int timeout = 100;
+	ADC2->CR |= 1UL<<4;
+	while(ADC2->CR & (1UL<<4))
+	{
+		if(--timeout == 0)
+			error(8);
+	}
+
+	timeout = 100;
 	ADC2->CR |= 1UL<<1;
-	int timeout = 100; // test result: usually 2 not enough, 10 is enough; BUT sometimes even 50 not enough. TODO: Increase even from 100, after verified no stops at 100.
 	while(ADC2->CR & (1UL<<1))
 	{
 		if(--timeout == 0)
