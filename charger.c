@@ -162,6 +162,10 @@ uint16_t charger_offtime = INITIAL_OFFTIME/2.5;
 
 #define ADC_TO_MA(x_) ((x_)*269/1000)
 
+void start_phab();
+void stop_phab();
+
+
 
 static char printbuf[128];
 
@@ -246,21 +250,33 @@ void charger_safety_errhandler()
 	error(15);
 }
 
-
+volatile int run_pump = 0;
 void charger_10khz()
 {
 	static int cnt = 0;
 	cnt++;
 
+	// Keep the charge pump running whenever enabled, and the Vin is at least 500mV below the Vinbus
 	if(cnt&1)
-		infet_chargepump_0();
-	else
 	{
-		// Keep the charge pump running whenever the Vin is at least 500mV below the Vinbus
-		if(CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas) > CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas)-500)
-			infet_chargepump_1();
+		infet_chargepump_0();
 	}
+	else if( run_pump && 
+	         (CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas) > CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas)-500) )
+	{
+		infet_chargepump_1();
+	}
+}
 
+void stop_pump()
+{
+	run_pump = 0;
+	infet_chargepump_0();
+}
+
+void start_pump()
+{
+	run_pump = 1;
 }
 
 
@@ -426,65 +442,6 @@ int calc_check_offtime()
 
 volatile int phase;
 
-void start_phab()
-{
-//	en_gate_pha();
-	delay_us(500);
-
-	// Based on input/output voltages, calculate the duty (offtime actually) we want to have:
-	int desired_offtime = calc_check_offtime();
-	int actual_first_offtime, actual_second_offtime;
-
-	// Now, the chances are, we need a longer offtime for the very first cycle to charge the bootstrap capacitor properly:
-	if(desired_offtime >= INITIAL_DUTY_OFF)
-	{
-		// The desired offtime is acceptable as is:
-		actual_first_offtime = actual_second_offtime = desired_offtime;
-	}
-	else
-	{
-		// Use the longer-than-desired offtime.
-		actual_first_offtime = INITIAL_DUTY_OFF;
-		// To compensate for the stored energy in the inductor, i.e., to get a net neutral magnetic field after two cycles,
-		// the next cycle would have shorter-than-desired offtime.
-		// Example: Desired 700, must have 800 first --> actual_first = 800. Actual second = 600. Average 700.
-		actual_second_offtime = desired_offtime - (INITIAL_DUTY_OFF - desired_offtime);
-
-		// This can easily go below the minimum offtime allowed, or even below zero. In this case, we can't compensate for it in
-		// one cycle. Saturate it to the acceptable minimum, and let the ISR do its feedback magic.
-		if(actual_second_offtime < MAX_DUTY_OFF)
-			actual_second_offtime = MAX_DUTY_OFF;
-	}
-
-	DIS_IRQ();
-
-//	SET_OFFTIME_PHA(actual_first_offtime);
-//	SET_OFFTIME_PHB(actual_first_offtime);
-
-	HRTIM_CHE.CMP1xR = 800;
-
-	__DSB();
-	HRTIM.CR2 = 1UL<<5 /*SW update CHE for the new CMPs*/ | 1UL<<4 /*same for CHD*/ |
-	            1UL<<8 /* SW reset MASTER*/ | 1UL<<13 /*SW reset CHE*/ | 1UL<<12 /*SW reset CHD*/;
-	__DSB();
-	__asm__ __volatile__ ("nop");
-	__asm__ __volatile__ ("nop");
-	__asm__ __volatile__ ("nop");
-	HRTIM_CHE.SETx1R |= 1UL; // Software preposition the lofet on.
-	HRTIM_CHD.SETx1R |= 1UL; // Software preposition the lofet on.
-	__DSB();
-	HRTIM_OUTEN_PHA();
-	HRTIM_OUTEN_PHB();
-
-	// To the shadow registers, applies to the next cycle:
-//	SET_OFFTIME_PHA(actual_second_offtime);
-//	SET_OFFTIME_PHB(actual_second_offtime);
-	phase = 0;
-	ADC2->CR |= 1UL<<2; // Start ADC
-
-	ENA_IRQ();
-}
-
 volatile int32_t current_setpoint = 100;
 volatile int interrupt_count;
 
@@ -588,29 +545,6 @@ void charger_adc2_inthandler()
 */
 //	HRTIM_CHE.CMP1xR = cmp_for_expected_duty;
 
-}
-
-void stop_phab()
-{
-	HRTIM_OUTDIS_PHA();
-	HRTIM_OUTDIS_PHB();
-	dis_gate_pha();
-	dis_gate_phb();
-	ADC2->CR |= 1UL<<4; // Stop ADC, resetting its sequencer's state.
-
-	// Poll until stop is confirmed.
-	int timeout = 1000;
-	while(ADC2->CR & (1UL<<4))
-	{
-		if(--timeout == 0)
-		{
-			error(18);
-		}
-	}
-
-	// Now, it is safe to restart the ADC (by calling start_phab).
-
-//	HRTIM_CHE.TIMxDIER = 0;
 }
 
 void charger_test()
@@ -727,18 +661,8 @@ void charger_test()
 
 }
 
-
 void init_charger()
 {
-
-	RCC->CFGR |= 1UL<<14; // Use CPU clock (400MHz) as HRTIM clock.
-	__DSB();
-
-	RCC->APB2ENR  |= 1UL<<29; // Enable HRTIM clock
-	RCC->APB4ENR  |= 1UL<<14; // Enable COMP1,2 clock
-	RCC->APB1LENR |= 1UL<<29; // Enable DAC1,2 clock. Only DAC1 is used by us; DAC2 may be used by others (audio 
-				  // when writing this comment)
-	
 	dis_gate_pha();
 	dis_gate_phb();
 	IO_TO_GPO(GPIOG, 0);
@@ -750,8 +674,26 @@ void init_charger()
 	pulseout_0();
 	IO_TO_GPO(GPIOE, 11);
 
+	while(1)
+	{
 
-	// We expect that the ADC is already configured.
+		charger_test();
+	}
+
+}
+
+void start_phab()
+{
+	start_pump();
+
+	RCC->CFGR |= 1UL<<14; // Use CPU clock (400MHz) as HRTIM clock.
+	__DSB();
+
+	RCC->APB2ENR  |= 1UL<<29; // Enable HRTIM clock
+	RCC->APB4ENR  |= 1UL<<14; // Enable COMP1,2 clock
+	RCC->APB1LENR |= 1UL<<29; // Enable DAC1,2 clock. Only DAC1 is used by us; DAC2 may be used by others (audio 
+				  // when writing this comment)
+	
 
 	// DAC1: Current setpoint (don't touch channel 2, beware: configuration registers are shared)
 	DAC1->MCR |= 0b011UL<<0 /*Channel 1: Connected to on-chip peripherals only, with buffer disabled*/;
@@ -765,6 +707,7 @@ void init_charger()
 	// Comparator 2: PHB current
 	COMP2->CFGR = 0UL<<24 /*blanking source*/ | 0UL<<20 /*in+ = PE9*/ | 0b100UL<<16 /*in- = DAC1*/ |
 		CHARGER_CURRENT_COMPARATOR_HYSTERESIS<<8 | 1UL /* enable the thing!*/;
+
 
 	// The HRTIM peripheral controls the gate signals:
 /*
@@ -869,18 +812,16 @@ void init_charger()
 
 	// Confusion warning: RSTx1R is _output_ turn-off register. RSTxR is _counter_ reset register
 
-	HRTIM_MASTER.MPER   = 3000.0/2.5;
-	HRTIM_MASTER.MCMP1R = 1500.0/2.5;
+	HRTIM_MASTER.MPER   = PERIOD;
+	HRTIM_MASTER.MCMP1R = PERIOD/2;
 
-	HRTIM_CHE.PERxR  = 3000.0/2.5;
-	HRTIM_CHE.CMP1xR = 800.0/2.5;
+	HRTIM_CHE.PERxR  = PERIOD;
 	HRTIM_CHE.SETx1R = 1UL<<26 /*EEV6 (overcurr)*/ | 1UL<<7 /*MASTER PER*/;  // turns on bottom FET -> current starts decresing
 	HRTIM_CHE.RSTxR  = 1UL<<4 /*MASTER PER*/;
 	HRTIM_CHE.RSTx1R = 1UL<<3 /*CMP1*/;  // CMP1 turns off bottom FET -> current starts increasing
 
 	
-	HRTIM_CHD.PERxR  = 3000.0/2.5;
-	HRTIM_CHD.CMP1xR = 800.0/2.5;
+	HRTIM_CHD.PERxR  = PERIOD;
 	HRTIM_CHD.SETx1R = 1UL<<27 /*EEV7 (overcurr)*/ | 1UL<<8 /*MASTER CMP1*/;  // turns on bottom FET -> current starts decresing
 	HRTIM_CHD.RSTxR  = 1UL<<5 /*MASTER CMP1*/;
 	HRTIM_CHD.RSTx1R = 1UL<<3 /*CMP1*/;  // CMP1 turns off bottom FET -> current starts increasing
@@ -900,33 +841,99 @@ void init_charger()
 	IO_ALTFUNC(GPIOA, 11,  2); // CHD1: PHB LOFET
 	IO_ALTFUNC(GPIOA, 12,  2); // CHD2: PHB HIFET
 
+	/*
+
+		Tested no-gap end-to-end inits and deinits of ADC2 just to be sure it wakes up after a deinit without extra delay needed:
+
+		init_adc2();
+		deinit_adc2();
+		init_adc2();
+		deinit_adc2();
+		init_adc2();
+
+		Test OK.
+	*/
+
+	init_adc2();
+
+
+//	NVIC_SetPriority(HRTIM1_TIME_IRQn, 2);
+//	NVIC_EnableIRQ(HRTIM1_TIME_IRQn);
+
+	/*
+		"How long it takes from the start_pump(), until Vinbus rises to Vin?"
+		Test results:
+		cha_vinbus_meas0 = 18968 (before)
+		cha_vinbus_meas1 = 19484 (after full init, incl. ADC2 calibration)
+		cha_vinbus_meas2 = 19466 (after 500us extra)
+		cha_vinbus_meas3 = 19470 (500 us more)
+		cha_vinbus_meas4 = 19470 (500 us more)
+		cha_vinbus_meas5 = 19470 (500 us more)
+		cha_vinbus_meas6 = 19448 (5000 us more)
+
+		-> the ADC init itself is enough
+		-> there is no massive harm done even if it's too quick - the initial duty is
+		   calculated slightly wrong.
+
+	*/
+
+	// Based on input/output voltages, calculate the duty (offtime actually) we want to have:
+	int desired_offtime = calc_check_offtime();
+	int actual_first_offtime, actual_second_offtime;
+
+	// Now, the chances are, we need a longer offtime for the very first cycle to charge the bootstrap capacitor properly:
+	if(desired_offtime >= INITIAL_DUTY_OFF)
+	{
+		// The desired offtime is acceptable as is:
+		actual_first_offtime = actual_second_offtime = desired_offtime;
+	}
+	else
+	{
+		// Use the longer-than-desired offtime.
+		actual_first_offtime = INITIAL_DUTY_OFF;
+		// To compensate for the stored energy in the inductor, i.e., to get a net neutral magnetic field after two cycles,
+		// the next cycle would have shorter-than-desired offtime.
+		// Example: Desired 700, must have 800 first --> actual_first = 800. Actual second = 600. Average 700.
+		actual_second_offtime = desired_offtime - (INITIAL_DUTY_OFF - desired_offtime);
+
+		// This can easily go below the minimum offtime allowed, or even below zero. In this case, we can't compensate for it in
+		// one cycle. Saturate it to the acceptable minimum, and let the ISR do its feedback magic.
+		if(actual_second_offtime < MAX_DUTY_OFF)
+			actual_second_offtime = MAX_DUTY_OFF;
+	}
+
+	SET_OFFTIME_PHA(actual_first_offtime);
+	SET_OFFTIME_PHB(actual_first_offtime);
+
+
+
+	HRTIM_CHE.SETx1R |= 1UL; // Software preposition the lofet on.
+	HRTIM_CHD.SETx1R |= 1UL; // Software preposition the lofet on.
+	DIS_IRQ();
+	HRTIM_OUTEN_PHA();
+	HRTIM_OUTEN_PHB();
+	HRTIM_MASTER.MCNTR = PERIOD-1; // Make the master wrap around almost instantly.
+
+//	HRTIM.CR2 = 1UL<<5 /*SW update CHE for the new CMPs*/ | 1UL<<4 /*same for CHD*/ |
+//	            0UL<<8 /* SW reset MASTER*/ | 1UL<<13 /*SW reset CHE*/ | 1UL<<12 /*SW reset CHD*/;
 
 	HRTIM.CR2 = 0b11111100111111UL; // Force software update on all timers & reset counters.
 	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/ | 1UL<<20 /*Enable CHD*/ | 1UL<<16 /*Enable MASTER*/;
+	ENA_IRQ();
+	// To the shadow registers, applies to the next cycle:
+	SET_OFFTIME_PHA(actual_second_offtime);
+	SET_OFFTIME_PHB(actual_second_offtime);
+	phase = 0;
 
-
-	NVIC_SetPriority(HRTIM1_TIME_IRQn, 2);
-//	NVIC_EnableIRQ(HRTIM1_TIME_IRQn);
-
-
-	// Output enables - aka RUN:
-//	HRTIM.OENR = 0b11UL<<8 /*CHE*/ | 0b11UL<<6 /*CHD*/;
-
-//	HRTIM_CHE.PERxR = CHARGER_OFFTIME;  // PHA = CHE
-//	HRTIM_CHD.PERxR = CHARGER_OFFTIME;
-
-
-
-	while(1)
-	{
-
-		charger_test();
-	}
+	ENA_IRQ();
 
 }
 
-void deinit_charger()
+
+void stop_phab()
 {
+	HRTIM_OUTDIS_PHA();
+	HRTIM_OUTDIS_PHB();
 	dis_gate_pha();
 	dis_gate_phb();
 	infet_chargepump_0();
@@ -938,14 +945,28 @@ void deinit_charger()
 	IO_TO_GPI(GPIOA, 11);
 	IO_TO_GPI(GPIOA, 12);
 
+	deinit_adc2();
+
 	COMP1->CFGR = 0;
 	COMP2->CFGR = 0;
 
 	DAC1->CR &= ~(1UL<<0); // Disable DAC channel 1, without touching channel 2
+
+	// Reset HRTIM:
+	RCC->APB2RSTR = (1UL<<29);
+	__DSB();
+	RCC->APB2RSTR = 0;
+
+	// Reset COMPs:
+	RCC->APB4RSTR = (1UL<<14);
+	__DSB();
+	RCC->APB4RSTR = 0;
 
 	RCC->APB2ENR &= ~(1UL<<29); // HRTIM clock
 	RCC->APB4ENR &= ~(1UL<<14); // COMP1,2 clock
 	// We won't turn the DACs off due to other uses for DAC2.
 
 }
+
+
 

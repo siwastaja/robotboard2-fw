@@ -305,4 +305,7 @@ extern const char* const adc3_names[ADC3_SEQ_LEN];
 
 
 void init_adcs();
+void init_adc2();
+void deinit_adc2();
+
 

@@ -236,6 +236,60 @@ void adc_test()
 	delay_ms(100);
 }
 
+// assuming init_adcs() has been done
+void init_adc2()
+{
+	init_calib_adc(ADC2);
+	CONF_ADC_SEQ(ADC2, ADC2_SEQ_LEN, ADC2_SEQ);
+	CONF_ADC_SMPTIMES(ADC2, ADC2_SMPTIMES);
+	ADC2->PCSEL = ADC2_CHANNELS_IN_USE;
+
+	ADC2->CFGR = 
+//		EN_AWD1 |
+//		AWD1_ON_SINGLE_CHAN |
+//		AWD1_CHAN(0) |
+//		CONTINUOUS |
+		TRIG_RISING |
+		TRIG_EVENT(0b10000) | // HRTIM_ADCTRG1
+		RESO_14B |
+		DISCON |
+		DISCLEN(ADC2_DISCONTINUOUS_GROUP_LEN);
+//		DMA_CIRCULAR;
+
+	ADC2->CFGR2 = (3UL/*oversampling ratio*/   -1UL)<<16 | 1UL /*enable oversampling*/;
+
+	// Analog watchdog 2 enabled on channels (bit index = channel number):
+	ADC2->AWD2CR = 0; 
+	ADC2->LTR2 = 0;
+	ADC2->HTR2 = 65535;
+
+	ADC2->AWD3CR = 0; 
+	ADC2->LTR3 = 0;
+	ADC2->HTR3 = 65535;
+
+	ADC2->IER = 1UL<<4 /*overrun*/ | 1UL<<2 /*end of conversion*/;
+
+	__DSB();
+	ADC2->CR |= ADSTART;
+}
+
+void deinit_adc2()
+{
+	ADC2->IER = 0;
+	ADC2->CR |= 1UL<<1;
+	int timeout = 100; // test result: usually 2 not enough, 10 is enough; BUT sometimes even 50 not enough. TODO: Increase even from 100, after verified no stops at 100.
+	while(ADC2->CR & (1UL<<1))
+	{
+		if(--timeout == 0)
+			error(9);
+	}
+
+	ADC2->CFGR = 0x80000000; // important, otherwise the next init fails (tested).
+	ADC2->CFGR2 = 0;
+	ADC2->PCSEL = 0;
+	ADC2->CR = 0x20000000; // Reset value per manual - deep powerdown on.
+}
+
 void init_adcs()
 {
 
@@ -316,36 +370,6 @@ void init_adcs()
 	NVIC_SetPriority(ADC1_DMA_STREAM_IRQ, 1);
 	NVIC_EnableIRQ(ADC1_DMA_STREAM_IRQ);
 
-	init_calib_adc(ADC2);
-	CONF_ADC_SEQ(ADC2, ADC2_SEQ_LEN, ADC2_SEQ);
-	CONF_ADC_SMPTIMES(ADC2, ADC2_SMPTIMES);
-	ADC2->PCSEL = ADC2_CHANNELS_IN_USE;
-
-	ADC2->CFGR = 
-//		EN_AWD1 |
-//		AWD1_ON_SINGLE_CHAN |
-//		AWD1_CHAN(0) |
-//		CONTINUOUS |
-		TRIG_RISING |
-		TRIG_EVENT(0b10000) | // HRTIM_ADCTRG1
-		RESO_14B |
-		DISCON |
-		DISCLEN(ADC2_DISCONTINUOUS_GROUP_LEN);
-//		DMA_CIRCULAR;
-
-	ADC2->CFGR2 = (3UL/*oversampling ratio*/   -1UL)<<16 | 1UL /*enable oversampling*/;
-
-	// Analog watchdog 2 enabled on channels (bit index = channel number):
-	ADC2->AWD2CR = 0; 
-	ADC2->LTR2 = 0;
-	ADC2->HTR2 = 65535;
-
-	ADC2->AWD3CR = 0; 
-	ADC2->LTR3 = 0;
-	ADC2->HTR3 = 65535;
-
-	ADC2->IER = 1UL<<4 /*overrun*/ | 1UL<<2 /*end of conversion*/;
-
 	NVIC_SetPriority(ADC_IRQn, 1);
 	NVIC_EnableIRQ(ADC_IRQn);
 
@@ -399,20 +423,6 @@ void init_adcs()
 	ADC1_DMA_STREAM->CR |= 1UL;
 	__DSB();
 	ADC1->CR |= ADSTART;
-
-#if 0
-	ADC2_DMA_STREAM->M0AR = (uint32_t)&adc2.b[0];
-	ADC2_DMA_STREAM->PAR = (uint32_t)&ADC2->DR;
-	ADC2_DMA_STREAM->NDTR = ADC2_SEQ_LEN;
-	ADC2_DMA_STREAM->CR =
-		0b01UL<<16 /*med prio*/ | 0b01UL<<13 /*16-bit mem*/ | 0b01UL<<11 /*16-bit periph*/ |
-		1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/ | 0b110 /*err interrupts*/ | 1UL<<8 /*circular*/;
-	ADC2_DMAMUX();
-	DMA_CLEAR_INTFLAGS(ADC2_DMA, ADC2_DMA_STREAM_NUM);
-	ADC2_DMA_STREAM->CR |= 1UL;
-	__DSB();
-#endif
-	ADC2->CR |= ADSTART;
 
 	ADC3_DMA_STREAM->M0AR = (uint32_t)&adc3.b[0];
 	ADC3_DMA_STREAM->PAR = (uint32_t)&ADC3->DR;
