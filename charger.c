@@ -154,17 +154,18 @@ uint16_t charger_offtime = INITIAL_OFFTIME/2.5;
 
 /*
 	Current ADC (14-bit): 1 LSB = 0.806mA
+	Current ADC (14-bit, oversampled by 3x): 1 LSB = 0.269mA
 	Current limit DAC (12-bit) 1 LSB = 3.223 mA
 
 */
 #define CURRLIM_DAC DAC1->DHR12R1
 
-#define ADC_TO_MA(x_) ((x_)*806/1000)
+#define ADC_TO_MA(x_) ((x_)*269/1000)
 
 
 static char printbuf[128];
 
-void charger_safety_errhandler()
+void charger_safety_shutdown()
 {
 	dis_gate_pha();
 	dis_gate_phb();
@@ -175,6 +176,11 @@ void charger_safety_errhandler()
 	IO_TO_GPO(GPIOE, 10);
 
 	HRTIM.OENR = 0;
+}
+
+void charger_safety_errhandler()
+{
+	charger_safety_shutdown();
 
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
@@ -308,10 +314,10 @@ void charger_10khz()
 
 */
 
-#define HRTIM_RUN_PHA()  do{HRTIM.OENR  = 0b11UL<<8;}while(0)
-#define HRTIM_STOP_PHA() do{HRTIM.ODISR = 0b11UL<<8;}while(0)
-#define HRTIM_RUN_PHB()  do{HRTIM.OENR  = 0b11UL<<6;}while(0)
-#define HRTIM_STOP_PHB() do{HRTIM.ODISR = 0b11UL<<6;}while(0)
+#define HRTIM_OUTEN_PHA()  do{HRTIM.OENR  = 0b11UL<<8;}while(0)
+#define HRTIM_OUTDIS_PHA() do{HRTIM.ODISR = 0b11UL<<8;}while(0)
+#define HRTIM_OUTEN_PHB()  do{HRTIM.OENR  = 0b11UL<<6;}while(0)
+#define HRTIM_OUTDIS_PHB() do{HRTIM.ODISR = 0b11UL<<6;}while(0)
 
 /*
 	HRTIM errata:
@@ -319,58 +325,255 @@ void charger_10khz()
 
 */
 
+/*
+
+	Charger fsw = 333.3kHz
+	Charger period = 3 us (1200 units)
+	Min duty cycle is 16V/52V = 31%
+	Max duty cycle is 25.2V/33V = 76%
+
+	Actual duty cycle is always more (current driven into the battery, unidirectional losses)
+
+	-> min design duty cycle = 30% (on: 900ns (360 units), off: 2100ns (840 units))
+	-> max design duty cycle = 90% (on: 2700ns (1080 units), off: 300ns (120 units))
+
+	Duty cycles of the phases are tied together, with small variance allowed. If significant
+	deviation is seen, the converter is stopped. This guarantees the ADC triggers won't overlap,
+	simplifying the design, and also catches some unexpected errors.
+
+	3 ADC conversions fit in the minimum on-time of 900ns. The conversions are centered in the
+	middle of the on-time.
+
+
+1 character = 300ns (120 units)
+1 ADC conversion = 300ns (120 units)
+
+At min duty:
+PHA:    ---_______---_______---_______---__
+PHB:         ---_______---_______---_______
+ADC:    AAA..BBB..AAA..BBB..AAA..BBB..AAA..
+
+At max duty:
+PHA:    ---------_---------_---------_
+PHB:         ---------_---------_---------_
+           AAA..BBB..AAA..BBB..AAA..BBB..AAA..
+
+*/
+
+/*
+	These could be calculated automatically from floats, using nanoseconds conveniently, like
+	I did originally.
+	I feel that we keep a better grip of the actual resolution and the time steps doing it
+	with direct timer units.
+
+	1 unit = 2.5ns (timer runs at 400MHz)
+
+*/
+#define PERIOD       1200
+#define MAX_DUTY_ON  1080
+#define MAX_DUTY_OFF 120
+#define MIN_DUTY_ON  360
+#define MIN_DUTY_OFF 840
+
+/*
+	Maximum difference in duty cycles between the two phases allowed before erroring out.
+	This has to be small enough, because the ADC measurements are centered on the mid-ontime.
+	If the duty cycles are different, mid-on-time is different, ADCs are not triggered at equivalent
+	intervals. If the difference is massive, the ADC misses a trigger because it's still converting.
+	(There is 600ns free time between ADC conversions, so the actual difference allowed would be 1200ns,
+	minus safety margin)
+	But, even a much lower difference between the phases would signify strange issues.
+	This number is in the time units: it applies equally to either on-time or off-time, and both
+	as a negative and positive limit.
+*/
+#define MAX_PHASE_DIFFERENCE 100
+
+
+#if (    ((MAX_DUTY_ON + MAX_DUTY_OFF) != PERIOD) || ((MIN_DUTY_ON + MIN_DUTY_OFF) != PERIOD)      )
+#error Check duty cycle defines.
+#endif
+
 //uint16_t pha_duty = 
 
-void start_pha()
+// 2 us to charge the bootstrap capacitor properly
+#define INITIAL_DUTY_OFF 800
+#define INITIAL_DUTY_ON  400
+
+#define ADC_TRIGGER_DELAY 50
+
+// Gives the ontime
+#define CALC_DUTY() (  ((PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas))) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas))  )
+
+int calc_check_offtime()
 {
-	en_gate_pha();
+	int new_offtime = PERIOD - CALC_DUTY();
+	
+	if(new_offtime < MAX_DUTY_OFF || new_offtime > MIN_DUTY_OFF)
+	{
+		charger_safety_shutdown();
+
+		uart_print_string_blocking("\r\nSTOPPED: calculated offtime = "); o_itoa32(new_offtime, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+		error(5);
+		return 0;
+	}
+
+	return new_offtime;
+}
+
+#define SET_OFFTIME_PHA(x_) do{HRTIM_CHE.CMP1xR = (x_); HRTIM_CHE.CMP2xR = (x_)+ADC_TRIGGER_DELAY; }while(0)
+#define SET_OFFTIME_PHB(x_) do{HRTIM_CHD.CMP1xR = (x_); HRTIM_CHD.CMP2xR = (x_)+ADC_TRIGGER_DELAY; }while(0)
+
+volatile int phase;
+
+void start_phab()
+{
+//	en_gate_pha();
 	delay_us(500);
+
+	// Based on input/output voltages, calculate the duty (offtime actually) we want to have:
+	int desired_offtime = calc_check_offtime();
+	int actual_first_offtime, actual_second_offtime;
+
+	// Now, the chances are, we need a longer offtime for the very first cycle to charge the bootstrap capacitor properly:
+	if(desired_offtime >= INITIAL_DUTY_OFF)
+	{
+		// The desired offtime is acceptable as is:
+		actual_first_offtime = actual_second_offtime = desired_offtime;
+	}
+	else
+	{
+		// Use the longer-than-desired offtime.
+		actual_first_offtime = INITIAL_DUTY_OFF;
+		// To compensate for the stored energy in the inductor, i.e., to get a net neutral magnetic field after two cycles,
+		// the next cycle would have shorter-than-desired offtime.
+		// Example: Desired 700, must have 800 first --> actual_first = 800. Actual second = 600. Average 700.
+		actual_second_offtime = desired_offtime - (INITIAL_DUTY_OFF - desired_offtime);
+
+		// This can easily go below the minimum offtime allowed, or even below zero. In this case, we can't compensate for it in
+		// one cycle. Saturate it to the acceptable minimum, and let the ISR do its feedback magic.
+		if(actual_second_offtime < MAX_DUTY_OFF)
+			actual_second_offtime = MAX_DUTY_OFF;
+	}
+
 	DIS_IRQ();
-	HRTIM_CHE.CMP1xR = 2000.0/2.5; // 2us is needed to charge the bootstrap cap enough.
-	HRTIM_CHE.SETx1R |= 1UL; // Software preposition to lofet on.
-	HRTIM.CR2 = (1UL<<13) /* Software reset CHE */ | (1UL<<5) /*update (for the new CMP1)*/;
-	HRTIM_RUN_PHA();
-//	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/;
-	HRTIM_CHE.TIMxDIER = 1UL<<13; // Reset/rollover interrupt
+
+//	SET_OFFTIME_PHA(actual_first_offtime);
+//	SET_OFFTIME_PHB(actual_first_offtime);
+
+	HRTIM_CHE.CMP1xR = 800;
+
+	__DSB();
+	HRTIM.CR2 = 1UL<<5 /*SW update CHE for the new CMPs*/ | 1UL<<4 /*same for CHD*/ |
+	            1UL<<8 /* SW reset MASTER*/ | 1UL<<13 /*SW reset CHE*/ | 1UL<<12 /*SW reset CHD*/;
+	__DSB();
+	__asm__ __volatile__ ("nop");
+	__asm__ __volatile__ ("nop");
+	__asm__ __volatile__ ("nop");
+	HRTIM_CHE.SETx1R |= 1UL; // Software preposition the lofet on.
+	HRTIM_CHD.SETx1R |= 1UL; // Software preposition the lofet on.
+	__DSB();
+	HRTIM_OUTEN_PHA();
+	HRTIM_OUTEN_PHB();
+
+	// To the shadow registers, applies to the next cycle:
+//	SET_OFFTIME_PHA(actual_second_offtime);
+//	SET_OFFTIME_PHB(actual_second_offtime);
+	phase = 0;
+	ADC2->CR |= 1UL<<2; // Start ADC
+
 	ENA_IRQ();
 }
 
-#define PERIOD ((int)(3000.0/2.5))
-
 volatile int32_t current_setpoint = 100;
+volatile int interrupt_count;
 
-void charger_loop_inthandler() __attribute__((section(".text_itcm")));
-void charger_loop_inthandler()
+volatile int latest_cur_pha, latest_cur_phb;
+
+void charger_adc2_inthandler() __attribute__((section(".text_itcm")));
+void charger_adc2_inthandler()
 {
-	HRTIM_CHE.TIMxICR = 1UL<<13;
-	int32_t iset = current_setpoint;
+	interrupt_count++;
+	if((ADC1->ISR & (1UL<<4)) || (ADC2->ISR & (1UL<<4)) )
+	{
+		// Overrun is the only real error condition
+		charger_safety_shutdown();
+		error(20);
+	}
 
-	int32_t cmp_for_min_duty = PERIOD - 
-		( (PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas)-1000)) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas));
+	if(ADC1->ISR & (1UL<<7)) // ADC1 AWD1
+	{
+		charger_safety_shutdown();
+		uart_print_string_blocking("\r\nADC1 AWD1: Vbat out of range\r\n");
+		error(15);
+//		ADC1->ISR = 1UL<<7;	
+	}
 
-	int32_t cmp_for_max_duty = PERIOD - 
-		( (PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas)+2000)) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas));
+	if(ADC1->ISR & (1UL<<8)) // ADC1 AWD2
+	{
+		charger_safety_shutdown();
+		uart_print_string_blocking("\r\nADC1 AWD2: Charger Vinbus out of range\r\n");	
+		error(15);
+//		ADC1->ISR = 1UL<<8;
+	}
 
-	int32_t cmp_for_expected_duty = PERIOD - 
-		( (PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas)+100+(30*iset)/1000)) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas));
+	if(! (ADC2->ISR & (1UL<<2)/*data ready*/) )
+	{
+		charger_safety_shutdown();
+		uart_print_string_blocking("\r\nADC2 data not ready: Unhandled (unexpected) interrupt source from ADC1/ADC2!\r\n");	
+		uart_print_string_blocking("\r\nADC1 intflags = "); o_btoa16_fixed(ADC1->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("\r\nADC2 intflags = "); o_btoa16_fixed(ADC2->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		error(15);
+	}
+	
+	int32_t cur = ADC2->DR;
+
+	if(phase == 0)
+	{
+		if(ADC2->ISR & 1UL<<3)
+		{
+			charger_safety_shutdown();
+			uart_print_string_blocking("\r\nphase variable disagrees with End-of-Sequence flag: phase==0\r\n");
+			error(15);
+		}
+
+		latest_cur_pha = cur;
+		phase = 1;
+	}
+	else
+	{
+		if(! (ADC2->ISR & 1UL<<3))
+		{
+			charger_safety_shutdown();
+			uart_print_string_blocking("\r\nphase variable disagrees with End-of-Sequence flag: phase==1\r\n");
+			error(15);
+		}
+
+		latest_cur_phb = cur;
+
+		phase = 0;
+		ADC2->ISR = 1UL<<3; // Clear the end-of-seq flag: it's used in failure diagnostics.
+	}
+
+
+
+//	HRTIM_CHE.TIMxICR = 1UL<<13;
+
+//	int32_t iset = current_setpoint;
+
 
 	/*
 		The "theoretical" duty cycle can be calculated from the ratio of input and output voltage, and adding the
-		losses to the equation, the current can be modeled as an imaginary voltage offset on the output voltage.
+		losses to the equation, the current can be modeled as an imaginary duty cycle offset.
 
 		This cannot be, and doesn't need to be accurate. Typically, something like this isn't done /at all/; instead,
 		typically a dumb feedback loop is used. By using an approximation directly feedforwarded from both input and
 		output voltage, we are really close to the real duty cycle, and can feedback (using PI loop) a fine-tuning
 		parameter only!
-
-		The following offset for output voltage was tested on the prototype.
-		+100 = 0
-		each 30 units: 1A
-
 	*/
 
 
-	static int32_t finetune = 0;
+//	static int32_t finetune = 0;
 
 
 	
@@ -383,15 +586,31 @@ void charger_loop_inthandler()
 	uart_print_string_blocking("\r\ncmp_for_expected_duty = ");
 	o_itoa32(cmp_for_expected_duty, printbuf); uart_print_string_blocking(printbuf);
 */
-	HRTIM_CHE.CMP1xR = cmp_for_expected_duty;
+//	HRTIM_CHE.CMP1xR = cmp_for_expected_duty;
 
 }
 
-void stop_pha()
+void stop_phab()
 {
-	HRTIM_STOP_PHA();
+	HRTIM_OUTDIS_PHA();
+	HRTIM_OUTDIS_PHB();
 	dis_gate_pha();
-	HRTIM_CHE.TIMxDIER = 0;
+	dis_gate_phb();
+	ADC2->CR |= 1UL<<4; // Stop ADC, resetting its sequencer's state.
+
+	// Poll until stop is confirmed.
+	int timeout = 1000;
+	while(ADC2->CR & (1UL<<4))
+	{
+		if(--timeout == 0)
+		{
+			error(18);
+		}
+	}
+
+	// Now, it is safe to restart the ADC (by calling start_phab).
+
+//	HRTIM_CHE.TIMxDIER = 0;
 }
 
 void charger_test()
@@ -399,16 +618,19 @@ void charger_test()
 	static int cnt;
 	uart_print_string_blocking("\r\n\r\n");
 
+	int32_t ca = latest_cur_pha;
+	int32_t cb = latest_cur_phb;
+
 	uart_print_string_blocking("PHA curr = ");
-	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasa[0]), printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("  ");
-	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasa[1]), printbuf); uart_print_string_blocking(printbuf);
+	o_utoa16_fixed(ADC_TO_MA(ca), printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("  raw  ");
+	o_utoa16_fixed(ca, printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
 
 	uart_print_string_blocking("PHB curr = ");
-	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasb[0]), printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("  ");
-	o_utoa16_fixed(ADC_TO_MA(adc2.s.cha_currmeasb[1]), printbuf); uart_print_string_blocking(printbuf);
+	o_utoa16_fixed(ADC_TO_MA(cb), printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("  raw  ");
+	o_utoa16_fixed(cb, printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
 
 	uart_print_string_blocking("PHA COMP = ");
@@ -439,8 +661,13 @@ void charger_test()
 
 	uart_print_string_blocking("current_setpoint = ");
 	o_utoa32(current_setpoint, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("int_count = ");
+	o_utoa32(interrupt_count, printbuf); uart_print_string_blocking(printbuf);
 
 
+/*
 	uint8_t cmd = uart_input();
 	if(cmd == 'a')
 	{
@@ -483,9 +710,18 @@ void charger_test()
 		current_setpoint = 7000;
 	}
 
+*/
+
 
 	cnt++;
 
+	if(cnt==10)
+	{
+		start_phab();
+		delay_us(100);
+		stop_phab();
+		cnt = 0;
+	}
 
 	delay_ms(99);
 
@@ -591,9 +827,9 @@ void init_charger()
 	HRTIM_CHE.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
 	HRTIM_CHD.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
 
-	HRTIM_MASTER.MCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/;
-	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | CONT | 1UL<<18 /*reset or PER triggers update*/;
-	HRTIM_CHD.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | CONT | 1UL<<18 /*reset or PER triggers update*/;
+	HRTIM_MASTER.MCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | CONT | 1UL<<18 /*reset or PER triggers update*/;
+	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 1UL<<18 /*reset or PER triggers update*/;
+	HRTIM_CHD.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 1UL<<18 /*reset or PER triggers update*/;
 
 	/*
 		The event mapping documentation is completely fucked up by random
@@ -633,25 +869,30 @@ void init_charger()
 
 	// Confusion warning: RSTx1R is _output_ turn-off register. RSTxR is _counter_ reset register
 
+	HRTIM_MASTER.MPER   = 3000.0/2.5;
+	HRTIM_MASTER.MCMP1R = 1500.0/2.5;
+
 	HRTIM_CHE.PERxR  = 3000.0/2.5;
 	HRTIM_CHE.CMP1xR = 800.0/2.5;
-	HRTIM_CHE.SETx1R = 1UL<<26 /*EEV6 (overcurr)*/ | 1UL<<2 /*PER*/;  // Overcurrent or PERiod turns on bottom FET -> current starts decresing
+	HRTIM_CHE.SETx1R = 1UL<<26 /*EEV6 (overcurr)*/ | 1UL<<7 /*MASTER PER*/;  // turns on bottom FET -> current starts decresing
+	HRTIM_CHE.RSTxR  = 1UL<<4 /*MASTER PER*/;
 	HRTIM_CHE.RSTx1R = 1UL<<3 /*CMP1*/;  // CMP1 turns off bottom FET -> current starts increasing
 
 	
 	HRTIM_CHD.PERxR  = 3000.0/2.5;
 	HRTIM_CHD.CMP1xR = 800.0/2.5;
-	HRTIM_CHD.SETx1R = 1UL<<26 /*EEV6 (overcurr)*/ | 1UL<<2 /*PER*/;  // Overcurrent or PERiod turns on bottom FET -> current starts decresing
+	HRTIM_CHD.SETx1R = 1UL<<27 /*EEV7 (overcurr)*/ | 1UL<<8 /*MASTER CMP1*/;  // turns on bottom FET -> current starts decresing
+	HRTIM_CHD.RSTxR  = 1UL<<5 /*MASTER CMP1*/;
 	HRTIM_CHD.RSTx1R = 1UL<<3 /*CMP1*/;  // CMP1 turns off bottom FET -> current starts increasing
 
 
 
 
-	HRTIM_CHD.SETx1R = 1UL<<27 /*EEV7*/; // Overcurrent turns on bottom FET
-	HRTIM_CHD.RSTx1R = 1UL<<26 /*EEV6*/; // Overcurrent of the master phase turns off the bottom FET, starting current-increasing cycle on the slave phase
-	HRTIM_CHD.RSTxR  = 1UL<<15 /*EEV7*/; // Our own overcurrent also starts a backup safety off-time counter
-	HRTIM_CHD.PERxR  = SAFETY_MAX_OFFTIME_REG;
-	HRTIM_CHD.CMP1xR = SAFETY_MAX_OFFTIME_REG-1;
+//	HRTIM_CHD.SETx1R = 1UL<<27 /*EEV7*/; // Overcurrent turns on bottom FET
+//	HRTIM_CHD.RSTx1R = 1UL<<26 /*EEV6*/; // Overcurrent of the master phase turns off the bottom FET, starting current-increasing cycle on the slave phase
+//	HRTIM_CHD.RSTxR  = 1UL<<15 /*EEV7*/; // Our own overcurrent also starts a backup safety off-time counter
+//	HRTIM_CHD.PERxR  = SAFETY_MAX_OFFTIME_REG;
+//	HRTIM_CHD.CMP1xR = SAFETY_MAX_OFFTIME_REG-1;
 //	HRTIM_CHD.TIMxDIER = 1UL; // Compare 1 interrupt
 
 	IO_ALTFUNC(GPIOG,  6,  2); // CHE1: PHA LOFET
@@ -661,10 +902,11 @@ void init_charger()
 
 
 	HRTIM.CR2 = 0b11111100111111UL; // Force software update on all timers & reset counters.
-	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/;
+	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/ | 1UL<<20 /*Enable CHD*/ | 1UL<<16 /*Enable MASTER*/;
+
 
 	NVIC_SetPriority(HRTIM1_TIME_IRQn, 2);
-	NVIC_EnableIRQ(HRTIM1_TIME_IRQn);
+//	NVIC_EnableIRQ(HRTIM1_TIME_IRQn);
 
 
 	// Output enables - aka RUN:
@@ -672,6 +914,8 @@ void init_charger()
 
 //	HRTIM_CHE.PERxR = CHARGER_OFFTIME;  // PHA = CHE
 //	HRTIM_CHD.PERxR = CHARGER_OFFTIME;
+
+
 
 	while(1)
 	{

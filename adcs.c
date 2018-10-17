@@ -10,7 +10,7 @@
 static char printbuf[128];
 
 volatile adc1_group_t adc1 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
-volatile adc2_group_t adc2 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
+//volatile adc2_group_t adc2 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile adc3_group_t adc3 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 
 
@@ -215,6 +215,7 @@ void adc_test()
 		uart_print_string_blocking("\r\n");
 	}
 
+/*
 	uart_print_string_blocking("\r\nADC2:\r\n");
 	for(int i=0; i < ADC2_SEQ_LEN; i++)
 	{
@@ -223,7 +224,7 @@ void adc_test()
 		o_utoa16(adc2.b[i], printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking("\r\n");
 	}
-
+*/
 	uart_print_string_blocking("\r\nADC3:\r\n");
 	for(int i=0; i < ADC3_SEQ_LEN; i++)
 	{
@@ -329,8 +330,10 @@ void init_adcs()
 		TRIG_EVENT(0b10000) | // HRTIM_ADCTRG1
 		RESO_14B |
 		DISCON |
-		DISCLEN(ADC2_DISCONTINUOUS_GROUP_LEN) |
-		DMA_CIRCULAR;
+		DISCLEN(ADC2_DISCONTINUOUS_GROUP_LEN);
+//		DMA_CIRCULAR;
+
+	ADC2->CFGR2 = (3UL/*oversampling ratio*/   -1UL)<<16 | 1UL /*enable oversampling*/;
 
 	// Analog watchdog 2 enabled on channels (bit index = channel number):
 	ADC2->AWD2CR = 0; 
@@ -341,13 +344,13 @@ void init_adcs()
 	ADC2->LTR3 = 0;
 	ADC2->HTR3 = 65535;
 
-	ADC2->IER = 1UL<<4 /*overrun*/;
+	ADC2->IER = 1UL<<4 /*overrun*/ | 1UL<<2 /*end of conversion*/;
 
 	NVIC_SetPriority(ADC_IRQn, 1);
 	NVIC_EnableIRQ(ADC_IRQn);
 
-	NVIC_SetPriority(ADC2_DMA_STREAM_IRQ, 1);
-	NVIC_EnableIRQ(ADC2_DMA_STREAM_IRQ);
+//	NVIC_SetPriority(ADC2_DMA_STREAM_IRQ, 1);
+//	NVIC_EnableIRQ(ADC2_DMA_STREAM_IRQ);
 
 	
 
@@ -366,6 +369,7 @@ void init_adcs()
 		RESO_14B |
 //		DISCON |
 		DMA_CIRCULAR;
+
 
 	// Analog watchdog 2 enabled on channels (bit index = channel number):
 	ADC3->AWD2CR = 0; 
@@ -396,6 +400,7 @@ void init_adcs()
 	__DSB();
 	ADC1->CR |= ADSTART;
 
+#if 0
 	ADC2_DMA_STREAM->M0AR = (uint32_t)&adc2.b[0];
 	ADC2_DMA_STREAM->PAR = (uint32_t)&ADC2->DR;
 	ADC2_DMA_STREAM->NDTR = ADC2_SEQ_LEN;
@@ -406,6 +411,7 @@ void init_adcs()
 	DMA_CLEAR_INTFLAGS(ADC2_DMA, ADC2_DMA_STREAM_NUM);
 	ADC2_DMA_STREAM->CR |= 1UL;
 	__DSB();
+#endif
 	ADC2->CR |= ADSTART;
 
 	ADC3_DMA_STREAM->M0AR = (uint32_t)&adc3.b[0];

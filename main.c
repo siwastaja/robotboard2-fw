@@ -50,7 +50,7 @@ uint8_t uart_input()
 void error(int code)
 {
 	__disable_irq();
-	// Disable all other interrupts, but leave the one required for handling reflashing SPI message.
+	charger_safety_shutdown();
 	epc_safety_shutdown();
 
 	__enable_irq();
@@ -85,7 +85,7 @@ void error(int code)
 void shutdown_handler()
 {
 	__disable_irq();
-	// Disable all other interrupts, but leave the one required for handling reflashing SPI message.
+	charger_safety_shutdown();
 	epc_safety_shutdown();
 	while(1);
 }

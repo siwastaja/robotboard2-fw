@@ -144,9 +144,9 @@
 // Which channels are used? LSb = ch 0
 #define ADC1_CHANNELS_IN_USE ((1<<2)|(1<<7)|(1<<16)|(1<<17)|(1<<4)|(1<<15)|(1<<14)|(1<<18)|(1<<12)|(1<<8))
 
-#define ADC2_SEQ_LEN 4
-#define ADC2_SEQ  9, 9, 9, 9, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0
-#define ADC2_DISCONTINUOUS_GROUP_LEN 4
+#define ADC2_SEQ_LEN 2
+#define ADC2_SEQ  9, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+#define ADC2_DISCONTINUOUS_GROUP_LEN 1
 #define ADC2_CHANNELS_IN_USE ((1<<9)|(1<<5))
 
 #define ADC3_SEQ_LEN 9
@@ -177,6 +177,7 @@ typedef union
 	} s;
 	uint16_t b[ADC1_SEQ_LEN];
 } adc1_group_t;
+extern volatile adc1_group_t adc1;
 
 // Sample times from channel 0 to channel 19
 #define ADC1_SMPTIMES 2,2,2,2,2, \
@@ -184,21 +185,30 @@ typedef union
                       2,2,2,2,2, \
                       2,2,2,3,2
 
+#if 0
 typedef union
 {
 	struct __attribute__((packed))
 	{
 		// CONVERSION GROUP 1:
-		uint16_t cha_currmeasa[4];      // ADC12  9+  PB0   Charger sync buck phase A inductor current
+		uint16_t cha_currmeasa[3];      // ADC12  9+  PB0   Charger sync buck phase A inductor current
 		// free time to convert other things
 
 		// CONVERSION GROUP 2:
-		uint16_t cha_currmeasb[4];      // ADC12  5+  PB1   Charger sync buck phase B inductor current
+		uint16_t cha_currmeasb[3];      // ADC12  5+  PB1   Charger sync buck phase B inductor current
 		// free time to convert other things
 
 	} s;
 	uint16_t b[ADC2_SEQ_LEN];
 } adc2_group_t;
+extern volatile adc2_group_t adc2;
+#endif
+
+// Sample times from channel 0 to channel 19
+#define ADC2_SMPTIMES 1,1,1,1,1, \
+                      1,1,1,1,1, \
+                      1,1,1,1,1, \
+                      1,1,1,1,1
 
 typedef union
 {
@@ -217,19 +227,9 @@ typedef union
 	uint16_t b[ADC3_SEQ_LEN];
 
 } adc3_group_t;
-
-extern volatile adc1_group_t adc1;
-extern volatile adc2_group_t adc2;
 extern volatile adc3_group_t adc3;
 
 
-
-
-// Sample times from channel 0 to channel 19
-#define ADC2_SMPTIMES 1,1,1,1,1, \
-                      1,1,1,1,1, \
-                      1,1,1,1,1, \
-                      1,1,1,1,1
 
 
 
@@ -254,6 +254,7 @@ const char* const adc1_names[ADC1_SEQ_LEN] =
 	"cha_vinbus_meas"
 };
 
+#if 0
 const char* const adc2_names[ADC2_SEQ_LEN] =
 {
 	"cha_currmeasa[0]",
@@ -261,6 +262,7 @@ const char* const adc2_names[ADC2_SEQ_LEN] =
 	"cha_currmeasb[0]",
 	"cha_currmeasb[1]"
 };
+#endif
 
 const char* const adc3_names[ADC3_SEQ_LEN] =
 {
@@ -277,7 +279,7 @@ const char* const adc3_names[ADC3_SEQ_LEN] =
 
 #else
 extern const char* const adc1_names[ADC1_SEQ_LEN];
-extern const char* const adc2_names[ADC2_SEQ_LEN];
+//extern const char* const adc2_names[ADC2_SEQ_LEN];
 extern const char* const adc3_names[ADC3_SEQ_LEN];
 
 #endif

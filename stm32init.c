@@ -38,7 +38,7 @@ extern void adc3_dma_errhandler();
 
 extern void charger_safety_errhandler();
 
-extern void charger_loop_inthandler();
+extern void charger_adc2_inthandler();
 
 extern unsigned int _STACKTOP;
 
@@ -81,7 +81,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x007C            4       */ (unsigned int *) agm01_errhandler,
 /* 0x0080            5       */ (unsigned int *) agm45_errhandler,
 /* 0x0084            6       */ (unsigned int *) agm01_errhandler,
-/* 0x0088 ADC1&2             */ (unsigned int *) charger_safety_errhandler,
+/* 0x0088 ADC1&2             */ (unsigned int *) charger_adc2_inthandler,
 /* 0x008C                    */ (unsigned int *) invalid_handler,
 /* 0x0090                    */ (unsigned int *) invalid_handler,
 /* 0x0094                    */ (unsigned int *) invalid_handler,
@@ -92,7 +92,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x00A8                    */ (unsigned int *) invalid_handler,
 /* 0x00AC                    */ (unsigned int *) invalid_handler,
 /* 0x00B0 TIM2               */ (unsigned int *) invalid_handler,
-/* 0x00B4 TIM3               */ (unsigned int *) invalid_handler, //imu_fsm_inthandler,
+/* 0x00B4 TIM3               */ (unsigned int *) invalid_handler, // set dynamically
 /* 0x00B8 TIM4               */ (unsigned int *) invalid_handler,
 /* 0x00BC I2C1 EVENT         */ (unsigned int *) epc_i2c_inthandler,
 /* 0x00C0      ERR           */ (unsigned int *) invalid_handler,
@@ -171,7 +171,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x01E4       B            */ (unsigned int *) invalid_handler,
 /* 0x01E8       C            */ (unsigned int *) invalid_handler,
 /* 0x01EC       D            */ (unsigned int *) charger_safety_errhandler,
-/* 0x01F0       E            */ (unsigned int *) charger_loop_inthandler,
+/* 0x01F0       E            */ (unsigned int *) invalid_handler,
 /* 0x01F4 HRTIM FAULT        */ (unsigned int *) invalid_handler,
 /* 0x01F8                    */ (unsigned int *) invalid_handler,
 /* 0x01FC                    */ (unsigned int *) invalid_handler,
