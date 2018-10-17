@@ -813,8 +813,7 @@ void start_phab()
 #define CONT   (1UL<<3)
 
 	// Before the preload is enabled:
-	HRTIM.ADC1R = 1UL<<28 /*ADC Trigger 1 on CHE CMP2*/;
-	HRTIM.ADC1R = 1UL<<28 /*ADC Trigger 1 on CHE CMP2*/;
+	HRTIM.ADC1R = 1UL<<28 /*ADC Trigger 1 on CHE CMP2*/ | 1UL<<24 /*..and also on CHD CMP2*/;
 
 	HRTIM_CHE.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
 	HRTIM_CHD.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
