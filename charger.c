@@ -421,7 +421,6 @@ PHB:         ---------_---------_---------_
 
 int calc_check_offtime()
 {
-	return 600;
 	int new_offtime = PERIOD - CALC_DUTY();
 	
 	if(new_offtime < MAX_DUTY_OFF || new_offtime > MIN_DUTY_OFF)

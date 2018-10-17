@@ -113,10 +113,20 @@
 #define DAC_RDIV_LSB_TO_MV(val_, rhi_, rlo_) ( ( ((rhi_)+(rlo_))*((val_*VREF_MV) / (rlo_)) ) >> DAC_BITS)
 #define DAC_RDIV_MV_TO_LSB(val_, rhi_, rlo_)  ( (  (rlo_)  *  (((val_)*DACRANGE)/VREF_MV)  )/((rhi_)+(rlo_)) )
 
+// Massively slow. Needs calibration anyway. Replaced with a simple multiplication and shift
+// ADC val is 14 bits. Shifting the result by 13 bits leaves max multiplier (with signed numbers just in case) at 2^4 = 16.
 
-#define CHA_VINBUS_MEAS_TO_MV(x_) (ADC_RDIV_LSB_TO_MV((x_), 464, 22))
-#define CHA_VIN_MEAS_TO_MV(x_)    (ADC_RDIV_LSB_TO_MV((x_), 474, 22))
-#define VBAT_MEAS_TO_MV(x_)       (ADC_RDIV_LSB_TO_MV((x_), 475, 68))
+//#define CHA_VINBUS_MEAS_TO_MV(x_) (ADC_RDIV_LSB_TO_MV((x_), 464, 22))
+// 4.4494 << 13  = 36449.87
+#define CHA_VINBUS_MEAS_TO_MV(x_) (((x_)*36450)>>13)
+
+//#define CHA_VIN_MEAS_TO_MV(x_)    (ADC_RDIV_LSB_TO_MV((x_), 474, 22))
+// 4.5409 << 13  = 37199.56
+#define CHA_VIN_MEAS_TO_MV(x_)    (((x_)*37200)>>13)
+
+// #define VBAT_MEAS_TO_MV(x_)       (ADC_RDIV_LSB_TO_MV((x_), 475, 68))
+// 1.611343 << 13  = 13200.13
+#define VBAT_MEAS_TO_MV(x_)       (((x_)*13200)>>13)
 
 #define MV_TO_CHA_VINBUS_MEAS(x_) (ADC_RDIV_MV_TO_LSB((x_), 464, 22))
 #define MV_TO_CHA_VIN_MEAS(x_)    (ADC_RDIV_MV_TO_LSB((x_), 474, 22))
