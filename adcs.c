@@ -186,7 +186,7 @@ static void init_calib_adc(ADC_TypeDef *adc)
 #define AWD1_CHAN(_x_) ((_x_)<<26)
 
 #define DISCON          (1UL<<16)
-#define DISCLEN(x_)     ((x_)<<17)
+#define DISCLEN(x_)     (((x_)-1)<<17)
 
 #define RESO_16B (0b000UL<<2)
 #define RESO_14B (0b001UL<<2)
