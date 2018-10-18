@@ -422,7 +422,9 @@ PHB:         ---------_---------_---------_
 //433ns after calibration multipliers in variables instead :(.
 //To 378ns after optimizing by using a common calibration multiplier :).
 //Down to 328ns after optimizing for 32-bit load operation!
-
+//409ns after enabling all ADC intflag safety checks again
+//398ns after combining all possible error sources to a single check.
+//Whoopsie: calc_check_offtime() was in flash not itcm. Inlined it, 250ns.
 
 // Original super-slow:
 //#define CALC_DUTY() (  ((PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas))) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas))  )
@@ -462,7 +464,8 @@ static inline int CALC_DUTY()
 	return (((vbat_per_vinbus_mult*access_32b.singles.vbat_meas) / access_32b.singles.cha_vinbus_meas)*PERIOD)>>13;
 }
 
-int calc_check_offtime()
+static inline int calc_check_offtime() __attribute__((always_inline));
+static inline int calc_check_offtime() 
 {
 	int new_offtime = PERIOD - CALC_DUTY();
 	
@@ -509,53 +512,21 @@ void charger_adc2_inthandler()
 {
 	LED_ON();
 	interrupt_count++;
-#if 0
-	if((ADC1->ISR & (1UL<<4)) || (ADC2->ISR & (1UL<<4)) )
-	{
-		// Overrun is the only real error condition
-		charger_safety_shutdown();
-		error(20);
-	}
+	uint32_t sr1 = ADC1->ISR;
+	uint32_t sr2 = ADC2->ISR;
 
-	if(ADC1->ISR & (1UL<<7)) // ADC1 AWD1
-	{
-		charger_safety_shutdown();
-		uart_print_string_blocking("\r\nADC1 AWD1: Vbat out of range\r\n");
-		error(15);
-//		ADC1->ISR = 1UL<<7;	
-	}
-
-	if(ADC1->ISR & (1UL<<8)) // ADC1 AWD2
-	{
-		charger_safety_shutdown();
-		uart_print_string_blocking("\r\nADC1 AWD2: Charger Vinbus out of range\r\n");	
-		error(15);
-//		ADC1->ISR = 1UL<<8;
-	}
-
-	if(! (ADC2->ISR & (1UL<<2)/*data ready*/) )
-	{
-		charger_safety_shutdown();
-		uart_print_string_blocking("\r\nADC2 data not ready: Unhandled (unexpected) interrupt source from ADC1/ADC2!\r\n");	
-		uart_print_string_blocking("\r\nADC1 intflags = "); o_btoa16_fixed(ADC1->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("\r\nADC2 intflags = "); o_btoa16_fixed(ADC2->ISR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		error(15);
-	}
-#endif	
 	int32_t cur = ADC2->DR;
 
 	int vratio_offtime = calc_check_offtime();
 
 	if(phase == 0)
 	{
-#if 0
-		if(ADC2->ISR & 1UL<<3)
+		if(sr1 & 0b01110010000 /*any AWD or OVERRUN*/ || sr2 & 0b01110011000 /*any AWD or OVERRUN, or End-of-Seq in unexpected state*/)
 		{
 			charger_safety_shutdown();
-			uart_print_string_blocking("\r\nphase variable disagrees with End-of-Sequence flag: phase==0\r\n");
+			uart_print_string_blocking("\r\nCharger ISR multi-error 1\r\n");
 			error(15);
 		}
-#endif
 
 		SET_OFFTIME_PHA(vratio_offtime);
 
@@ -565,15 +536,15 @@ void charger_adc2_inthandler()
 	}
 	else
 	{
-#if 0
-		if(! (ADC2->ISR & 1UL<<3))
-		{
+		if(sr1 & 0b01110010000 /*any AWD or OVERRUN*/ || sr2 & 0b01110010000 /*any AWD or OVERRUN*/)
+		{	
+			// Wrong end-of-sequence not checked for. If it's really out of sync, the next cycle
+			// reveals it, and it's fast enough. We get the check for free there.
 			charger_safety_shutdown();
-			uart_print_string_blocking("\r\nphase variable disagrees with End-of-Sequence flag: phase==1\r\n");
+			uart_print_string_blocking("\r\nCharger ISR multi-error 2\r\n");
 			error(15);
 		}
 
-#endif
 		SET_OFFTIME_PHB(vratio_offtime);
 
 //		latest_cur_phb = cur;
@@ -586,8 +557,6 @@ void charger_adc2_inthandler()
 	}
 
 
-
-//	HRTIM_CHE.TIMxICR = 1UL<<13;
 
 //	int32_t iset = current_setpoint;
 
@@ -605,18 +574,6 @@ void charger_adc2_inthandler()
 
 //	static int32_t finetune = 0;
 
-
-	
-
-/*
-	uart_print_string_blocking("\r\ncmp_for_min_duty = ");
-	o_itoa32(cmp_for_min_duty, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\ncmp_for_max_duty = ");
-	o_itoa32(cmp_for_max_duty, printbuf); uart_print_string_blocking(printbuf);
-	uart_print_string_blocking("\r\ncmp_for_expected_duty = ");
-	o_itoa32(cmp_for_expected_duty, printbuf); uart_print_string_blocking(printbuf);
-*/
-//	HRTIM_CHE.CMP1xR = cmp_for_expected_duty;
 
 	LED_OFF();
 
