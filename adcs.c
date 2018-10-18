@@ -13,6 +13,15 @@ volatile adc1_group_t adc1 __attribute__((aligned(4))) __attribute__((section(".
 //volatile adc2_group_t adc2 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile adc3_group_t adc3 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 
+// 4.4494 << 13  = 36449.87
+uint32_t cha_vinbus_mult = 36450;
+// 4.5409 << 13  = 37199.56
+uint32_t cha_vin_mult = 37200;
+// 1.611343 << 13  = 13200.13
+uint32_t vbat_mult = 13200;
+
+// (13200/36450)*2^13
+uint32_t vbat_per_vinbus_mult = 2967;
 
 void adc12_inthandler()
 {
@@ -272,6 +281,7 @@ void init_adc2()
 	__DSB();
 	ADC2->CR |= ADSTART;
 }
+
 
 void deinit_adc2()
 {

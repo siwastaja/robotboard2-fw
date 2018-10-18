@@ -417,7 +417,50 @@ PHB:         ---------_---------_---------_
 
 
 // Gives the ontime
-#define CALC_DUTY() (  ((PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas))) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas))  )
+
+//374ns
+//433ns after calibration multipliers in variables instead :(.
+//To 378ns after optimizing by using a common calibration multiplier :).
+//Down to 328ns after optimizing for 32-bit load operation!
+
+
+// Original super-slow:
+//#define CALC_DUTY() (  ((PERIOD*(VBAT_MEAS_TO_MV(adc1.s.vbat_meas))) / CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas))  )
+
+// Quicker:
+//#define CALC_DUTY() ((((vbat_per_vinbus_mult*adc1.s.vbat_meas) / adc1.s.cha_vinbus_meas)*PERIOD)>>13)
+
+/*
+	The quickest:
+
+	This optimization is here for a good reason.
+
+	This produces just a few lines of asm. I need to read vbat_meas and cha_vinbus_meas from the ADC memory structure,
+	and loading them separately as two 16-bit loads is taking too much time and preventing optimizations.
+	Now, because the ADC struct needs to be volatile, the compiler doesn't optimize the 16-bit accesses together.
+	So, through an alised union, a 32-bit access is made. To made this a bit more readable, I want to use a documentative
+	union right here.
+
+	GCC is utterly stupid not to inline this function without always_inline even though it's just a few instructions,
+	and only called from two places.
+*/
+static inline int CALC_DUTY() __attribute__((always_inline));
+static inline int CALC_DUTY()
+{
+	union
+	{
+		struct __attribute__((packed))
+		{
+			uint16_t vbat_meas;
+			uint16_t cha_vinbus_meas;
+		} singles;
+		uint32_t both;
+	} access_32b;
+
+	access_32b.both = adc1.quick.vbat_and_vinbus;
+
+	return (((vbat_per_vinbus_mult*access_32b.singles.vbat_meas) / access_32b.singles.cha_vinbus_meas)*PERIOD)>>13;
+}
 
 int calc_check_offtime()
 {
@@ -629,6 +672,10 @@ void charger_test()
 	o_utoa32(current_setpoint, printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
 
+	uart_print_string_blocking("CALC_DUTY() = ");
+	o_itoa32(CALC_DUTY(), printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+	
 	uart_print_string_blocking("int_count = ");
 	o_utoa32(interrupt_count, printbuf); uart_print_string_blocking(printbuf);
 

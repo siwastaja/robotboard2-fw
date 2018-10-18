@@ -116,17 +116,20 @@
 // Massively slow. Needs calibration anyway. Replaced with a simple multiplication and shift
 // ADC val is 14 bits. Shifting the result by 13 bits leaves max multiplier (with signed numbers just in case) at 2^4 = 16.
 
+extern uint32_t cha_vinbus_mult;
+extern uint32_t cha_vin_mult;
+extern uint32_t vbat_mult;
+extern uint32_t vbat_per_vinbus_mult;
+
+
 //#define CHA_VINBUS_MEAS_TO_MV(x_) (ADC_RDIV_LSB_TO_MV((x_), 464, 22))
-// 4.4494 << 13  = 36449.87
-#define CHA_VINBUS_MEAS_TO_MV(x_) (((x_)*36450)>>13)
+#define CHA_VINBUS_MEAS_TO_MV(x_) (((x_)*cha_vinbus_mult)>>13)
 
 //#define CHA_VIN_MEAS_TO_MV(x_)    (ADC_RDIV_LSB_TO_MV((x_), 474, 22))
-// 4.5409 << 13  = 37199.56
-#define CHA_VIN_MEAS_TO_MV(x_)    (((x_)*37200)>>13)
+#define CHA_VIN_MEAS_TO_MV(x_)    (((x_)*cha_vin_mult)>>13)
 
 // #define VBAT_MEAS_TO_MV(x_)       (ADC_RDIV_LSB_TO_MV((x_), 475, 68))
-// 1.611343 << 13  = 13200.13
-#define VBAT_MEAS_TO_MV(x_)       (((x_)*13200)>>13)
+#define VBAT_MEAS_TO_MV(x_)       (((x_)*vbat_mult)>>13)
 
 #define MV_TO_CHA_VINBUS_MEAS(x_) (ADC_RDIV_MV_TO_LSB((x_), 464, 22))
 #define MV_TO_CHA_VIN_MEAS(x_)    (ADC_RDIV_MV_TO_LSB((x_), 474, 22))
@@ -148,7 +151,7 @@
 #endif
 
 #define ADC1_SEQ_LEN 10
-#define ADC1_SEQ  2, 7,16,17, 4,15,14,18,12, 8, 0, 0, 0, 0, 0, 0
+#define ADC1_SEQ  2, 7,16,17, 4,15,14,12,18, 8, 0, 0, 0, 0, 0, 0
 #define ADC1_DISCONTINUOUS_GROUP_LEN 5
 
 // Which channels are used? LSb = ch 0
@@ -181,11 +184,24 @@ typedef union
 		uint16_t mc1_imeasb;            // ADC12  15+ PA3   Motor controller 1 phase B current measurement
 		uint16_t mc1_imeasc;            // ADC12  14+ PA2   Motor controller 1 phase C current measurement
 
-		uint16_t vbat_meas;             // ADC12  18+ PA4   Battery voltage
 		uint16_t bms_temp_battery;      // ADC123 12+ PC2   Battery temperature NTC
+
+		// Super important:
+		// vbat and cha_vinbus need to be next to each other, vbat first, and aligned(4), meaning there
+		// MUST BE AN EVEN NUMBER of entries before these two guys here.
+		// These two are used in a very timing-critical part in charger to calculate their relationship
+		// (vbat/cha_vinbus), and being able to load them using one instruction is critical.
+		uint16_t vbat_meas;             // ADC12  18+ PA4   Battery voltage
 		uint16_t cha_vinbus_meas;       // ADC12  8+  PC5   Charger input voltage after the input ideal diode MOSFET
 	} s;
+
 	uint16_t b[ADC1_SEQ_LEN];
+
+	struct __attribute__((packed))
+	{
+		uint16_t dummy[8];
+		uint32_t vbat_and_vinbus;
+	} quick;	
 } adc1_group_t;
 extern volatile adc1_group_t adc1;
 
@@ -259,8 +275,8 @@ const char* const adc1_names[ADC1_SEQ_LEN] =
 	"cha_vin_meas",
 	"mc1_imeasb",
 	"mc1_imeasc",
-	"vbat_meas",
 	"bms_temp_battery",
+	"vbat_meas",
 	"cha_vinbus_meas"
 };
 
