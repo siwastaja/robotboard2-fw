@@ -260,7 +260,7 @@ void init_adc2()
 //		CONTINUOUS |
 		TRIG_RISING |
 		TRIG_EVENT(0b10000) | // HRTIM_ADCTRG1
-		RESO_14B |
+		RESO_10B |
 		DISCON |
 		DISCLEN(ADC2_DISCONTINUOUS_GROUP_LEN);
 //		DMA_CIRCULAR;
@@ -306,6 +306,7 @@ void deinit_adc2()
 	ADC2->CFGR = 0x80000000; // important, otherwise the next init fails (tested).
 	ADC2->CFGR2 = 0;
 	ADC2->PCSEL = 0;
+	ADC2->ISR = 0b11111111111;
 	ADC2->CR = 0x20000000; // Reset value per manual - deep powerdown on.
 }
 

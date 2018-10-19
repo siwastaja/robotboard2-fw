@@ -38,7 +38,7 @@ extern void adc3_dma_errhandler();
 
 extern void charger_safety_errhandler();
 
-extern void charger_adc2_inthandler();
+extern void charger_adc2_pha_inthandler();
 
 extern unsigned int _STACKTOP;
 
@@ -81,7 +81,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x007C            4       */ (unsigned int *) agm01_errhandler,
 /* 0x0080            5       */ (unsigned int *) agm45_errhandler,
 /* 0x0084            6       */ (unsigned int *) agm01_errhandler,
-/* 0x0088 ADC1&2             */ (unsigned int *) charger_adc2_inthandler,
+/* 0x0088 ADC1&2             */ (unsigned int *) charger_adc2_pha_inthandler, // set dynamically, but this default is needed
 /* 0x008C                    */ (unsigned int *) invalid_handler,
 /* 0x0090                    */ (unsigned int *) invalid_handler,
 /* 0x0094                    */ (unsigned int *) invalid_handler,

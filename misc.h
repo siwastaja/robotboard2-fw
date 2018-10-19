@@ -22,8 +22,8 @@ uint8_t uart_input();
 
 
 #define VECTORS 0x0000FC00UL
-#define SET_TIM3_VECTOR(v) do{*((uint32_t*)(VECTORS+0x00B4)) = (uint32_t)(v);}while(0)
-//#define SET_ADC12_VECTOR(v) do{*((uint32_t*)(VECTORS+0x0088)) = (uint32_t)(v);}while(0)
+#define SET_TIM3_VECTOR(v) do{*((volatile uint32_t*)(VECTORS+0x00B4)) = (uint32_t)(v);}while(0)
+#define SET_ADC12_VECTOR(v) do{*((volatile uint32_t*)(VECTORS+0x0088)) = (uint32_t)(v);}while(0)
 
 
 

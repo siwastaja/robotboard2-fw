@@ -115,14 +115,18 @@
 #define HRTIM        HRTIM1->sCommonRegs
 
 
+#define HRTIM_OUTEN_PHA()  do{HRTIM.OENR  = 0b11UL<<8;}while(0)
+#define HRTIM_OUTDIS_PHA() do{HRTIM.ODISR = 0b11UL<<8;}while(0)
+#define HRTIM_OUTEN_PHB()  do{HRTIM.OENR  = 0b11UL<<6;}while(0)
+#define HRTIM_OUTDIS_PHB() do{HRTIM.ODISR = 0b11UL<<6;}while(0)
+
+
 #define CHARGER_CURRENT_COMPARATOR_HYSTERESIS (0UL)  // 0 (no), 1 (low), 2 (medium) or 3 (high)
 
 #if CHARGER_CURRENT_COMPARATOR_HYSTERESIS < 0 || CHARGER_CURRENT_COMPARATOR_HYSTERESIS > 3
 #error "Invalid CHARGER_CURRENT_COMPARATOR_HYSTERESIS"
 #endif
 
-#define INITIAL_OFFTIME (2000.0F) // ns
-uint16_t charger_offtime = INITIAL_OFFTIME/2.5;
 
 #define SAFETY_MAX_OFFTIME (5000.0F) // ns
  
@@ -153,29 +157,46 @@ uint16_t charger_offtime = INITIAL_OFFTIME/2.5;
 
 
 /*
+	Current limit DAC (12-bit) 1 LSB = 3.223 mA
+	From mA to DAC: multiplier = 1/3.223
+	Multiplier for shift by 12: 1270.87
+
 	Current ADC (14-bit): 1 LSB = 0.806mA
 	Current ADC (14-bit, oversampled by 3x): 1 LSB = 0.269mA
-	Current limit DAC (12-bit) 1 LSB = 3.223 mA
 
+	Current ADC (10-bit): 1 LSB = 12.8906mA
+	Current ADC (10-bit, oversampled by 3x): 1 LSB = 4.2969mA
+	Multiplier for shift by 12: 17600.10
+
+	From mA to ADC: multiplier = 1/4.2969 = 0.232726
+	Multiplier for shift by 12: 953.2454
 */
 #define CURRLIM_DAC DAC1->DHR12R1
 
-#define ADC_TO_MA(x_) ((x_)*269/1000)
+#define ADC_TO_MA(x_) (((x_)*17600)>>12)
+#define MA_TO_ADC(x_) (((x_)*953)>>12)
+#define MA_TO_DAC(x_) (((x_)*1271)>>12)
 
 void start_phab();
 void stop_phab();
+
+volatile int run_pump = 0;
 
 
 
 static char printbuf[128];
 
+void charger_safety_shutdown() __attribute__((section(".text_itcm")));
 void charger_safety_shutdown()
 {
 	dis_gate_pha();
 	dis_gate_phb();
+	HRTIM_OUTDIS_PHA();
+	HRTIM_OUTDIS_PHB();
 	IO_TO_GPO(GPIOG, 1);
 	IO_TO_GPO(GPIOG, 0);
 
+	run_pump = 0;
 	infet_chargepump_0();
 	IO_TO_GPO(GPIOE, 10);
 
@@ -247,10 +268,9 @@ void charger_safety_errhandler()
 
 	uart_print_string_blocking("\r\n");
 
-	error(15);
+	error(0);
 }
 
-volatile int run_pump = 0;
 void charger_10khz()
 {
 	static int cnt = 0;
@@ -327,13 +347,15 @@ void start_pump()
 
 	Hope this helps others with this malfunctioning chip.
 
+	Update: Found another design bug!
+	When giving the first low input pulse after enabling the chip (to charge the bootstrap cap), if this
+	pulse length is below about 1.5us, the high-side driver stays disabled and completely misses the
+	first high-level input!!!!! This isn't due to bootstrap UVLO; the bootstrap cap charges to over 10V,
+	well above the turn-on threshold. The delay (minimum off-time at start) is the same regardless of
+	whether the capacitor is 220n (charging to around 7V in 1us) or 100n (charging to over 10V in 1us) -
+	the high-FET just doesn't turn on at all!
 
 */
-
-#define HRTIM_OUTEN_PHA()  do{HRTIM.OENR  = 0b11UL<<8;}while(0)
-#define HRTIM_OUTDIS_PHA() do{HRTIM.ODISR = 0b11UL<<8;}while(0)
-#define HRTIM_OUTEN_PHB()  do{HRTIM.OENR  = 0b11UL<<6;}while(0)
-#define HRTIM_OUTDIS_PHB() do{HRTIM.ODISR = 0b11UL<<6;}while(0)
 
 /*
 	HRTIM errata:
@@ -412,8 +434,25 @@ PHB:         ---------_---------_---------_
 //uint16_t pha_duty = 
 
 // 2 us to charge the bootstrap capacitor properly
-#define INITIAL_DUTY_OFF 800
-#define INITIAL_DUTY_ON  400
+// 1 us really isn't enough.
+
+// 800 (2us):
+// Phase A: QuickPrint1: Amp saturation recovery from the end-of-bootstrap-charge-pulse: 22.4us
+// Phase B: QuickPrint2: Recovery: 23.0us
+
+// 600 (1.5us)
+// Phase A: QuickPrint3: Revocery: 18.8us
+// Phase B: QuickPrint4: Revocery: 19.7us
+
+// Bootstrap capacitor changed from 220n to 100n, verified no difference at 1.5us as expected.
+// Now, we can safety go down to 1us:
+
+// 400 (1.0us)
+// Phase A: QuickPrint5: Revocery: 18.8us
+// Phase B: QuickPrint6: Revocery: 19.7us
+
+
+#define INITIAL_DUTY_OFF 400
 
 
 // Gives the ontime
@@ -464,10 +503,10 @@ static inline int CALC_DUTY()
 	return (((vbat_per_vinbus_mult*access_32b.singles.vbat_meas) / access_32b.singles.cha_vinbus_meas)*PERIOD)>>13;
 }
 
-static inline int calc_check_offtime() __attribute__((always_inline));
-static inline int calc_check_offtime() 
+static inline int calc_check_offtime(int finetune) __attribute__((always_inline));
+static inline int calc_check_offtime(int finetune) 
 {
-	int new_offtime = PERIOD - CALC_DUTY();
+	int new_offtime = PERIOD - CALC_DUTY() + finetune;
 	
 	if(new_offtime < MAX_DUTY_OFF || new_offtime > MIN_DUTY_OFF)
 	{
@@ -498,17 +537,39 @@ static inline int calc_check_offtime()
 
 volatile int phase;
 
-volatile int32_t current_setpoint = 100;
+int32_t current_setpoint = MA_TO_ADC(2000);
 volatile int interrupt_count;
 
 volatile int latest_cur_pha, latest_cur_phb;
 
 #define TRACE_LEN 32
-volatile int traces[2][TRACE_LEN];
+volatile int traces[4][TRACE_LEN];
 volatile int trace_at;
 
-void charger_adc2_inthandler() __attribute__((section(".text_itcm")));
-void charger_adc2_inthandler()
+
+/*
+	The "theoretical" duty cycle can be calculated from the ratio of input and output voltage, and adding the
+	losses to the equation, the current can be modeled as an imaginary duty cycle offset.
+
+	This cannot be, and doesn't need to be accurate. Typically, something like this isn't done /at all/; instead,
+	typically a dumb feedback loop is used. By using an approximation directly feedforwarded from both input and
+	output voltage, we are really close to the real duty cycle, and can feedback (using PI loop) a fine-tuning
+	parameter only!
+*/
+
+
+int pha_lowcurr_fail_cnt;
+
+int pha_finetune;
+int phb_finetune;
+
+#define INITIAL_FINETUNE (-100)
+
+void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
+
+
+void charger_adc2_pha_inthandler() __attribute__((section(".text_itcm")));
+void charger_adc2_pha_inthandler()
 {
 	LED_ON();
 	interrupt_count++;
@@ -517,44 +578,51 @@ void charger_adc2_inthandler()
 
 	int32_t cur = ADC2->DR;
 
-	int vratio_offtime = calc_check_offtime();
-
-	if(phase == 0)
+	if(sr1 & 0b01110010000 /*any AWD or OVERRUN*/ || sr2 & 0b01110011000 /*any AWD or OVERRUN, or End-of-Seq in unexpected state*/)
 	{
-		if(sr1 & 0b01110010000 /*any AWD or OVERRUN*/ || sr2 & 0b01110011000 /*any AWD or OVERRUN, or End-of-Seq in unexpected state*/)
+		charger_safety_shutdown();
+		uart_print_string_blocking("\r\nCharger ISR multi-error 1\r\n");
+		charger_safety_errhandler();
+	}
+
+
+	if(cur < MA_TO_ADC(300))
+	{
+		if(++pha_lowcurr_fail_cnt > 10)
 		{
 			charger_safety_shutdown();
-			uart_print_string_blocking("\r\nCharger ISR multi-error 1\r\n");
-			error(15);
+			uart_print_string_blocking("\r\nLow-current failure 1\r\n");
+			charger_safety_errhandler();
 		}
-
-		SET_OFFTIME_PHA(vratio_offtime);
-
-//		latest_cur_pha = cur;
-//		traces[0][trace_at] = cur;
-		phase = 1;
 	}
 	else
 	{
-		if(sr1 & 0b01110010000 /*any AWD or OVERRUN*/ || sr2 & 0b01110010000 /*any AWD or OVERRUN*/)
-		{	
-			// Wrong end-of-sequence not checked for. If it's really out of sync, the next cycle
-			// reveals it, and it's fast enough. We get the check for free there.
-			charger_safety_shutdown();
-			uart_print_string_blocking("\r\nCharger ISR multi-error 2\r\n");
-			error(15);
-		}
+		pha_lowcurr_fail_cnt = 0;
 
-		SET_OFFTIME_PHB(vratio_offtime);
+		//       0 (0mA)  -  500 (2000mA)   = -500: current too small, decrease offtime.
+		int err = cur - current_setpoint;
 
-//		latest_cur_phb = cur;
-//		traces[1][trace_at] = cur;
-//		if(trace_at < TRACE_LEN-1)
-//			trace_at++;
-
-		phase = 0;
-		ADC2->ISR = 1UL<<3; // Clear the end-of-seq flag: it's used in failure diagnostics.
+		pha_finetune += 40*err; // -500 becomes -5000, which after >>8 equals 19 PWM units, per cycle, sounds ok.
 	}
+
+	traces[2][trace_at] = pha_finetune;
+
+	if(pha_finetune < -200*256 || pha_finetune > 200*256)
+	{
+		charger_safety_shutdown();
+		uart_print_string_blocking("\r\nFinetune OOR 1\r\n");
+		charger_safety_errhandler();
+	}
+
+	int vratio_offtime = calc_check_offtime(pha_finetune>>8);
+
+
+
+	SET_OFFTIME_PHA(vratio_offtime);
+
+	latest_cur_pha = cur;
+	traces[0][trace_at] = cur;
+	SET_ADC12_VECTOR(charger_adc2_phb_inthandler);
 
 
 
@@ -579,9 +647,87 @@ void charger_adc2_inthandler()
 
 }
 
+int phb_lowcurr_fail_cnt;
+
+void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
+void charger_adc2_phb_inthandler()
+{
+	LED_ON();
+	interrupt_count++;
+	uint32_t sr1 = ADC1->ISR;
+	uint32_t sr2 = ADC2->ISR;
+
+	int32_t cur = ADC2->DR;
+
+	if(sr1 & 0b01110010000 /*any AWD or OVERRUN*/ || sr2 & 0b01110010000 /*any AWD or OVERRUN*/) // || !(sr2 & 1UL<<3))
+	{	
+		// Wrong end-of-sequence not checked for. If it's really out of sync, the next cycle
+		// reveals it, and that's fast enough. We get the check for free there.
+		charger_safety_shutdown();
+		uart_print_string_blocking("\r\nCharger ISR multi-error 2\r\n");
+		charger_safety_errhandler();
+	}
+
+
+	if(cur < MA_TO_ADC(300))
+	{
+		if(++phb_lowcurr_fail_cnt > 10)
+		{
+			charger_safety_shutdown();
+			uart_print_string_blocking("\r\nLow-current failure 2\r\n");
+			charger_safety_errhandler();
+		}
+	}
+	else
+	{
+		phb_lowcurr_fail_cnt = 0;
+		//       0 (0mA)  -  500 (2000mA)   = -500: current too small, decrease offtime.
+		int err = cur - current_setpoint;
+
+		phb_finetune += 40*err; // -500 becomes -5000, which after >>8 equals 19 PWM units, per cycle, sounds ok.
+
+	}
+
+	traces[3][trace_at] = phb_finetune;
+
+	if(phb_finetune < -200*256 || phb_finetune > 200*256)
+	{
+		charger_safety_shutdown();
+		uart_print_string_blocking("\r\nFinetune OOR 2\r\n");
+		charger_safety_errhandler();
+	}
+
+
+	int vratio_offtime = calc_check_offtime(phb_finetune>>8);
+
+	SET_OFFTIME_PHB(vratio_offtime);
+
+//	latest_cur_phb = cur;
+	traces[1][trace_at] = cur;
+	if(trace_at < TRACE_LEN-1)
+		trace_at++;
+
+	SET_ADC12_VECTOR(charger_adc2_pha_inthandler);
+	ADC2->ISR = 1UL<<3; // Clear the end-of-seq flag: it's used for failure detection
+
+
+//	int32_t iset = current_setpoint;
+
+
+
+
+//	static int32_t finetune = 0;
+
+
+	LED_OFF();
+
+}
+
+
 void charger_test()
 {
 	static int cnt;
+
 	uart_print_string_blocking("\r\n\r\n");
 
 	int32_t ca = latest_cur_pha;
@@ -688,29 +834,27 @@ void charger_test()
 	if(cnt==10)
 	{
 		start_phab();
-		delay_us(20);
+		delay_us(15);
 		stop_phab();
 
-		uart_print_string_blocking("\r\n\r\ncur_a_raw,cur_b_raw,cur_a_ma,cur_b_ma\r\n");
+		uart_print_string_blocking("\r\n\r\ncur_a_ma,cur_b_ma,fine_a,fine_b\r\n");
 		int end = trace_at;
 		for(int i=0; i<end; i++)
 		{
-			o_itoa32(traces[0][i], printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking(",");
-			o_itoa32(traces[1][i], printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking(",");
 			o_itoa32(ADC_TO_MA(traces[0][i]), printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(",");
 			o_itoa32(ADC_TO_MA(traces[1][i]), printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(",");
+			o_itoa32(traces[2][i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(",");
+			o_itoa32(traces[3][i], printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking("\r\n");
 		}
 		uart_print_string_blocking("\r\n");
-
 		cnt = 0;
 	}
 
 	delay_ms(99);
-
 }
 
 void init_charger()
@@ -734,10 +878,25 @@ void init_charger()
 
 }
 
+int started = 0;
 void start_phab() __attribute__((section(".text_itcm")));
 void start_phab()
 {
+	if(started)
+	{
+		error(3);
+	}
+	started = 1;
+	en_gate_pha();
+	en_gate_phb();
 	start_pump();
+
+	SET_ADC12_VECTOR(charger_adc2_pha_inthandler);
+	pha_lowcurr_fail_cnt = 0;
+	phb_lowcurr_fail_cnt = 0;
+	pha_finetune = INITIAL_FINETUNE*256;
+	phb_finetune = INITIAL_FINETUNE*256;
+
 
 	RCC->CFGR |= 1UL<<14; // Use CPU clock (400MHz) as HRTIM clock.
 	__DSB();
@@ -750,7 +909,7 @@ void start_phab()
 
 	// DAC1: Current setpoint (don't touch channel 2, beware: configuration registers are shared)
 	DAC1->MCR |= 0b011UL<<0 /*Channel 1: Connected to on-chip peripherals only, with buffer disabled*/;
-	CURRLIM_DAC = 1500;
+	CURRLIM_DAC = MA_TO_DAC(4000);
 	DAC1->CR |= 1UL<<0; // Enable channel 1
 
 	// Comparator 1: PHA current
@@ -930,7 +1089,7 @@ void start_phab()
 	*/
 
 	// Based on input/output voltages, calculate the duty (offtime actually) we want to have:
-	int desired_offtime = calc_check_offtime();
+	int desired_offtime = calc_check_offtime(INITIAL_FINETUNE);
 	int actual_first_offtime, actual_second_offtime;
 
 	// Now, the chances are, we need a longer offtime for the very first cycle to charge the bootstrap capacitor properly:
@@ -987,10 +1146,12 @@ void start_phab()
 void stop_phab() __attribute__((section(".text_itcm")));
 void stop_phab()
 {
+	started = 0;
 	HRTIM_OUTDIS_PHA();
 	HRTIM_OUTDIS_PHB();
 	dis_gate_pha();
 	dis_gate_phb();
+	stop_pump();
 	infet_chargepump_0();
 	pulseout_0();
 
