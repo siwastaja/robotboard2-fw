@@ -11,6 +11,18 @@
 #include "../robotsoft/api_soft_to_board.h"
 #undef DEFINE_API_VARIABLES
 
+// 1 or 0:
+#define CRC_EN 1
+
+#ifdef SPI_DMA_1BYTE_AT_TIME
+#define RX_DMA_NDTR (S2B_MAX_LEN)
+#else
+#define RX_DMA_NDTR (S2B_MAX_LEN/4)
+#endif
+
+
+static char printbuf[128];
+
 /*
 define SPI_DMA_1BYTE_AT_TIME to force the SPI communication peripheral & DMA use 8-bit transfers. 
 Bus bandwidth usage will be 4 times more, but transfer sizes not multiples of four will work
@@ -287,10 +299,24 @@ void sbc_spi_eot_inthandler()
 	flushes the FIFOs and resets the internal logic. Great!
 	
 
+	An addition:
+	This is of course no surprise, but the SPI peripheral is still broken, and STILL requires the reset through the RCC registers,
+	if CRC is used. Problem description:
+	* Configure RX DMA for a certain length (ex., 6000 bytes or NDTR=1500 with word access)
+	* Reveice a transfer which is actually longer, so that the DMA shuts down and overrun flag is set
+	* Normally all this is OK - reset the SPI by disabling it (SPIEN = 0), clear all intflags and reconfing...
+	* But, if you have CRCEN enabled - the SPI internally ends up in an unspecified fault state, which is not seen in any status flags.
+	* Any further RX DMA operations fail right at the start - when you config RX DMA channel and enable it, it instantly sets FIFO ERROR,
+	  half transfer complete, and transfer complete flags, and set NDTR to 0.
+	* This internal fault state can only be resolved with RCC reset.
 
+
+
+	Note:
 	When the SPI is enabled with DMA, it always generates DMA requests right away to fill its TX fifo. When the
 	nSS is asserted half a year later, the first data are from half a year ago, rest is DMA'ed from the memory at that point.
 	With our communication FIFO scheme, this isn't a problem, but do remember this.
+
 
 */
 
@@ -300,12 +326,33 @@ volatile int new_rx_len;
 
 volatile int spi_dbg1, spi_dbg2;
 
+#ifdef SPI_DMA_1BYTE_AT_TIME
+#define SPI_CFG1 (1UL<<14 /*RX DMA EN*/ | (1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/ | \
+	             CRC_EN<<22 | (8UL  -1UL)<<16 /*CRC size*/) // don't set TX DMA EN yet
+#else
+#define SPI_CFG1 (1UL<<14 /*RX DMA EN*/ | (4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/ | \
+	             CRC_EN<<22 | (8UL  -1UL)<<16 /*CRC size*/)  // don't set TX DMA EN yet
+#endif
+
+
 void sbc_spi_cs_end_inthandler()
 {
 //	spi_dbg1 = DMA1_Stream0->NDTR;
 //	spi_dbg2 = DMA1_Stream1->NDTR;
 	// Triggered when cs goes high
 
+/*
+	uart_print_string_blocking("\r\nSTART\r\n");
+	if(DMA1_Stream0->CR & 1UL) uart_print_string_blocking("TX DMA  ");
+	if(DMA1_Stream1->CR & 1UL) uart_print_string_blocking("RX DMA  ");
+	uart_print_string_blocking("\r\nCR = "); o_btoa16_fixed(SPI1->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("SR = "); o_btoa16_fixed(SPI1->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(SPI1->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(DMA1, 0), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(DMA1, 1), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TXNDTR = "); o_utoa16(DMA1_Stream0->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("RXNDTR = "); o_utoa16(DMA1_Stream1->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+*/
 	// Clear the EXTI interrupt pending bit:
 	if(sbc_iface == ODROID)
 		EXTI_D1->PR1 = 1UL<<15;
@@ -314,17 +361,26 @@ void sbc_spi_cs_end_inthandler()
 
 	spi_test_cnt++;
 
-	SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens
+//	SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens 
+
+	// Silicon Errata: Hard reset is needed if CRC is used and if RX OVR happens. Otherwise, all
+	// further DMA operations fail right at the start.
+
+	RCC->APB2RSTR = 1UL<<12;
+	__DSB();
+	RCC->APB2RSTR = 0;
+	__DSB();
+
+
+
 
 	int tx_dma_was_enabled = DMA1_Stream0->CR & 1UL;
+
 	__DMB();
 
+
 	// Turn TX DMA bit off (by rewriting the whole register to save time):
-#ifdef SPI_DMA_1BYTE_AT_TIME
-	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
-#else
-	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
-#endif
+	SPI1->CFG1 = SPI_CFG1;
 	__DSB();
 
 	// Disable the DMAs (but keep the configuration):
@@ -357,6 +413,23 @@ void sbc_spi_cs_end_inthandler()
 	#else
 	int len = S2B_MAX_LEN - DMA1_Stream1->NDTR*4;
 	#endif
+/*
+	uart_print_string_blocking("\r\nMID\r\n");
+	if(DMA1_Stream0->CR & 1UL) uart_print_string_blocking("TX DMA  ");
+	if(DMA1_Stream1->CR & 1UL) uart_print_string_blocking("RX DMA  ");
+	uart_print_string_blocking("\r\nCR = "); o_btoa16_fixed(SPI1->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("SR = "); o_btoa16_fixed(SPI1->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(SPI1->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(DMA1, 0), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(DMA1, 1), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TXNDTR = "); o_utoa16(DMA1_Stream0->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("RXNDTR = "); o_utoa16(DMA1_Stream1->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("len = "); o_utoa16(len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("was_ena = "); o_utoa16(tx_dma_was_enabled, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+*/
+
+	// This is not needed, RCC reset clears this as well:
+//	SPI1->IFCR = 0b111111111000; // TRAP: Clear EOT and TXTF flags, otherwise the TX DMA won't start if TSIZE is ever non-zero, causing EOT to be high.
 
 
 	// Check if there is the maintenance magic code:
@@ -379,6 +452,9 @@ void sbc_spi_cs_end_inthandler()
 	{
 		// No data to send.
 		// Don't enable TX DMA, let the SPI send the content of the "underrun register"
+		#if CRC_EN == 1
+			SPI1->TSIZE = 0;
+		#endif
 	}
 	else
 	{
@@ -386,7 +462,7 @@ void sbc_spi_cs_end_inthandler()
 		{
 			int nextnext = tx_fifo_spi+1; if(nextnext >= TX_FIFO_DEPTH) nextnext = 0;
 
-			// If there is even more packets to send after the next transaction, indicate this
+			// If there are even more packets to send after the next transaction, indicate this
 			// by setting a bit in fifo_status register, but only if the sizes match (so that it
 			// can be read out with the same length transaction)
 			if(nextnext != tx_fifo_cpu && 
@@ -398,6 +474,10 @@ void sbc_spi_cs_end_inthandler()
 		}
 
 		DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
+		// TSIZE tells the SPI peripheral when to insert the CRC byte:
+		#if CRC_EN == 1
+			SPI1->TSIZE = ((b2s_header_t*)&tx_fifo[tx_fifo_spi][0])->payload_len + sizeof(b2s_header_t) + FOOTER_LEN;
+		#endif
 		__DSB();
 		DMA_CLEAR_INTFLAGS(DMA1, 0);
 		DMA1_Stream0->CR |= 1; // Enable TX DMA
@@ -428,6 +508,7 @@ void sbc_spi_cs_end_inthandler()
 		// Just re-enable the DMA so the next operation writes to the same place.
 	}	
 
+	DMA1_Stream1->NDTR = RX_DMA_NDTR;
 	DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
 
 	__DSB();
@@ -436,8 +517,26 @@ void sbc_spi_cs_end_inthandler()
 	__DSB();
 
 
+//	SPI1->IFCR = 0b111111111000; // TRAP: Clear EOT and TXTF flags, otherwise the TX DMA won't start if TSIZE is ever non-zero, causing EOT to be high.
+
+//	if(len!=6000)
 	SPI1->CR1 = 1UL; // Enable in slave mode
 	__DSB();
+
+/*
+	uart_print_string_blocking("\r\nEND\r\n");
+	if(DMA1_Stream0->CR & 1UL) uart_print_string_blocking("TX DMA  ");
+	if(DMA1_Stream1->CR & 1UL) uart_print_string_blocking("RX DMA  ");
+	uart_print_string_blocking("\r\nCR = "); o_btoa16_fixed(SPI1->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("SR = "); o_btoa16_fixed(SPI1->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(SPI1->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(DMA1, 0), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(DMA1, 1), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("TXNDTR = "); o_utoa16(DMA1_Stream0->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("RXNDTR = "); o_utoa16(DMA1_Stream1->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("len = "); o_utoa16(len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n\r\n");
+*/
+
 }
 
 void parse_rx_packet()
@@ -487,7 +586,6 @@ void parse_rx_packet()
 
 void check_rx_test()
 {
-	char printbuf[128];
 
 	if(rx_fifo_spi != rx_fifo_cpu)
 	{
@@ -506,7 +604,6 @@ void check_rx_test()
 
 void sbc_comm_test()
 {
-	char printbuf[128];
 	uint8_t data = 0x42;
 	int cnt = 0;
 
@@ -565,6 +662,8 @@ void sbc_comm_test()
 }
 
 
+uint64_t initial_subs[B2S_SUBS_U64_ITEMS] = {0};
+
 uint64_t subs_test1[4] = {0b1110,0,0,0};
 uint64_t subs_test2[4] = {0b1010,0,0,0};
 uint64_t subs_test3[4] = {0b0000,0,0,0};
@@ -572,7 +671,6 @@ uint64_t subs_test4[4] = {0b0100,0,0,0};
 
 static void gen_some_data1()
 {
-	char printbuf[128];
 	static int cnt = 0;
 	if(!test_msg1)
 	{
@@ -593,7 +691,6 @@ static void gen_some_data1()
 
 static void gen_some_data2()
 {
-	char printbuf[128];
 	static int cnt = 0;
 	if(!test_msg2)
 	{
@@ -611,7 +708,6 @@ static void gen_some_data2()
 
 static void gen_some_data3()
 {
-	char printbuf[128];
 	static int cnt = 0;
 	if(!test_msg3)
 	{
@@ -633,7 +729,6 @@ static void gen_some_data3()
 
 void pointer_system_test()
 {
-	char printbuf[128];
 	int cnt=0;
 	uint8_t cnt_u8 = 0;
 	while(1)
@@ -684,6 +779,8 @@ void pointer_system_test()
 void init_sbc_comm()
 {
 
+	update_subs(initial_subs);
+
 	RCC->APB2ENR |= 1UL<<12; // SPI1
 
 	#ifdef SBC_AUTODETECT
@@ -722,14 +819,11 @@ void init_sbc_comm()
 	init_tx_fifo_fixed_content();
 
 	// Initialization order from reference manual:
-#ifdef SPI_DMA_1BYTE_AT_TIME
-	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(1UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
-#else
-	SPI1->CFG1 = 1UL<<14 /*RX DMA EN*/ |(4UL -1UL)<<5 /*FIFO threshold*/ | 0b00111UL /*8-bit data*/;  // don't set TX DMA EN yet 
-#endif
+	SPI1->CFG1 = SPI_CFG1;
 
 	SPI1->UDRDR = 0;
-	// SPI1->CFG2 defaults good
+	SPI1->CFG2 = 1UL<<31 /*Keep pins in control while disabling the SPI for FIFO flush - prevent MISO from glitching*/;
+	// SPI1->CRCPOLY 0x100|0x07 by default reset value.
 
 	// SPI1->CR2 zero - transfer length unknown
 
@@ -762,11 +856,8 @@ void init_sbc_comm()
 		#endif
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
 
-	#ifdef SPI_DMA_1BYTE_AT_TIME
-		DMA1_Stream1->NDTR = S2B_MAX_LEN;
-	#else
-		DMA1_Stream1->NDTR = S2B_MAX_LEN/4;
-	#endif
+	DMA1_Stream1->NDTR = RX_DMA_NDTR;
+
 	DMAMUX1_Channel1->CCR = 37;
 	DMA_CLEAR_INTFLAGS(DMA1, 1);
 	DMA1_Stream1->CR |= 1; // Enable RX DMA

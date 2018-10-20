@@ -280,9 +280,7 @@ void main()
 //	timer_test();
 	init_adcs();
 	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
-	init_charger(); // Requires working ADC1 data, so init_bldc() first.
-//	extern void gatedriver_debug();
-//	gatedriver_debug();
+//	init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
 //	extern void adc_test();
 //	while(1)
@@ -291,7 +289,7 @@ void main()
 	delay_ms(10);
 //	tof_ctrl_init();
 //	sbc_comm_test();
-//	pointer_system_test();
+	pointer_system_test();
 /*	while(1)
 	{
 
