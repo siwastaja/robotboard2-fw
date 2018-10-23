@@ -41,5 +41,5 @@ void epc_safety_shutdown();
 
 
 void init_cpu_profiler();
-void profile_cpu_blocking_40ms();
+void profile_cpu_blocking_20ms();
 

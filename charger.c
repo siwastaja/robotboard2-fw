@@ -128,10 +128,6 @@
 #endif
 
 
-#define SAFETY_MAX_OFFTIME (5000.0F) // ns
- 
-#define SAFETY_MAX_OFFTIME_REG (SAFETY_MAX_OFFTIME/2.5)
-
 // -6.4V .. +48.0V Vin=31.6V, 30ns deadtime  QuickPrint5
 // -12.0V .. +48.8V Vin=31.6V, 15ns deadtime  QuickPrint6
 
@@ -195,6 +191,12 @@ void stop_phab();
 
 volatile int run_pump = 0;
 
+static int running = 0;
+
+int is_running()
+{
+	return running;
+}
 
 
 static char printbuf[128];
@@ -523,12 +525,26 @@ static inline int calc_check_offtime(int finetune)
 	
 	if(new_offtime < MAX_DUTY_OFF || new_offtime > MIN_DUTY_OFF)
 	{
-		SAFETY_SHUTDOWN();
+//		SAFETY_SHUTDOWN();
 
+		charger_safety_shutdown();
 		uart_print_string_blocking("\r\nSTOPPED: calculated offtime = "); o_itoa32(new_offtime, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		stop_phab();
 
-		error(12);
-		return 0;
+//		error(12);
+		return PERIOD/2;
+	}
+
+	return new_offtime;
+}
+
+static int calc_check_offtime_softfail(int finetune) 
+{
+	int new_offtime = PERIOD - CALC_DUTY() + finetune;
+	
+	if(new_offtime < MAX_DUTY_OFF || new_offtime > MIN_DUTY_OFF)
+	{
+		return -1;
 	}
 
 	return new_offtime;
@@ -560,7 +576,7 @@ void set_current(int ma)
 		error(27);
 	current_setpoint = MA_TO_ADC(ma);
 
-	int dac = MA_TO_DAC(ma+4000);
+	int dac = MA_TO_DAC(ma+3000);
 	if(dac > 4090) dac = 4090;
 	CURRLIM_DAC = dac;
 }
@@ -587,12 +603,6 @@ volatile int latest_cur_pha, latest_cur_phb;
 int pha_lowcurr_fail_cnt;
 int phb_lowcurr_fail_cnt;
 
-//int pha_finetune;
-int phb_finetune;
-
-int pha_finetune_fail_cnt;
-int phb_finetune_fail_cnt;
-
 #define INITIAL_FINETUNE (-150)
 #define INITIAL_ERR_INTEGRAL (-15*256)
 
@@ -601,17 +611,32 @@ int phb_err_integral;
 
 void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 
-static int pid_i = 2;
-static int pid_p = 64;
-
 #define ERR_INTEGRAL_MIN (-30*256)
 #define ERR_INTEGRAL_MAX (10*256)
+
+// 66.27% CPU
+// Changed pid_i and bit_p to fixed shifts:
+// pid_p=64 --> <<6
+// pid_i=2  --> <<1
+// -> 56.60% CPU
+// removed volatile interrupt_count
+// -> 54.53% CPU
+// changer error integral windup to one-shot (no more error counter, not a single cycle of windup allowed)
+// -> 46.99% CPU
+
+
+// Experimentally found: pid_p workable range from around 40 to around 80
+// pid_i from around 1 to around 5.
+// pid_p=64 --> <<6
+// pid_i=2  --> <<1
+
+#define PID_P_SHIFT 6
+#define PID_I_SHIFT 1
 
 void charger_adc2_pha_inthandler() __attribute__((section(".text_itcm")));
 void charger_adc2_pha_inthandler()
 {
 	LED_ON();
-	interrupt_count++;
 	uint32_t sr1 = ADC1->ISR;
 	uint32_t sr2 = ADC2->ISR;
 
@@ -646,29 +671,17 @@ void charger_adc2_pha_inthandler()
 	int err = cur - current_setpoint;
 
 	pha_err_integral += err;
-	if(pha_err_integral < ERR_INTEGRAL_MIN)
+	if(pha_err_integral < ERR_INTEGRAL_MIN || pha_err_integral > ERR_INTEGRAL_MAX)
 	{
-		pha_err_integral = ERR_INTEGRAL_MIN;
-		pha_finetune_fail_cnt++;
-	}
-	else if(pha_err_integral > ERR_INTEGRAL_MAX)
-	{
-		pha_err_integral = ERR_INTEGRAL_MAX;
-		pha_finetune_fail_cnt++;
-	}
-	else
-		pha_finetune_fail_cnt = 0;
-
-
-	if(pha_finetune_fail_cnt > 7)
-	{
-		SAFETY_SHUTDOWN();
+//		SAFETY_SHUTDOWN();
+		charger_safety_shutdown();
 		uart_print_string_blocking("\r\nCharger PID integral windup 1\r\n");
 		DBG_PR_VAR_I32(pha_err_integral);
-		charger_safety_errhandler();
+		stop_phab();
+//		charger_safety_errhandler();
 	}
 
-	int pha_finetune = pid_p*err + pid_i*pha_err_integral;
+	int pha_finetune = (err<<PID_P_SHIFT) + (pha_err_integral<<PID_I_SHIFT);
 
 
 	int vratio_offtime = calc_check_offtime(pha_finetune>>8);
@@ -683,13 +696,12 @@ void charger_adc2_pha_inthandler()
 	LED_OFF();
 }
 
-int phb_disabled = 1;
+int phb_disabled;
 
 void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 void charger_adc2_phb_inthandler()
 {
 	LED_ON();
-	interrupt_count++;
 	uint32_t sr1 = ADC1->ISR;
 	uint32_t sr2 = ADC2->ISR;
 
@@ -732,29 +744,17 @@ void charger_adc2_phb_inthandler()
 	int err = cur - current_setpoint;
 
 	phb_err_integral += err;
-	if(phb_err_integral < ERR_INTEGRAL_MIN)
+	if(phb_err_integral < ERR_INTEGRAL_MIN || phb_err_integral > ERR_INTEGRAL_MAX)
 	{
-		phb_err_integral = ERR_INTEGRAL_MIN;
-		phb_finetune_fail_cnt++;
-	}
-	else if(phb_err_integral > ERR_INTEGRAL_MAX)
-	{
-		phb_err_integral = ERR_INTEGRAL_MAX;
-		phb_finetune_fail_cnt++;
-	}
-	else
-		phb_finetune_fail_cnt = 0;
-
-
-	if(phb_finetune_fail_cnt > 7)
-	{
-		SAFETY_SHUTDOWN();
+//		SAFETY_SHUTDOWN();
+		charger_safety_shutdown();
 		uart_print_string_blocking("\r\nCharger PID integral windup 2\r\n");
 		DBG_PR_VAR_I32(phb_err_integral);
-		charger_safety_errhandler();
+		stop_phab();
+//		charger_safety_errhandler();
 	}
 
-	int phb_finetune = pid_p*err + pid_i*phb_err_integral;
+	int phb_finetune = (err<<PID_P_SHIFT) + (phb_err_integral<<PID_I_SHIFT);
 
 
 	int vratio_offtime = calc_check_offtime(phb_finetune>>8);
@@ -834,25 +834,10 @@ void charger_test()
 	o_utoa32(interrupt_count, printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
 
-	DBG_PR_VAR_I32(pid_p);
-	DBG_PR_VAR_I32(pid_i);
-
-
+/*
 	uint8_t cmd = uart_input();
 
-	if(cmd == 'q')
-		pid_p++;
-	else if(cmd=='a')
-	{
-		if(pid_p>0) pid_p--;
-	}
-	else if(cmd=='w')
-		pid_i++;
-	else if(cmd=='s')
-	{
-		if(pid_i>0) pid_i--;
-	}
-/*	if(cmd == 'a')
+	if(cmd == 'a')
 	{
 		start_pha();
 	}
@@ -900,7 +885,7 @@ void charger_test()
 
 	if(cnt==10)
 	{
-		start_phab(0);
+		start_phab(1);
 		delay_us(20);
 //		set_current(4000);
 //		delay_us(60);
@@ -959,21 +944,41 @@ void charger_test()
 // elcap (the hottest) 48 degC
 
 
+// 1.2 = 1.4    117%
+// 3.0 = 3.83   128%
+// 3.6 = 4.63   129%
+// 2*1.5 (3.0) = 3.9  130%
+
 
 void charger_test2()
 {
 	init_cpu_profiler();
 	
-	profile_cpu_blocking_40ms();
-	profile_cpu_blocking_40ms();
-	profile_cpu_blocking_40ms();
-	profile_cpu_blocking_40ms();
+	profile_cpu_blocking_20ms();
+	profile_cpu_blocking_20ms();
+	profile_cpu_blocking_20ms();
+	profile_cpu_blocking_20ms();
 
-	start_phab(0);
-	delay_us(100);
-	set_current(3600);
 	while(1)
 	{
+
+		if(!is_running())
+		{
+			start_phab(1);
+			if(!is_running())
+			{
+				uart_print_string_blocking("*** FAILED TO START ***\r\n");
+			}
+			else
+			{
+				delay_us(100);
+				set_current(1500);
+			}
+		}
+		else
+			uart_print_string_blocking("RUNNING\r\n");
+
+
 		uart_print_string_blocking("cha_vinbus_meas = ");
 		o_utoa32(CHA_VINBUS_MEAS_TO_MV(adc1.s.cha_vinbus_meas), printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking("  raw = ");
@@ -986,7 +991,7 @@ void charger_test2()
 		o_utoa32(adc1.s.vbat_meas, printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking("\r\n");
 
-		profile_cpu_blocking_40ms();
+		profile_cpu_blocking_20ms();
 		delay_ms(500);
 	}
 }
@@ -1012,15 +1017,14 @@ void init_charger()
 
 }
 
-int started = 0;
 void start_phab(int start_b) __attribute__((section(".text_itcm")));
 void start_phab(int start_b)
 {
-	if(started)
+	if(running)
 	{
 		error(13);
 	}
-	started = 1;
+	running = 1;
 	en_gate_pha();
 
 	phb_disabled = !start_b;
@@ -1036,8 +1040,6 @@ void start_phab(int start_b)
 	SET_ADC12_VECTOR(charger_adc2_pha_inthandler);
 	pha_lowcurr_fail_cnt = 0;
 	phb_lowcurr_fail_cnt = 0;
-	pha_finetune_fail_cnt = 0;
-	phb_finetune_fail_cnt = 0;
 	pha_err_integral = INITIAL_ERR_INTEGRAL;
 	phb_err_integral = INITIAL_ERR_INTEGRAL;
 
@@ -1054,7 +1056,7 @@ void start_phab(int start_b)
 	// DAC1: Current setpoint (don't touch channel 2, beware: configuration registers are shared)
 	DAC1->MCR |= 0b011UL<<0 /*Channel 1: Connected to on-chip peripherals only, with buffer disabled*/;
 //	CURRLIM_DAC = MA_TO_DAC(6000);
-	set_current(2000);
+	set_current(1500);
 	DAC1->CR |= 1UL<<0; // Enable channel 1
 
 	// Comparator 1: PHA current
@@ -1183,15 +1185,6 @@ void start_phab(int start_b)
 	HRTIM_CHD.RSTx1R = 1UL<<3 /*CMP1*/;  // CMP1 turns off bottom FET -> current starts increasing
 
 
-
-
-//	HRTIM_CHD.SETx1R = 1UL<<27 /*EEV7*/; // Overcurrent turns on bottom FET
-//	HRTIM_CHD.RSTx1R = 1UL<<26 /*EEV6*/; // Overcurrent of the master phase turns off the bottom FET, starting current-increasing cycle on the slave phase
-//	HRTIM_CHD.RSTxR  = 1UL<<15 /*EEV7*/; // Our own overcurrent also starts a backup safety off-time counter
-//	HRTIM_CHD.PERxR  = SAFETY_MAX_OFFTIME_REG;
-//	HRTIM_CHD.CMP1xR = SAFETY_MAX_OFFTIME_REG-1;
-//	HRTIM_CHD.TIMxDIER = 1UL; // Compare 1 interrupt
-
 	IO_ALTFUNC(GPIOG,  6,  2); // CHE1: PHA LOFET
 	IO_ALTFUNC(GPIOG,  7,  2); // CHE2: PHA HIFET
 	IO_ALTFUNC(GPIOA, 11,  2); // CHD1: PHB LOFET
@@ -1212,10 +1205,6 @@ void start_phab(int start_b)
 
 	init_adc2();
 
-
-//	NVIC_SetPriority(HRTIM1_TIME_IRQn, 2);
-//	NVIC_EnableIRQ(HRTIM1_TIME_IRQn);
-
 	/*
 		"How long it takes from the start_pump(), until Vinbus rises to Vin?"
 		Test results:
@@ -1234,7 +1223,13 @@ void start_phab(int start_b)
 	*/
 
 	// Based on input/output voltages, calculate the duty (offtime actually) we want to have:
-	int desired_offtime = calc_check_offtime(INITIAL_FINETUNE);
+	int desired_offtime = calc_check_offtime_softfail(INITIAL_FINETUNE);
+	if(desired_offtime < 0)
+	{
+		// We cannot start. Bail out...
+		stop_phab();
+		return;
+	}	
 	int actual_first_offtime, actual_second_offtime;
 
 	// Now, the chances are, we need a longer offtime for the very first cycle to charge the bootstrap capacitor properly:
@@ -1294,7 +1289,7 @@ void start_phab(int start_b)
 void stop_phab() __attribute__((section(".text_itcm")));
 void stop_phab()
 {
-	started = 0;
+	running = 0;
 	HRTIM_OUTDIS_PHA();
 	HRTIM_OUTDIS_PHB();
 	dis_gate_pha();

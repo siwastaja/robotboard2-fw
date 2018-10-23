@@ -178,18 +178,18 @@ void init_cpu_profiler()
 	TIM4->ARR = 0xffffffff;
 }
 
-void profile_cpu_blocking_40ms()
+void profile_cpu_blocking_20ms()
 {
 	TIM4->CNT = 0;
 	__DSB();
 	TIM4->CR1 = 1UL<<3 | 1UL; // Enable
 	__DSB();
-	delay_ms(40);
+	delay_ms(20);
 	uint32_t time = TIM4->CNT;		
 	TIM4->CR1 = 1UL<<3;
 	__DSB();
 	uart_print_string_blocking("CPU overhead : "); 
-	char* p_joo = o_utoa32(((time-40000))*10000/40000, printbuf);
+	char* p_joo = o_utoa32(((time-20000))*10000/20000, printbuf);
 	p_joo[0] = p_joo[-1];
 	p_joo[-1] = p_joo[-2];
 	p_joo[-2] = '.';
