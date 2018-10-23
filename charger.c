@@ -1,3 +1,11 @@
+
+// QuickPrint16&17 : phases a & b on 333 kHz
+// QuickPrint19&20 : phases a & b on 250 kHz
+
+//#define CHARGER_FREQ333
+#define CHARGER_FREQ250
+
+
 /*
 
 	STM32 CONFUSION WARNING:
@@ -121,7 +129,7 @@
 #define HRTIM_OUTDIS_PHB() do{HRTIM.ODISR = 0b11UL<<6;}while(0)
 
 
-#define CHARGER_CURRENT_COMPARATOR_HYSTERESIS (0UL)  // 0 (no), 1 (low), 2 (medium) or 3 (high)
+#define CHARGER_CURRENT_COMPARATOR_HYSTERESIS (1UL)  // 0 (no), 1 (low), 2 (medium) or 3 (high)
 
 #if CHARGER_CURRENT_COMPARATOR_HYSTERESIS < 0 || CHARGER_CURRENT_COMPARATOR_HYSTERESIS > 3
 #error "Invalid CHARGER_CURRENT_COMPARATOR_HYSTERESIS"
@@ -174,16 +182,24 @@
 	Current ADC (14-bit, oversampled by 3x): 1 LSB = 0.269mA
 
 	Current ADC (10-bit): 1 LSB = 12.8906mA
-	Current ADC (10-bit, oversampled by 3x): 1 LSB = 4.2969mA
-	Multiplier for shift by 12: 17600.10
+	Current ADC (10-bit, oversampled by 3x): 1 LSB = 4.2969mA --> actually measured at about 5.58mA
+	Multiplier for shift by 12: 17600.10 (theoretical) --> 22856 actually
 
-	From mA to ADC: multiplier = 1/4.2969 = 0.232726
-	Multiplier for shift by 12: 953.2454
+	From mA to ADC: multiplier = 1/4.2969 = 0.232726 --> actually 0.1792
+	Multiplier for shift by 12: 953.2454 --> actually 734
 */
 #define CURRLIM_DAC DAC1->DHR12R1
 
-#define ADC_TO_MA(x_) (((x_)*17600)>>12)
-#define MA_TO_ADC(x_) (((x_)*953)>>12)
+#ifdef CHARGER_FREQ333
+	#define ADC_TO_MA(x_) (((x_)*22856)>>12)
+	#define MA_TO_ADC(x_) (((x_)*734)>>12)
+#endif
+#ifdef CHARGER_FREQ250
+	#define ADC_TO_MA(x_) (((x_)*25598)>>12)
+	#define MA_TO_ADC(x_) (((x_)*655)>>12)
+#endif
+
+
 #define MA_TO_DAC(x_) (((x_)*1271)>>12)
 
 void start_phab();
@@ -422,11 +438,31 @@ PHB:         ---------_---------_---------_
 	1 unit = 2.5ns (timer runs at 400MHz)
 
 */
+
+#ifdef CHARGER_FREQ333
+
 #define PERIOD       1200
 #define MAX_DUTY_ON  1080
 #define MAX_DUTY_OFF 120
 #define MIN_DUTY_ON  360
 #define MIN_DUTY_OFF 840
+
+#endif
+
+#ifdef CHARGER_FREQ250
+
+#define PERIOD       1600
+#define MAX_DUTY_ON  1440
+#define MAX_DUTY_OFF 160
+#define MIN_DUTY_ON  480
+#define MIN_DUTY_OFF 1120
+
+#endif
+
+// Initial duty will be at least this:
+#define INITIAL_DUTY_OFF (MAX_DUTY_OFF)
+
+
 
 /*
 	Maximum difference in duty cycles between the two phases allowed before erroring out.
@@ -467,7 +503,6 @@ PHB:         ---------_---------_---------_
 // Phase B: QuickPrint6: Revocery: 19.7us
 
 
-#define INITIAL_DUTY_OFF 100
 
 
 // Gives the ontime
@@ -886,7 +921,7 @@ void charger_test()
 	if(cnt==10)
 	{
 		start_phab(1);
-		delay_us(20);
+		delay_us(27);
 //		set_current(4000);
 //		delay_us(60);
 		stop_phab();
@@ -949,6 +984,27 @@ void charger_test()
 // 3.6 = 4.63   129%
 // 2*1.5 (3.0) = 3.9  130%
 
+
+// New efficiency measurements, with support for lower freq:
+
+// 333kHz
+// in  29.34V 2.13A 62.494W
+// out 16.22V 2.87A 46.551W
+// Ploss=15.943W
+// eff=74.5%
+// Ripple:
+// Vin_p-p  60mV RMS (20M BW lim)
+// Vout_p-p 12.3mV RMS (20M BW lim)
+
+// 250kHz
+
+// in  29.40V 2.06A 60.564W
+// out 16.23V 2.97A 48.203W
+// Ploss=12.361W
+// eff=79.6%
+// Ripple:
+// Vin_p-p  54mV RMS (20M BW lim)
+// Vout_p-p 12.5mV RMS (20M BW lim)
 
 void charger_test2()
 {
