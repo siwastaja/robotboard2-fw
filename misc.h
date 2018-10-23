@@ -39,3 +39,7 @@ void epc_safety_shutdown();
 #define DBG_PR_VAR_U16(n_) do{uart_print_string_blocking(#n_ " = "); o_utoa16((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
 #define DBG_PR_VAR_I16(n_) do{uart_print_string_blocking(#n_ " = "); o_itoa16((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
 
+
+void init_cpu_profiler();
+void profile_cpu_blocking_40ms();
+

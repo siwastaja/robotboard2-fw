@@ -168,6 +168,36 @@ void error(int code)
 	}
 }
 
+void init_cpu_profiler()
+{
+	// TIM4 used for CPU usage profiling
+	RCC->APB1LENR |= 1UL<<2;
+	__DSB();
+	TIM4->PSC = 200-1;
+	TIM4->CR1 = 1UL<<3 /* one pulse mode */;
+	TIM4->ARR = 0xffffffff;
+}
+
+void profile_cpu_blocking_40ms()
+{
+	TIM4->CNT = 0;
+	__DSB();
+	TIM4->CR1 = 1UL<<3 | 1UL; // Enable
+	__DSB();
+	delay_ms(40);
+	uint32_t time = TIM4->CNT;		
+	TIM4->CR1 = 1UL<<3;
+	__DSB();
+	uart_print_string_blocking("CPU overhead : "); 
+	char* p_joo = o_utoa32(((time-40000))*10000/40000, printbuf);
+	p_joo[0] = p_joo[-1];
+	p_joo[-1] = p_joo[-2];
+	p_joo[-2] = '.';
+	p_joo[1] = 0;
+
+	uart_print_string_blocking(printbuf); uart_print_string_blocking(" %\r\n");
+}
+
 void shutdown_handler()
 {
 	__disable_irq();
