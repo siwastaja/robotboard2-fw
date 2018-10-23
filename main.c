@@ -47,13 +47,95 @@ uint8_t uart_input()
 #endif
 
 
+static char printbuf[128];
+
+#define DBG_PR_VAR_U32_HEX(n_) do{uart_print_string_blocking(#n_ " = "); o_utoa32_hex((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
+
+void dump_scb()
+{
+	uart_print_string_blocking("\r\n");
+	DBG_PR_VAR_U32_HEX(SCB->CPUID);
+	DBG_PR_VAR_U32_HEX(SCB->ICSR);
+	DBG_PR_VAR_U32_HEX(SCB->VTOR);
+	DBG_PR_VAR_U32_HEX(SCB->AIRCR);
+	DBG_PR_VAR_U32_HEX(SCB->SCR);
+	DBG_PR_VAR_U32_HEX(SCB->CCR);
+	DBG_PR_VAR_U32_HEX(SCB->SHCSR);
+	DBG_PR_VAR_U32_HEX(SCB->CFSR);
+	DBG_PR_VAR_U32_HEX(SCB->HFSR);
+	DBG_PR_VAR_U32_HEX(SCB->DFSR);
+	DBG_PR_VAR_U32_HEX(SCB->MMFAR);
+	DBG_PR_VAR_U32_HEX(SCB->BFAR);
+	DBG_PR_VAR_U32_HEX(SCB->AFSR);
+	DBG_PR_VAR_U32_HEX(SCB->ID_PFR[0]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_PFR[1]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_DFR);
+	DBG_PR_VAR_U32_HEX(SCB->ID_AFR);
+	DBG_PR_VAR_U32_HEX(SCB->ID_MFR[0]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_MFR[1]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_MFR[2]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_MFR[3]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_ISAR[0]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_ISAR[1]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_ISAR[2]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_ISAR[3]);
+	DBG_PR_VAR_U32_HEX(SCB->ID_ISAR[4]);
+	DBG_PR_VAR_U32_HEX(SCB->CPACR);
+	DBG_PR_VAR_U32_HEX(SCB->STIR);
+	DBG_PR_VAR_U32_HEX(SCB->MVFR0);
+	DBG_PR_VAR_U32_HEX(SCB->MVFR1);
+	DBG_PR_VAR_U32_HEX(SCB->MVFR2);
+	DBG_PR_VAR_U32_HEX(SCB->ITCMCR);
+	DBG_PR_VAR_U32_HEX(SCB->DTCMCR);
+	DBG_PR_VAR_U32_HEX(SCB->AHBPCR);
+	DBG_PR_VAR_U32_HEX(SCB->AHBSCR);
+	DBG_PR_VAR_U32_HEX(SCB->ABFSR);
+	uart_print_string_blocking("\r\n");
+
+}
+
+void dump_stack()
+{
+	register int sp asm ("sp");
+	uart_print_string_blocking("\r\nSP = "); o_utoa32_hex(sp, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\nStack dump = \r\n");
+	uint8_t* p = (uint8_t*)sp;
+
+	int i = 0;
+
+	extern unsigned int _STACKTOP;
+	
+	while(p < (uint8_t*)&_STACKTOP)
+	{
+		o_utoa32_hex(*(uint32_t*)p, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" "); 
+//		if(i%4 == 3)
+//			uart_print_string_blocking(" "); 
+		if(i%32 == 0)
+			uart_print_string_blocking("\r\n"); 
+
+		if(i>16384)
+		{
+			uart_print_string_blocking("(STOPPED)\r\n"); 
+			break;
+		}
+		p+=4;
+		i+=4;
+	}
+
+}
+
 void error(int code)
 {
 	__disable_irq();
 	charger_safety_shutdown();
 	epc_safety_shutdown();
 
-	__enable_irq();
+
+	uart_print_string_blocking("\r\nERROR "); o_itoa32(code, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	dump_scb();
+	dump_stack();
+//	__enable_irq();
 
 	int i = 0;
 	int o = 0;
@@ -132,10 +214,10 @@ void main()
 
 	IO_TO_GPO(GPIOC, 13); // LED
 
-	LED_ON();
-	delay_ms(20);
-	LED_OFF();
-	delay_ms(10);
+//	LED_ON();
+//	delay_ms(20);
+//	LED_OFF();
+//	delay_ms(10);
 
 /*
 	sys_ck (for CPU, etc.) is pll1_p_ck
@@ -242,6 +324,22 @@ void main()
 	__ISB();
 
 
+	// Setup Memory Protection Unit
+	// MPU is disabled during hardfault and NMI
+	MPU->CTRL = 1UL<<2 /*Default backgroung map for privileged code*/ | 1UL /*Enable MPU*/;
+	__DSB();
+
+	MPU->RNR = 0;
+	MPU->RBAR = 0UL; // Base address - keep last five bits cleared (minimum granularity 32 bytes)
+	MPU->RASR = 0UL<<28 /*Allow instr fetch*/ | 0b110UL<<24 /*Read Only*/ |
+		0b001000UL<<16 /*TEX=001, C=0, B=0, S=0 normal, non-shareable, noncacheable*/ |
+		(15UL  -1UL)<<1 /*Len = 32K = 2^15 bytes*/ |
+		1UL /*Enable it!*/;
+	// Test code to trig the fault: *(uint32_t*)0x00000080 = 1234;
+
+
+	__DSB(); __ISB();
+
 	/*
 		Interrupts will have 16 levels of pre-emptive priority.
 
@@ -289,6 +387,8 @@ void main()
 	delay_ms(10);
 //	tof_ctrl_init();
 //	sbc_comm_test();
+	dump_scb();
+
 	pointer_system_test();
 /*	while(1)
 	{
