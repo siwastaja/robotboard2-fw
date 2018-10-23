@@ -343,6 +343,7 @@ volatile int spi_dbg1, spi_dbg2;
 
 void sbc_spi_cs_end_inthandler()
 {
+	static int prev_tsize;
 //	spi_dbg1 = DMA1_Stream0->NDTR;
 //	spi_dbg2 = DMA1_Stream1->NDTR;
 	// Triggered when cs goes high
@@ -464,7 +465,9 @@ void sbc_spi_cs_end_inthandler()
 	// Process RX FIFO and check for errors here, so we can flag the next TX packet.
 	if(len >= 16 && ((s2b_header_t*)rx_fifo[rx_fifo_spi])->magic == 0x2345)
 	{
-		if(crc_err)
+		// CRC calculation in the SPI peripheral only works correctly when our tx is of known size, and longer than our rx
+		// (i.e., the normal case). Prevent false positives:
+		if(prev_tsize > len && crc_err)
 		{
 			uart_print_string_blocking("\r\nCRC_ERR\r\n");
 //			uart_print_string_blocking("\r\nRXCRC = 0x"); o_utoa32_hex(rxcrc, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
@@ -499,6 +502,7 @@ void sbc_spi_cs_end_inthandler()
 		// Don't enable TX DMA, let the SPI send the content of the "underrun register"
 		#if CRC_EN == 1
 			SPI1->TSIZE = 0;
+			prev_tsize = 0;
 		#endif
 	}
 	else
@@ -520,7 +524,7 @@ void sbc_spi_cs_end_inthandler()
 		DMA1_Stream0->M0AR = (uint32_t)tx_fifo[tx_fifo_spi];
 		// TSIZE tells the SPI peripheral when to insert the CRC byte:
 		#if CRC_EN == 1
-			SPI1->TSIZE = ((b2s_header_t*)&tx_fifo[tx_fifo_spi][0])->payload_len + sizeof(b2s_header_t) + FOOTER_LEN;
+			SPI1->TSIZE = prev_tsize = ((b2s_header_t*)&tx_fifo[tx_fifo_spi][0])->payload_len + sizeof(b2s_header_t) + FOOTER_LEN;
 		#endif
 		__DSB();
 		DMA_CLEAR_INTFLAGS(DMA1, 0);
