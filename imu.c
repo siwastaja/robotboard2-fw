@@ -118,6 +118,7 @@ SPI6 cannot be mapped to DMA1 or DMA2, so it has to be mapped to BDMA.
 
 void agm01_errhandler()
 {
+	SAFETY_SHUTDOWN();
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
@@ -140,6 +141,7 @@ void agm01_errhandler()
 
 void agm23_errhandler()
 {
+	SAFETY_SHUTDOWN();
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
@@ -162,6 +164,7 @@ void agm23_errhandler()
 
 void agm45_errhandler()
 {
+	SAFETY_SHUTDOWN();
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");

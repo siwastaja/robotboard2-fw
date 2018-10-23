@@ -78,7 +78,7 @@ volatile uint8_t epc_rdbuf[16] __attribute__((aligned(4)));
 #define I2C_CR1_BASICS_ON (I2C_CR1_BASICS_OFF | 1UL /*keep it on*/)
 
 
-
+void epc_safety_shutdown() __attribute__((section(".text_itcm")));
 void epc_safety_shutdown()
 {
 	// It's most important to bring down the analog supplies in the correct order, and do this quickly.
@@ -89,8 +89,8 @@ void epc_safety_shutdown()
 	tof_mux_all_off();
 	LEDWIDE_OFF();
 	LEDNARROW_OFF();
-	delay_ms(100);
-	PLUS3V3_OFF();
+//	delay_ms(100);
+//	PLUS3V3_OFF();
 }
 
 
@@ -112,19 +112,19 @@ void epc_i2c_write_dma(uint8_t slave_addr_7b, volatile uint8_t *buf, uint8_t len
 	__DSB();
 
 	if(epc_i2c_write_busy || epc_i2c_read_busy || epc_i2c_read_state)
-		error(4);
+		error(16);
 
 	if(DMA1->LISR & 1UL<<22)
-		error(5);
+		error(17);
 	if(DMA1->LISR & 1UL<<24)
-		error(6);
+		error(18);
 	if(DMA1->LISR & 1UL<<25)
-		error(7);
+		error(19);
 
 	if(WR_DMA_STREAM->CR & 1UL)
 	{
 		if(DMA1->LISR & 1UL<<27)
-			error(8);
+			error(20);
 
 		uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
@@ -681,15 +681,16 @@ void epc_run()
 
 		dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 		trig();
-		LED_ON();
+//		LED_ON();
 		if(poll_capt_with_timeout()) error(8);
-		LED_OFF();
+//		LED_OFF();
 
 		delay_ms(100);
-//		uart_print_string_blocking("val middle = "); o_utoa16_fixed(mono_comp.img[40*EPC_XS+80], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		rgb_update(1, 32,  13,   0);
-		delay_ms(100);
-		rgb_update(1,   0,   0,   0);
+		uart_print_string_blocking("val middle = "); o_utoa16_fixed(dcsa.dcs[0].img[40*EPC_XS+80], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//		rgb_update(4, 255,  220,  215);
+//		rgb_update(4, 255,  127,   0);
+//		delay_ms(100);
+//		rgb_update(1,   0,   0,   0);
 		delay_ms(200);
 
 		cnt++;
@@ -697,6 +698,137 @@ void epc_run()
 	}
 
 
+}
+
+void cool_effect2()
+{
+	int bright = 4, r = 0, g = 0, b = 0;
+
+	while(1)
+	{
+		uint8_t cmd = uart_input();
+		if(cmd == 'A')
+			r+=20;
+		if(cmd == 'Z')
+			r-=20;
+		if(cmd == 'a')
+			r+=5;
+		if(cmd == 'z')
+			r-=5;
+
+		if(cmd == 'S')
+			g+=20;
+		if(cmd == 'X')
+			g-=20;
+		if(cmd == 's')
+			g+=5;
+		if(cmd == 'x')
+			g-=5;
+
+		if(cmd == 'D')
+			b+=20;
+		if(cmd == 'C')
+			b-=20;
+		if(cmd == 'd')
+			b+=5;
+		if(cmd == 'c')
+			b-=5;
+
+		if(cmd >= '0' && cmd <= '4')
+			bright = cmd-'0';
+
+		if(r<0) r=0; else if(r>255) r = 255;
+		if(g<0) g=0; else if(g>255) g = 255;
+		if(b<0) b=0; else if(b>255) b = 255;
+		rgb_update(bright, r,  g,  b);
+
+		delay_ms(5);
+		static int cnt=0;
+		cnt++;
+		if(cnt==20)
+		{
+			cnt=0;
+			uart_print_string_blocking("R "); o_utoa8_fixed(r, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" G "); o_utoa8_fixed(g, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" B "); o_utoa8_fixed(b, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" I "); o_utoa8_fixed(bright, printbuf); uart_print_string_blocking(printbuf);
+
+			uart_print_string_blocking("\r\n");
+		}
+
+	}
+
+}
+
+// Cool white    4,255,255,190
+// Neutral white 4,255,210,110
+// Warm white    4,255,150, 50
+
+// Blinker yellow bright 4,255,120,0
+// Blinker yellow dim    2,255,100,0
+
+// Traffic light green  4,0,255,10
+
+void cool_effect()
+{
+	uint8_t r = 0, g = 0, b = 0;
+	int state = 0;
+	while(1)
+	{
+		if(state == 0)
+		{
+			if(r==255) state++; else r++;
+		}
+		else if(state == 1)
+		{
+			if(r==0) state++; else r--;
+		}
+		else if(state == 2)
+		{
+			if(g==255) state++; else g++;
+		}
+		else if(state == 3)
+		{
+			if(g==0) state++; else g--;
+		}
+		else if(state == 4)
+		{
+			if(b==255) state++; else b++;
+		}
+		else if(state == 5)
+		{
+			if(b==0) state++; else b--;
+		}
+		else if(state == 6)
+		{
+			if(r==255) state++; else {r++;g++;}
+		}
+		else if(state == 7)
+		{
+			if(r==0) state++; else {r--;g--;}
+		}
+		else if(state == 8)
+		{
+			if(g==255) state++; else {b++;g++;}
+		}
+		else if(state == 9)
+		{
+			if(g==0) state++; else {b--;g--;}
+		}
+		else if(state == 10)
+		{
+			if(g==255) state++; else {r++;b++;g++;}
+		}
+		else if(state == 11)
+		{
+			if(g==0) state=0; else {r--;b--;g--;}
+		}
+
+
+		rgb_update(4, r,  g,  b);
+
+		delay_ms(5);
+	}
 }
 
 
@@ -728,6 +860,9 @@ void init_sensors()
 
 
 	epc_i2c_init();
+
+//	tof_mux_select(0);
+//	cool_effect();
 
 	/*
 		Even with 40cm cable, 40MHz (div 2) works well!
@@ -854,7 +989,6 @@ void init_sensors()
 	
 	}
 
-//	LEDWIDE_ON();
 
 	delay_ms(100);
 

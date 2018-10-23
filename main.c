@@ -387,7 +387,7 @@ void main()
 	delay_ms(10);
 //	tof_ctrl_init();
 //	sbc_comm_test();
-	dump_scb();
+//	dump_scb();
 
 	pointer_system_test();
 /*	while(1)

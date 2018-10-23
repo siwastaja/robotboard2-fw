@@ -476,6 +476,7 @@ void flasher()
 void run_flasher()
 {
 	__disable_irq();
+	SAFETY_SHUTDOWN();
 
 	// Disable all other DMAs so they can't mess up our buffers
 	DMA1_Stream0->CR = 0;

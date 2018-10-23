@@ -191,8 +191,8 @@ void charger_safety_shutdown()
 {
 	dis_gate_pha();
 	dis_gate_phb();
-	HRTIM_OUTDIS_PHA();
-	HRTIM_OUTDIS_PHB();
+//	HRTIM_OUTDIS_PHA();
+//	HRTIM_OUTDIS_PHB();
 	IO_TO_GPO(GPIOG, 1);
 	IO_TO_GPO(GPIOG, 0);
 
@@ -200,12 +200,12 @@ void charger_safety_shutdown()
 	infet_chargepump_0();
 	IO_TO_GPO(GPIOE, 10);
 
-	HRTIM.OENR = 0;
+//	HRTIM.OENR = 0;
 }
 
 void charger_safety_errhandler()
 {
-	charger_safety_shutdown();
+	SAFETY_SHUTDOWN();
 
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
@@ -268,7 +268,7 @@ void charger_safety_errhandler()
 
 	uart_print_string_blocking("\r\n");
 
-	error(0);
+	error(11);
 }
 
 void charger_10khz()
@@ -510,11 +510,11 @@ static inline int calc_check_offtime(int finetune)
 	
 	if(new_offtime < MAX_DUTY_OFF || new_offtime > MIN_DUTY_OFF)
 	{
-		charger_safety_shutdown();
+		SAFETY_SHUTDOWN();
 
 		uart_print_string_blocking("\r\nSTOPPED: calculated offtime = "); o_itoa32(new_offtime, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
-		error(5);
+		error(12);
 		return 0;
 	}
 
@@ -571,7 +571,7 @@ void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 void charger_adc2_pha_inthandler() __attribute__((section(".text_itcm")));
 void charger_adc2_pha_inthandler()
 {
-	LED_ON();
+//	LED_ON();
 	interrupt_count++;
 	uint32_t sr1 = ADC1->ISR;
 	uint32_t sr2 = ADC2->ISR;
@@ -580,7 +580,7 @@ void charger_adc2_pha_inthandler()
 
 	if(sr1 & 0b01110010000 /*any AWD or OVERRUN*/ || sr2 & 0b01110011000 /*any AWD or OVERRUN, or End-of-Seq in unexpected state*/)
 	{
-		charger_safety_shutdown();
+		SAFETY_SHUTDOWN();
 		uart_print_string_blocking("\r\nCharger ISR multi-error 1\r\n");
 		charger_safety_errhandler();
 	}
@@ -590,7 +590,7 @@ void charger_adc2_pha_inthandler()
 	{
 		if(++pha_lowcurr_fail_cnt > 10)
 		{
-			charger_safety_shutdown();
+			SAFETY_SHUTDOWN();
 			uart_print_string_blocking("\r\nLow-current failure 1\r\n");
 			charger_safety_errhandler();
 		}
@@ -609,7 +609,7 @@ void charger_adc2_pha_inthandler()
 
 	if(pha_finetune < -200*256 || pha_finetune > 200*256)
 	{
-		charger_safety_shutdown();
+		SAFETY_SHUTDOWN();
 		uart_print_string_blocking("\r\nFinetune OOR 1\r\n");
 		charger_safety_errhandler();
 	}
@@ -652,7 +652,7 @@ int phb_lowcurr_fail_cnt;
 void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 void charger_adc2_phb_inthandler()
 {
-	LED_ON();
+//	LED_ON();
 	interrupt_count++;
 	uint32_t sr1 = ADC1->ISR;
 	uint32_t sr2 = ADC2->ISR;
@@ -663,7 +663,7 @@ void charger_adc2_phb_inthandler()
 	{	
 		// Wrong end-of-sequence not checked for. If it's really out of sync, the next cycle
 		// reveals it, and that's fast enough. We get the check for free there.
-		charger_safety_shutdown();
+		SAFETY_SHUTDOWN();
 		uart_print_string_blocking("\r\nCharger ISR multi-error 2\r\n");
 		charger_safety_errhandler();
 	}
@@ -673,7 +673,7 @@ void charger_adc2_phb_inthandler()
 	{
 		if(++phb_lowcurr_fail_cnt > 10)
 		{
-			charger_safety_shutdown();
+			SAFETY_SHUTDOWN();
 			uart_print_string_blocking("\r\nLow-current failure 2\r\n");
 			charger_safety_errhandler();
 		}
@@ -692,7 +692,7 @@ void charger_adc2_phb_inthandler()
 
 	if(phb_finetune < -200*256 || phb_finetune > 200*256)
 	{
-		charger_safety_shutdown();
+		SAFETY_SHUTDOWN();
 		uart_print_string_blocking("\r\nFinetune OOR 2\r\n");
 		charger_safety_errhandler();
 	}
@@ -884,7 +884,7 @@ void start_phab()
 {
 	if(started)
 	{
-		error(3);
+		error(13);
 	}
 	started = 1;
 	en_gate_pha();

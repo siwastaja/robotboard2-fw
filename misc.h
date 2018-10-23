@@ -26,4 +26,9 @@ uint8_t uart_input();
 #define SET_ADC12_VECTOR(v) do{*((volatile uint32_t*)(VECTORS+0x0088)) = (uint32_t)(v);}while(0)
 
 
+void charger_safety_shutdown();
+void epc_safety_shutdown();
+
+#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); epc_safety_shutdown();}while(0)
+
 

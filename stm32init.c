@@ -12,6 +12,7 @@ void stm32init();
 void nmi_handler();
 void invalid_handler();
 void hardfault_handler();
+void memmanage_handler();
 
 extern void error(int code);
 extern void main();
@@ -51,7 +52,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x0004 RESET              */ (unsigned int *) stm32init,
 /* 0x0008 NMI                */ (unsigned int *) nmi_handler,
 /* 0x000C HARDFAULT          */ (unsigned int *) hardfault_handler,
-/* 0x0010 MemManage          */ (unsigned int *) invalid_handler,
+/* 0x0010 MemManage          */ (unsigned int *) memmanage_handler,
 /* 0x0014 BusFault           */ (unsigned int *) invalid_handler,
 /* 0x0018 UsageFault         */ (unsigned int *) invalid_handler,
 /* 0x001C                    */ (unsigned int *) invalid_handler,
@@ -508,15 +509,20 @@ void stm32init(void)
 
 void nmi_handler(void)
 {
-	error(1);
+	error(2);
 }
 
 void hardfault_handler(void)
 {
-	error(2);
+	error(3);
+}
+
+void memmanage_handler(void)
+{
+	error(4);
 }
 
 void invalid_handler(void)
 {
-	error(3);
+	error(5);
 }

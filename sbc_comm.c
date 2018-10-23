@@ -185,6 +185,18 @@ int is_tx_overrun()
 	return (next_tx_fifo_cpu == tx_fifo_spi);
 }
 
+void flag_err()
+{
+	for(int i=0; i<TX_FIFO_DEPTH; i++)
+		((b2s_header_t*)&tx_fifo[i][0])->err_flags = 1;
+}
+
+void clear_err()
+{
+	for(int i=0; i<TX_FIFO_DEPTH; i++)
+		((b2s_header_t*)&tx_fifo[i][0])->err_flags = 0;
+}
+
 void tx_fifo_push()
 {
 	((b2s_header_t*)&tx_fifo[tx_fifo_cpu][0])->fifo_status = 0;
@@ -334,7 +346,7 @@ void sbc_spi_cs_end_inthandler()
 //	spi_dbg1 = DMA1_Stream0->NDTR;
 //	spi_dbg2 = DMA1_Stream1->NDTR;
 	// Triggered when cs goes high
-	uart_print_string_blocking("\r\n--");
+//	uart_print_string_blocking("\r\n--");
 
 /*
 	uart_print_string_blocking("\r\nSTART\r\n");
@@ -449,6 +461,37 @@ void sbc_spi_cs_end_inthandler()
 		}
 	}
 
+	// Process RX FIFO and check for errors here, so we can flag the next TX packet.
+	if(len >= 16 && ((s2b_header_t*)rx_fifo[rx_fifo_spi])->magic == 0x2345)
+	{
+		if(crc_err)
+		{
+			uart_print_string_blocking("\r\nCRC_ERR\r\n");
+//			uart_print_string_blocking("\r\nRXCRC = 0x"); o_utoa32_hex(rxcrc, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+			flag_err();
+		}
+		else
+		{
+			int next_rx_fifo_spi = rx_fifo_spi+1;
+			if(next_rx_fifo_spi >= RX_FIFO_DEPTH)
+				next_rx_fifo_spi = 0;
+
+			if(next_rx_fifo_spi == rx_fifo_cpu)
+			{
+				// RX fifo full - overrun. Considered catastrophic condition.
+				error(17);
+			}
+			else
+			{
+				rx_fifo_spi = next_rx_fifo_spi;
+			}
+		}
+	}
+	else
+	{
+		// Just re-enable the DMA so the next operation writes to the same place.
+	}	
+
 	// TX DMA for the next transfer
 	if(tx_fifo_cpu == tx_fifo_spi)
 	{
@@ -471,7 +514,6 @@ void sbc_spi_cs_end_inthandler()
 			  ((b2s_header_t*)&tx_fifo[tx_fifo_spi][0])->payload_len == ((b2s_header_t*)&tx_fifo[nextnext][0])->payload_len)
 			{
 				((b2s_header_t*)&tx_fifo[tx_fifo_spi][0])->fifo_status |= 1;
-				__DSB();
 			}
 		}
 
@@ -488,33 +530,6 @@ void sbc_spi_cs_end_inthandler()
 
 
 	// RX DMA
-
-	if(len >= 16 && ((s2b_header_t*)rx_fifo[rx_fifo_spi])->magic == 0x2345)
-	{
-		if(crc_err)
-		{
-			uart_print_string_blocking("\r\nCRC_ERR\r\n");
-		}
-		uart_print_string_blocking("\r\nRXCRC = 0x"); o_utoa32_hex(rxcrc, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-		int next_rx_fifo_spi = rx_fifo_spi+1;
-		if(next_rx_fifo_spi >= RX_FIFO_DEPTH)
-			next_rx_fifo_spi = 0;
-
-		if(next_rx_fifo_spi == rx_fifo_cpu)
-		{
-			// RX fifo full - overrun. Considered catastrophic condition.
-			error(17);
-		}
-		else
-		{
-			rx_fifo_spi = next_rx_fifo_spi;
-		}
-	}
-	else
-	{
-		// Just re-enable the DMA so the next operation writes to the same place.
-	}	
 
 	DMA1_Stream1->NDTR = RX_DMA_NDTR;
 	DMA1_Stream1->M0AR = (uint32_t)rx_fifo[rx_fifo_spi];
@@ -579,6 +594,12 @@ void parse_rx_packet()
 			case CMD_SUBSCRIBE:
 			{
 				update_subs((uint64_t*)p_data);
+			}
+			break;
+
+			case CMD_ACK_ERROR:
+			{
+				clear_err();
 			}
 			break;
 
@@ -679,43 +700,16 @@ uint64_t subs_test2[4] = {0b1010,0,0,0};
 uint64_t subs_test3[4] = {0b0000,0,0,0};
 uint64_t subs_test4[4] = {0b0100,0,0,0};
 
-void wtf()
-{
-	uart_print_string_blocking("\r\nKAKKA, address="); 
-	o_utoa32_hex((uint32_t)&test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-	uart_print_string_blocking("\r\nKAKKA, pointer="); 
-	o_utoa32_hex((uint32_t)test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-}
-
 static void gen_some_data1()
 {
 	static int cnt = 0;
-		uart_print_string_blocking("\r\n4\r\n");
-
-	wtf();
-
-	uart_print_string_blocking("\r\nKAKKA, address="); 
-	o_utoa32_hex((uint32_t)&test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-	uart_print_string_blocking("\r\nKAKKA, address="); 
-	o_utoa32_hex((uint32_t)&test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-	uart_print_string_blocking("\r\nKAKKA, address="); 
-	o_utoa32_hex((uint32_t)&test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-	uart_print_string_blocking("\r\nKAKKA, pointer="); 
-	o_utoa32_hex((uint32_t)test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 	if(!test_msg1)
 	{
-		uart_print_string_blocking("\r\n5\r\n");
 		uart_print_string_blocking("\r\nmsg1 generation turned off\r\n"); 
 	}
 	else
 	{
-		uart_print_string_blocking("\r\n6\r\n");
-
 		uart_print_string_blocking("\r\nGenerating data1, pointer="); 
 		o_utoa32_hex((uint32_t)test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
@@ -767,7 +761,6 @@ static void gen_some_data3()
 
 void pointer_system_test()
 {
-	wtf();
 	int cnt=0;
 	uint8_t cnt_u8 = 0;
 	while(1)
@@ -779,16 +772,13 @@ void pointer_system_test()
 //			check_rx_test();
 		}
 
-		uart_print_string_blocking("\r\n1\r\n");
 		if(is_tx_overrun())
 		{
 			uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
 		}
 		else
 		{
-			uart_print_string_blocking("\r\n2\r\n");
-			tx_fifo[tx_fifo_cpu][3] = cnt_u8;
-			uart_print_string_blocking("\r\n3\r\n");
+//			tx_fifo[tx_fifo_cpu][3] = cnt_u8;
 			gen_some_data1();
 			gen_some_data2();
 			gen_some_data3();

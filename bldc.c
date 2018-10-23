@@ -476,10 +476,8 @@ void init_bldc()
 	__DSB();
 	// Don't enable the timer, let it sync to TIM1
 
-	LED_ON();
 	while(!(TIM8->CR1 & 1UL)) ;
 	__DSB();
-	LED_OFF();
 
 	TIM1->CCR1 = PWM_MID;
 
