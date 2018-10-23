@@ -128,7 +128,13 @@ void update_subs(uint64_t *subs_vector)
 		{
 			if(t & 1)
 			{
-				// id #s is enabled
+				// enable id #s
+				if(!b2s_msgs[s].p_accessor)
+				{
+					// Trying to add a non-existing message
+					// TODO: error recovery & reporting
+					error(21); 
+				}				
 				if(offs + b2s_msgs[s].size > B2S_MAX_LEN-FOOTER_LEN)
 				{
 					// requested subscription doesn't fit: stop adding subscriptions.
@@ -272,17 +278,6 @@ static void wait_detect_sbc()
 }
 #endif
 
-volatile int spi_test_cnt2;
-
-/*
-void sbc_spi_eot_inthandler()
-{
-	SPI1->IFCR = 1UL<<3; // clear the intflag
-	__DSB();
-	spi_test_cnt2++;
-}
-*/
-
 /*
 	Okay, so STM32 SPI _still_ doesn't _actually_ support nSS pin hardware management in slave mode, even when they are talking about
 	it like that.
@@ -320,7 +315,6 @@ void sbc_spi_eot_inthandler()
 
 */
 
-volatile int spi_test_cnt;
 volatile int new_rx;
 volatile int new_rx_len;
 
@@ -340,6 +334,7 @@ void sbc_spi_cs_end_inthandler()
 //	spi_dbg1 = DMA1_Stream0->NDTR;
 //	spi_dbg2 = DMA1_Stream1->NDTR;
 	// Triggered when cs goes high
+	uart_print_string_blocking("\r\n--");
 
 /*
 	uart_print_string_blocking("\r\nSTART\r\n");
@@ -359,9 +354,16 @@ void sbc_spi_cs_end_inthandler()
 	else // RASPI
 		EXTI_D1->PR1 = 1UL<<10;
 
-	spi_test_cnt++;
-
 //	SPI1->CR1 = 0; // Disable and reset the SPI - FIFO flush happens 
+
+	int crc_err = 0;
+	if(SPI1->SR & (1UL<<7))
+	{
+		crc_err = 1;
+	}
+
+	uint32_t rxcrc = SPI1->RXCRC;
+
 
 	// Silicon Errata: Hard reset is needed if CRC is used and if RX OVR happens. Otherwise, all
 	// further DMA operations fail right at the start.
@@ -372,16 +374,14 @@ void sbc_spi_cs_end_inthandler()
 	__DSB();
 
 
-
-
 	int tx_dma_was_enabled = DMA1_Stream0->CR & 1UL;
 
 	__DMB();
 
 
-	// Turn TX DMA bit off (by rewriting the whole register to save time):
+	// Reconf SPI after reset
+
 	SPI1->CFG1 = SPI_CFG1;
-	__DSB();
 
 	// Disable the DMAs (but keep the configuration):
 	DMA1_Stream0->CR = 0b01UL<<16 /*med prio*/ | 0UL<<8 /*circular OFF*/ |
@@ -427,6 +427,8 @@ void sbc_spi_cs_end_inthandler()
 	uart_print_string_blocking("len = "); o_utoa16(len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 	uart_print_string_blocking("was_ena = "); o_utoa16(tx_dma_was_enabled, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 */
+
+	uart_print_string_blocking("len = "); o_utoa16(len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 	// This is not needed, RCC reset clears this as well:
 //	SPI1->IFCR = 0b111111111000; // TRAP: Clear EOT and TXTF flags, otherwise the TX DMA won't start if TSIZE is ever non-zero, causing EOT to be high.
@@ -489,6 +491,12 @@ void sbc_spi_cs_end_inthandler()
 
 	if(len >= 16 && ((s2b_header_t*)rx_fifo[rx_fifo_spi])->magic == 0x2345)
 	{
+		if(crc_err)
+		{
+			uart_print_string_blocking("\r\nCRC_ERR\r\n");
+		}
+		uart_print_string_blocking("\r\nRXCRC = 0x"); o_utoa32_hex(rxcrc, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
 		int next_rx_fifo_spi = rx_fifo_spi+1;
 		if(next_rx_fifo_spi >= RX_FIFO_DEPTH)
 			next_rx_fifo_spi = 0;
@@ -496,7 +504,7 @@ void sbc_spi_cs_end_inthandler()
 		if(next_rx_fifo_spi == rx_fifo_cpu)
 		{
 			// RX fifo full - overrun. Considered catastrophic condition.
-			error(4);
+			error(17);
 		}
 		else
 		{
@@ -517,9 +525,6 @@ void sbc_spi_cs_end_inthandler()
 	__DSB();
 
 
-//	SPI1->IFCR = 0b111111111000; // TRAP: Clear EOT and TXTF flags, otherwise the TX DMA won't start if TSIZE is ever non-zero, causing EOT to be high.
-
-//	if(len!=6000)
 	SPI1->CR1 = 1UL; // Enable in slave mode
 	__DSB();
 
@@ -544,6 +549,8 @@ void parse_rx_packet()
 	s2b_header_t *p_header = (s2b_header_t*)rx_fifo[rx_fifo_cpu];
 
 	int offs = S2B_HEADER_LEN;
+	uart_print_string_blocking("PARSE: n_cmds = "); o_utoa16(p_header->n_cmds, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
 	for(int p = 0; p < p_header->n_cmds; p++)
 	{
 		s2b_cmdheader_t *p_cmdheader = (s2b_cmdheader_t*)&rx_fifo[rx_fifo_cpu][offs];
@@ -555,6 +562,9 @@ void parse_rx_packet()
 			error(6);
 			break;
 		}
+
+		uart_print_string_blocking("PARSE: paylen = "); o_utoa16(p_cmdheader->paylen, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+		uart_print_string_blocking("PARSE: msgid = "); o_utoa16(p_cmdheader->msgid, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 		if(p_cmdheader->paylen != s2b_msgs[p_cmdheader->msgid].size)
 		{
@@ -669,15 +679,43 @@ uint64_t subs_test2[4] = {0b1010,0,0,0};
 uint64_t subs_test3[4] = {0b0000,0,0,0};
 uint64_t subs_test4[4] = {0b0100,0,0,0};
 
+void wtf()
+{
+	uart_print_string_blocking("\r\nKAKKA, address="); 
+	o_utoa32_hex((uint32_t)&test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("\r\nKAKKA, pointer="); 
+	o_utoa32_hex((uint32_t)test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+}
+
 static void gen_some_data1()
 {
 	static int cnt = 0;
+		uart_print_string_blocking("\r\n4\r\n");
+
+	wtf();
+
+	uart_print_string_blocking("\r\nKAKKA, address="); 
+	o_utoa32_hex((uint32_t)&test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("\r\nKAKKA, address="); 
+	o_utoa32_hex((uint32_t)&test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("\r\nKAKKA, address="); 
+	o_utoa32_hex((uint32_t)&test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("\r\nKAKKA, pointer="); 
+	o_utoa32_hex((uint32_t)test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
 	if(!test_msg1)
 	{
+		uart_print_string_blocking("\r\n5\r\n");
 		uart_print_string_blocking("\r\nmsg1 generation turned off\r\n"); 
 	}
 	else
 	{
+		uart_print_string_blocking("\r\n6\r\n");
+
 		uart_print_string_blocking("\r\nGenerating data1, pointer="); 
 		o_utoa32_hex((uint32_t)test_msg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
@@ -729,6 +767,7 @@ static void gen_some_data3()
 
 void pointer_system_test()
 {
+	wtf();
 	int cnt=0;
 	uint8_t cnt_u8 = 0;
 	while(1)
@@ -740,13 +779,16 @@ void pointer_system_test()
 //			check_rx_test();
 		}
 
+		uart_print_string_blocking("\r\n1\r\n");
 		if(is_tx_overrun())
 		{
 			uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
 		}
 		else
 		{
+			uart_print_string_blocking("\r\n2\r\n");
 			tx_fifo[tx_fifo_cpu][3] = cnt_u8;
+			uart_print_string_blocking("\r\n3\r\n");
 			gen_some_data1();
 			gen_some_data2();
 			gen_some_data3();
