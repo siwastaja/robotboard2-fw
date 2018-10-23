@@ -135,11 +135,11 @@ extern uint32_t vbat_per_vinbus_mult;
 #define MV_TO_CHA_VIN_MEAS(x_)    (ADC_RDIV_MV_TO_LSB((x_), 474, 22))
 #define MV_TO_VBAT_MEAS(x_)       (ADC_RDIV_MV_TO_LSB((x_), 475, 68))
 
-#define AWD_VBAT_LO    MV_TO_VBAT_MEAS(14000) // 15.0V = 2.5 V/cell
+#define AWD_VBAT_LO    MV_TO_VBAT_MEAS(13400) // 15.0V = 2.5 V/cell
 #define AWD_VBAT_HI    MV_TO_VBAT_MEAS(21000) // 26.0V = 4.33 V/cell
 
-#define AWD_CHA_VINBUS_LO   MV_TO_CHA_VINBUS_MEAS(14000) // 14.0V -> more than diode drop less from VBAT low limit
-#define AWD_CHA_VINBUS_HI   MV_TO_CHA_VINBUS_MEAS(30000) // 55V quick-reacting absolute maximum on Vinbus (Vdsmax for MOSFETs = 80V)
+#define AWD_CHA_VINBUS_LO   MV_TO_CHA_VINBUS_MEAS(13000) // 14.0V -> more than diode drop less from VBAT low limit
+#define AWD_CHA_VINBUS_HI   MV_TO_CHA_VINBUS_MEAS(38000) // 55V quick-reacting absolute maximum on Vinbus (Vdsmax for MOSFETs = 80V)
 
 // Hard-coded sanity limit checks, so that the AWDs have a chance of working at all.
 #if (AWD_VBAT_LO < 100 || AWD_VBAT_HI > 16364)

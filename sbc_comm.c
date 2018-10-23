@@ -466,7 +466,8 @@ void sbc_spi_cs_end_inthandler()
 	if(len >= 16 && ((s2b_header_t*)rx_fifo[rx_fifo_spi])->magic == 0x2345)
 	{
 		// CRC calculation in the SPI peripheral only works correctly when our tx is of known size, and longer than our rx
-		// (i.e., the normal case). Prevent false positives:
+		// (i.e., the normal case). Prevent false positives here. The caveat is, we lose the protection of CRC for incoming
+		// commands when there are little or no subscriptions turned on.
 		if(prev_tsize > len && crc_err)
 		{
 			uart_print_string_blocking("\r\nCRC_ERR\r\n");

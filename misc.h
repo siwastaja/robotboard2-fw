@@ -32,3 +32,10 @@ void epc_safety_shutdown();
 #define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); epc_safety_shutdown();}while(0)
 
 
+
+#define DBG_PR_VAR_U32_HEX(n_) do{uart_print_string_blocking(#n_ " = "); o_utoa32_hex((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
+#define DBG_PR_VAR_U32(n_) do{uart_print_string_blocking(#n_ " = "); o_utoa32((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
+#define DBG_PR_VAR_I32(n_) do{uart_print_string_blocking(#n_ " = "); o_itoa32((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
+#define DBG_PR_VAR_U16(n_) do{uart_print_string_blocking(#n_ " = "); o_utoa16((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
+#define DBG_PR_VAR_I16(n_) do{uart_print_string_blocking(#n_ " = "); o_itoa16((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
+

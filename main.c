@@ -49,7 +49,6 @@ uint8_t uart_input()
 
 static char printbuf[128];
 
-#define DBG_PR_VAR_U32_HEX(n_) do{uart_print_string_blocking(#n_ " = "); o_utoa32_hex((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)
 
 void dump_scb()
 {
@@ -133,8 +132,8 @@ void error(int code)
 
 
 	uart_print_string_blocking("\r\nERROR "); o_itoa32(code, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-	dump_scb();
-	dump_stack();
+//	dump_scb();
+//	dump_stack();
 //	__enable_irq();
 
 	int i = 0;
@@ -378,7 +377,7 @@ void main()
 //	timer_test();
 	init_adcs();
 	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
-//	init_charger(); // Requires working ADC1 data, so init_bldc() first.
+	init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
 //	extern void adc_test();
 //	while(1)

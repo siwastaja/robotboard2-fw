@@ -452,7 +452,7 @@ PHB:         ---------_---------_---------_
 // Phase B: QuickPrint6: Revocery: 19.7us
 
 
-#define INITIAL_DUTY_OFF 400
+#define INITIAL_DUTY_OFF 100
 
 
 // Gives the ontime
@@ -540,9 +540,21 @@ volatile int phase;
 int32_t current_setpoint = MA_TO_ADC(2000);
 volatile int interrupt_count;
 
+
+int set_current(int ma)
+{
+	if(ma < 1000 || ma > 8000)
+		error(27);
+	current_setpoint = MA_TO_ADC(ma);
+
+	int dac = MA_TO_DAC(ma+4000);
+	if(dac > 4090) dac = 4090;
+	CURRLIM_DAC = dac;
+}
+
 volatile int latest_cur_pha, latest_cur_phb;
 
-#define TRACE_LEN 32
+#define TRACE_LEN 256
 volatile int traces[4][TRACE_LEN];
 volatile int trace_at;
 
@@ -559,19 +571,29 @@ volatile int trace_at;
 
 
 int pha_lowcurr_fail_cnt;
+int phb_lowcurr_fail_cnt;
 
-int pha_finetune;
+//int pha_finetune;
 int phb_finetune;
 
-#define INITIAL_FINETUNE (-100)
+int pha_finetune_fail_cnt;
+int phb_finetune_fail_cnt;
+
+#define INITIAL_FINETUNE (-150)
+#define INITIAL_ERR_INTEGRAL (-15*256)
+
+int pha_err_integral;
 
 void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
+
+static int pid_i = 2;
+static int pid_p = 64;
 
 
 void charger_adc2_pha_inthandler() __attribute__((section(".text_itcm")));
 void charger_adc2_pha_inthandler()
 {
-//	LED_ON();
+	LED_ON();
 	interrupt_count++;
 	uint32_t sr1 = ADC1->ISR;
 	uint32_t sr2 = ADC2->ISR;
@@ -588,7 +610,7 @@ void charger_adc2_pha_inthandler()
 
 	if(cur < MA_TO_ADC(300))
 	{
-		if(++pha_lowcurr_fail_cnt > 10)
+		if(++pha_lowcurr_fail_cnt > 8)
 		{
 			SAFETY_SHUTDOWN();
 			uart_print_string_blocking("\r\nLow-current failure 1\r\n");
@@ -598,25 +620,39 @@ void charger_adc2_pha_inthandler()
 	else
 	{
 		pha_lowcurr_fail_cnt = 0;
-
-		//       0 (0mA)  -  500 (2000mA)   = -500: current too small, decrease offtime.
-		int err = cur - current_setpoint;
-
-		pha_finetune += 40*err; // -500 becomes -5000, which after >>8 equals 19 PWM units, per cycle, sounds ok.
 	}
 
-	traces[2][trace_at] = pha_finetune;
+	//       0 (0mA)  -  500 (2000mA)   = -500: current too small, decrease offtime.
+	int err = cur - current_setpoint;
 
-	if(pha_finetune < -200*256 || pha_finetune > 200*256)
+	pha_err_integral += err;
+	if(pha_err_integral < -20*256)
+	{
+		pha_err_integral = -20*256;
+		pha_finetune_fail_cnt++;
+	}
+	else if(pha_err_integral > 15*256)
+	{
+		pha_err_integral = 15*256;
+		pha_finetune_fail_cnt++;	
+	}
+	else
+		pha_finetune_fail_cnt = 0;
+
+
+	if(pha_finetune_fail_cnt > 7)
 	{
 		SAFETY_SHUTDOWN();
-		uart_print_string_blocking("\r\nFinetune OOR 1\r\n");
+		uart_print_string_blocking("\r\nCharger PID integral windup 1\r\n");
 		charger_safety_errhandler();
 	}
 
+	int pha_finetune = pid_p*err + pid_i*pha_err_integral;
+
+
+	traces[2][trace_at] = pha_finetune;
+
 	int vratio_offtime = calc_check_offtime(pha_finetune>>8);
-
-
 
 	SET_OFFTIME_PHA(vratio_offtime);
 
@@ -647,12 +683,12 @@ void charger_adc2_pha_inthandler()
 
 }
 
-int phb_lowcurr_fail_cnt;
+int phb_disabled = 1;
 
 void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 void charger_adc2_phb_inthandler()
 {
-//	LED_ON();
+	LED_ON();
 	interrupt_count++;
 	uint32_t sr1 = ADC1->ISR;
 	uint32_t sr2 = ADC2->ISR;
@@ -668,10 +704,17 @@ void charger_adc2_phb_inthandler()
 		charger_safety_errhandler();
 	}
 
+	SET_ADC12_VECTOR(charger_adc2_pha_inthandler);
+	ADC2->ISR = 1UL<<3; // Clear the end-of-seq flag: it's used for failure detection
+
+	if(phb_disabled)
+	{
+		goto PHB_SKIP_CTRL;
+	}
 
 	if(cur < MA_TO_ADC(300))
 	{
-		if(++phb_lowcurr_fail_cnt > 10)
+		if(++phb_lowcurr_fail_cnt > 8)
 		{
 			SAFETY_SHUTDOWN();
 			uart_print_string_blocking("\r\nLow-current failure 2\r\n");
@@ -681,34 +724,49 @@ void charger_adc2_phb_inthandler()
 	else
 	{
 		phb_lowcurr_fail_cnt = 0;
-		//       0 (0mA)  -  500 (2000mA)   = -500: current too small, decrease offtime.
-		int err = cur - current_setpoint;
-
-		phb_finetune += 40*err; // -500 becomes -5000, which after >>8 equals 19 PWM units, per cycle, sounds ok.
-
 	}
 
-	traces[3][trace_at] = phb_finetune;
+	//       0 (0mA)  -  500 (2000mA)   = -500: current too small, decrease offtime.
+	int err = cur - current_setpoint;
 
-	if(phb_finetune < -200*256 || phb_finetune > 200*256)
+	phb_finetune += 10*err; // -500 becomes -5000, which after >>8 equals 19 PWM units, per cycle, sounds ok.
+
+
+	if(phb_finetune < -200*256)
+	{
+		phb_finetune = -200*256;
+		phb_finetune_fail_cnt++;
+	}
+	else if(phb_finetune > 150*256)
+	{
+		phb_finetune = 150*256;
+		phb_finetune_fail_cnt++;	
+	}
+	else
+		phb_finetune_fail_cnt = 0;
+
+	if(phb_finetune_fail_cnt > 7)
 	{
 		SAFETY_SHUTDOWN();
 		uart_print_string_blocking("\r\nFinetune OOR 2\r\n");
 		charger_safety_errhandler();
 	}
 
-
 	int vratio_offtime = calc_check_offtime(phb_finetune>>8);
 
 	SET_OFFTIME_PHB(vratio_offtime);
+
+
+	PHB_SKIP_CTRL:
+
+	traces[3][trace_at] = phb_finetune;
+
 
 //	latest_cur_phb = cur;
 	traces[1][trace_at] = cur;
 	if(trace_at < TRACE_LEN-1)
 		trace_at++;
 
-	SET_ADC12_VECTOR(charger_adc2_pha_inthandler);
-	ADC2->ISR = 1UL<<3; // Clear the end-of-seq flag: it's used for failure detection
 
 
 //	int32_t iset = current_setpoint;
@@ -781,11 +839,27 @@ void charger_test()
 	
 	uart_print_string_blocking("int_count = ");
 	o_utoa32(interrupt_count, printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	DBG_PR_VAR_I32(pid_p);
+	DBG_PR_VAR_I32(pid_i);
 
 
-/*
 	uint8_t cmd = uart_input();
-	if(cmd == 'a')
+
+	if(cmd == 'q')
+		pid_p++;
+	else if(cmd=='a')
+	{
+		if(pid_p>0) pid_p--;
+	}
+	else if(cmd=='w')
+		pid_i++;
+	else if(cmd=='s')
+	{
+		if(pid_i>0) pid_i--;
+	}
+/*	if(cmd == 'a')
 	{
 		start_pha();
 	}
@@ -834,7 +908,9 @@ void charger_test()
 	if(cnt==10)
 	{
 		start_phab();
-		delay_us(15);
+		delay_us(60);
+		set_current(4000);
+		delay_us(60);
 		stop_phab();
 
 		uart_print_string_blocking("\r\n\r\ncur_a_ma,cur_b_ma,fine_a,fine_b\r\n");
@@ -888,14 +964,17 @@ void start_phab()
 	}
 	started = 1;
 	en_gate_pha();
-	en_gate_phb();
+//	en_gate_phb();
 	start_pump();
 
 	SET_ADC12_VECTOR(charger_adc2_pha_inthandler);
 	pha_lowcurr_fail_cnt = 0;
 	phb_lowcurr_fail_cnt = 0;
-	pha_finetune = INITIAL_FINETUNE*256;
+//	pha_finetune = INITIAL_FINETUNE*256;
 	phb_finetune = INITIAL_FINETUNE*256;
+	pha_finetune_fail_cnt = 0;
+	phb_finetune_fail_cnt = 0;
+	pha_err_integral = INITIAL_ERR_INTEGRAL;
 
 
 	RCC->CFGR |= 1UL<<14; // Use CPU clock (400MHz) as HRTIM clock.
@@ -909,7 +988,8 @@ void start_phab()
 
 	// DAC1: Current setpoint (don't touch channel 2, beware: configuration registers are shared)
 	DAC1->MCR |= 0b011UL<<0 /*Channel 1: Connected to on-chip peripherals only, with buffer disabled*/;
-	CURRLIM_DAC = MA_TO_DAC(4000);
+//	CURRLIM_DAC = MA_TO_DAC(6000);
+	set_current(2000);
 	DAC1->CR |= 1UL<<0; // Enable channel 1
 
 	// Comparator 1: PHA current
@@ -1130,7 +1210,7 @@ void start_phab()
 	HRTIM.CR2 = 0b11111100111111UL; // Force software update on all timers & reset counters.
 	HRTIM_MASTER.MCR |= 1UL<<21 /*Enable CHE*/ | 1UL<<20 /*Enable CHD*/ | 1UL<<16 /*Enable MASTER*/;
 	delay_tenth_us(27); //finetuned for exact 1.5us delay for the first cycle
-	HRTIM_OUTEN_PHB();
+//	HRTIM_OUTEN_PHB();
 //	HRTIM_MASTER.MCR |= 1UL<<20 /*Enable CHD*/;
 	// To the shadow registers, applies to the next cycle:
 	SET_OFFTIME_PHA(actual_second_offtime);
