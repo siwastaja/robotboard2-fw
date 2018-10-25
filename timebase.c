@@ -1,6 +1,6 @@
 /*
 
-Timebase: 1kHz handler
+Timebase: 10kHz handler
 
 */
 
@@ -9,24 +9,76 @@ Timebase: 1kHz handler
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
 #include "charger.h"
+#include "pwrswitch.h"
 
 volatile uint32_t ms_cnt;
+
+volatile int main_power_enabled = 2;
 
 void timebase_inthandler() __attribute__((section(".text_itcm")));
 void timebase_inthandler()
 {
+	static int pwrswitch_cnt;
 	static int cnt;
 	TIM5->SR = 0;
 	__DSB();
 
 	cnt++;
 
-	if(cnt >= 10)
+	// For performance, reuse this loop to run the charge pumps as well:
+
+	// See test report in pwrswitch.c - (250us HI, 500us LO) provided the highest Vgs. We'll round that up to 300us HI, 700us LO)
+
+	if(cnt == 7)
 	{
+		if(main_power_enabled) 
+			PLAT_CP_HI();
+
+		if(PWRSWITCH_PRESSED)
+		{
+			pwrswitch_cnt++;
+			if(main_power_enabled>1 && pwrswitch_cnt > 100)
+			{
+				main_power_enabled = 1;
+			}
+			else if(pwrswitch_cnt > 1000)
+			{
+				main_power_enabled = 0;
+			}
+		}
+		else
+		{
+			if(pwrswitch_cnt > 16) pwrswitch_cnt-= 16;
+		}
+
+		if(main_power_enabled > 1)
+		{
+			LED_ON();
+		}
+		else if(main_power_enabled == 1)
+		{
+			if(ms_cnt & (1UL<<8))
+				LED_ON();
+			else
+				LED_OFF();
+		}
+		else
+		{
+			LED_OFF();
+		}
+
+
+
+	}
+	else if(cnt >= 10)
+	{
+		PLAT_CP_LO();
 		ms_cnt++;
 		cnt = 0;
 	}
 
+
+	// Keep all functions in ITCM!
 	charger_10khz();
 }
 
@@ -48,7 +100,7 @@ void init_timebase()
 	TIM5->ARR = 20000-1; // 200MHz -> 10 kHz
 	TIM5->CR1 |= 1UL; // Enable
 
-	NVIC_SetPriority(TIM5_IRQn, 14);
+	NVIC_SetPriority(TIM5_IRQn, 10);
 	NVIC_EnableIRQ(TIM5_IRQn);
 }
 

@@ -268,10 +268,10 @@ extern volatile adc3_group_t adc3;
 
 
 // Sample times from channel 0 to channel 19
-#define ADC3_SMPTIMES 4,4,4,4,4, \
-                      4,4,4,4,4, \
-                      4,4,4,4,4, \
-                      4,4,4,5,4
+#define ADC3_SMPTIMES 6,6,6,6,6, \
+                      6,6,6,6,6, \
+                      6,6,6,6,6, \
+                      6,6,6,6,6
 
 #ifdef DEFINE_VARS
 const char* const adc1_names[ADC1_SEQ_LEN] =

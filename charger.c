@@ -314,12 +314,13 @@ void charger_safety_errhandler()
 	error(11);
 }
 
+void charger_10khz()  __attribute__((section(".text_itcm")));
 void charger_10khz()
 {
 	static int cnt = 0;
 	cnt++;
 
-	// Keep the charge pump running whenever enabled, and the Vin is at least 500mV below the Vinbus
+	// Keep the charge pump running at 5kHz whenever enabled, and the Vin is at least 500mV below the Vinbus
 	if(cnt&1)
 	{
 		infet_chargepump_0();

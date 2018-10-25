@@ -475,7 +475,23 @@ void flasher()
 
 void run_flasher()
 {
-	__disable_irq();
+	// Maximize the TIM5 ISR priority so it will pre-empt our current context, which is the SPI interrupt where
+	// run_flasher() was called from.
+	NVIC_SetPriority(TIM5_IRQn, 0);
+
+	// Disable all interrupts, except the charge pump
+	// TIM5_IRQn is #50, which is in register 1.
+	NVIC->ICER[0] = 0xffffffffUL;
+	NVIC->ICER[1] = ~((uint32_t)(1UL << ((50UL) & 0x1FUL)));
+	NVIC->ICER[2] = 0xffffffffUL;
+	NVIC->ICER[3] = 0xffffffffUL;
+	NVIC->ICER[4] = 0xffffffffUL;
+	NVIC->ICER[5] = 0xffffffffUL;
+	NVIC->ICER[6] = 0xffffffffUL;
+	NVIC->ICER[7] = 0xffffffffUL;
+	__DSB();
+	__ISB();
+
 	SAFETY_SHUTDOWN();
 
 	// Disable all other DMAs so they can't mess up our buffers

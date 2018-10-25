@@ -304,105 +304,15 @@ void refresh_settings()
 #define _RELOCATED_VECTORS_BEGIN 0x0000FC00UL
 #define ROM_ORIGIN 0x08000000UL
 
-void stm32init(void)
+void delay_us(uint32_t i) __attribute__((section(".text_itcm")));
+void delay_tenth_us(uint32_t i) __attribute__((section(".text_itcm")));
+void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
+
+void init_sram1234()
 {
-	/*
-		For some reason, reading at address 0 causes gcc to not generate any code at all, without any warnings,
-		so we start copying at 4.
-	*/
-	uint32_t* vect_begin  = (uint32_t*)(_RELOCATED_VECTORS_BEGIN+4);
-	uint32_t* vect_end    = (uint32_t*)(_RELOCATED_VECTORS_BEGIN+VECTOR_TBL_LEN*4);
-	uint32_t* vecti_begin = (uint32_t*)(ROM_ORIGIN+4);
-
-	while(vect_begin < vect_end)
-	{
-		*vect_begin = *vecti_begin;
-		vect_begin++;
-		vecti_begin++;
-	}
-
-	SCB->VTOR = _RELOCATED_VECTORS_BEGIN;
-
-
-	RCC->APB4ENR |= 1UL<<1 /*SYSCFG needs to be on for some configuration thingies often needed when fighting against
-		 device errata*/;
-
-
-	/*
-	To get us started, we jump right into our typical STM32 territory:
-	The errata sheet will tell us they failed the SRAM bus connectivity, and random data corruption will occur
-	unless we set a workaround bit which will limit the bus performance:
-		"Set the READ_ISS_OVERRIDE bit in the AXI_TARG7_FN_MOD register."
-
-	Easier said than done. Guess what? They didn't bother defining these register names in their header files. 
-	Furthermore, they won't tell you the addresses these registers reside in; only some imaginary "offsets", but
-	the base is hard to find- they refer you to a table which won't include said information - so we'll need to guess.
-	Finally, you can find out the information, from a different table than you were referred at. Guess what they call
-	AXIM in this table? Not AXIM, but GPV. Of course!
-	*/
-
-	(*(uint32_t*)(0x51000000UL /*The magical, hard to find GPV aka AXIM base*/ + 0x8108UL /*AXI_TARG7_FN_MOD*/)) 
-		|= 1UL<<0;
-
-
-
-	PWR->CR3 = /*bit1=0 Disable regulator*/  1UL<<0 /*bypass regulator*/;
-
-	// Since we are using external Vcore, Before RAM write access is allowed, the VOS (voltage scaling) setting must
-	// match the actual core voltage.
-	// We are supplying 1.20V, which corresponds to the highest performance VOS1 scale.
-
-	PWR->D3CR = 0b11UL<<14; // VOS1
-
-
 	// Enable RAMs from the start so that we can copy data sections / initialize bss sections on these:
 	RCC->AHB2ENR |= 1UL<<31 /*SRAM3*/ | 1UL<<30 /*SRAM2*/ | 1UL<<29 /*SRAM1*/;
 	// All other RAMs are accessible by CPU by default
-
-
-	uint32_t* bss_begin = (uint32_t*)&_BSS_BEGIN;
-	uint32_t* bss_end   = (uint32_t*)&_BSS_END;
-	while(bss_begin < bss_end)
-	{
-		*bss_begin = 0;
-		bss_begin++;
-	}
-
-
-	uint32_t* data_begin  = (uint32_t*)&_DATA_BEGIN;
-	uint32_t* data_end    = (uint32_t*)&_DATA_END;
-	uint32_t* datai_begin = (uint32_t*)&_DATAI_BEGIN;
-
-	while(data_begin < data_end)
-	{
-		*data_begin = *datai_begin;
-		data_begin++;
-		datai_begin++;
-	}
-
-
-	uint32_t* dtcm_data_begin  = (uint32_t*)&_DTCM_DATA_BEGIN;
-	uint32_t* dtcm_data_end    = (uint32_t*)&_DTCM_DATA_END;
-	uint32_t* dtcm_data_i_begin = (uint32_t*)&_DTCM_DATA_I_BEGIN;
-
-	while(dtcm_data_begin < dtcm_data_end)
-	{
-		*dtcm_data_begin = *dtcm_data_i_begin;
-		dtcm_data_begin++;
-		dtcm_data_i_begin++;
-	}
-
-	uint32_t* dtcm_bss_begin = (uint32_t*)&_DTCM_BSS_BEGIN;
-	uint32_t* dtcm_bss_end   = (uint32_t*)&_DTCM_BSS_END;
-	while(dtcm_bss_begin < dtcm_bss_end)
-	{
-		*dtcm_bss_begin = 0;
-		dtcm_bss_begin++;
-	}
-
-
-
-
 
 	uint32_t* sram1_data_begin  = (uint32_t*)&_SRAM1_DATA_BEGIN;
 	uint32_t* sram1_data_end    = (uint32_t*)&_SRAM1_DATA_END;
@@ -466,8 +376,6 @@ void stm32init(void)
 		sram3_bss_begin++;
 	}
 
-
-
 	uint32_t* sram4_data_begin  = (uint32_t*)&_SRAM4_DATA_BEGIN;
 	uint32_t* sram4_data_end    = (uint32_t*)&_SRAM4_DATA_END;
 	uint32_t* sram4_data_i_begin = (uint32_t*)&_SRAM4_DATA_I_BEGIN;
@@ -488,7 +396,111 @@ void stm32init(void)
 	}
 
 
-	//refresh_settings();
+	__DSB(); __ISB();
+
+}
+
+void init_dtcm()
+{
+	uint32_t* dtcm_data_begin  = (uint32_t*)&_DTCM_DATA_BEGIN;
+	uint32_t* dtcm_data_end    = (uint32_t*)&_DTCM_DATA_END;
+	uint32_t* dtcm_data_i_begin = (uint32_t*)&_DTCM_DATA_I_BEGIN;
+
+	while(dtcm_data_begin < dtcm_data_end)
+	{
+		*dtcm_data_begin = *dtcm_data_i_begin;
+		dtcm_data_begin++;
+		dtcm_data_i_begin++;
+	}
+
+	uint32_t* dtcm_bss_begin = (uint32_t*)&_DTCM_BSS_BEGIN;
+	uint32_t* dtcm_bss_end   = (uint32_t*)&_DTCM_BSS_END;
+	while(dtcm_bss_begin < dtcm_bss_end)
+	{
+		*dtcm_bss_begin = 0;
+		dtcm_bss_begin++;
+	}
+}
+
+void init_axi_data()
+{
+	uint32_t* bss_begin = (uint32_t*)&_BSS_BEGIN;
+	uint32_t* bss_end   = (uint32_t*)&_BSS_END;
+	while(bss_begin < bss_end)
+	{
+		*bss_begin = 0;
+		bss_begin++;
+	}
+
+
+	uint32_t* data_begin  = (uint32_t*)&_DATA_BEGIN;
+	uint32_t* data_end    = (uint32_t*)&_DATA_END;
+	uint32_t* datai_begin = (uint32_t*)&_DATAI_BEGIN;
+
+	while(data_begin < data_end)
+	{
+		*data_begin = *datai_begin;
+		data_begin++;
+		datai_begin++;
+	}
+}
+
+void relocate_vectors()
+{
+	/*
+		Relocate the vector table to RAM.
+		For some reason, reading at address 0 causes gcc to not generate any code at all, without any warnings,
+		so we start copying at 4.
+	*/
+	uint32_t* vect_begin  = (uint32_t*)(_RELOCATED_VECTORS_BEGIN+4);
+	uint32_t* vect_end    = (uint32_t*)(_RELOCATED_VECTORS_BEGIN+VECTOR_TBL_LEN*4);
+	uint32_t* vecti_begin = (uint32_t*)(ROM_ORIGIN+4);
+
+	while(vect_begin < vect_end)
+	{
+		*vect_begin = *vecti_begin;
+		vect_begin++;
+		vecti_begin++;
+	}
+
+	SCB->VTOR = _RELOCATED_VECTORS_BEGIN;
+
+	__DSB(); __ISB();
+
+}
+
+// Get the bare minimum ready ASAP so that the charge pump can start.
+void stm32init(void)
+{
+	RCC->APB4ENR |= 1UL<<1 /*SYSCFG needs to be on for some configuration thingies often needed when fighting against
+		 device errata*/;
+
+
+	/*
+	To get us started, we jump right into our typical STM32 territory:
+	The errata sheet will tell us they failed the SRAM bus connectivity, and random data corruption will occur
+	unless we set a workaround bit which will limit the bus performance:
+		"Set the READ_ISS_OVERRIDE bit in the AXI_TARG7_FN_MOD register."
+
+	Easier said than done. Guess what? They didn't bother defining these register names in their header files. 
+	Furthermore, they won't tell you the addresses these registers reside in; only some imaginary "offsets", but
+	the base is hard to find- they refer you to a table which won't include said information - so we'll need to guess.
+	Finally, you can find out the information, from a different table than you were referred at. Guess what they call
+	AXIM in this table? Not AXIM, but GPV. Of course!
+	*/
+
+	(*(uint32_t*)(0x51000000UL /*The magical, hard to find GPV aka AXIM base*/ + 0x8108UL /*AXI_TARG7_FN_MOD*/)) 
+		|= 1UL<<0;
+
+
+
+	PWR->CR3 = /*bit1=0 Disable regulator*/  1UL<<0 /*bypass regulator*/;
+
+	// Since we are using external Vcore, Before RAM write access is allowed, the VOS (voltage scaling) setting must
+	// match the actual core voltage.
+	// We are supplying 1.20V, which corresponds to the highest performance VOS1 scale.
+
+	PWR->D3CR = 0b11UL<<14; // VOS1
 
 	uint32_t* text_itcm_begin  = (uint32_t*)&_TEXT_ITCM_BEGIN;
 	uint32_t* text_itcm_end    = (uint32_t*)&_TEXT_ITCM_END;

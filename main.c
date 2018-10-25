@@ -235,18 +235,44 @@ void delay_ms(uint32_t i)
 
 void pointer_system_test();
 void sbc_comm_test();
+extern void init_sram1234();
+extern void init_axi_data();
+extern void init_dtcm();
+extern void relocate_vectors();
 
 void main()
 {
+
+// At 18.0V:
+// 28.3 mA before clock init
+// 36 mA after all init
+// 27.5mA wfi
+// 27.6mA wfe
+// 27.5mA without SRAM123
+
+	// Let the capacitors precharge, so that the precharge current diminishes,
+	// so that the voltage drop over the precharge resistors is below the desaturation
+	// protection circuit's trip voltage.
+	// Simple delay is fine, since the actual time required is defined by the RC constant
+	// (DC bus capacitance * precharge resistance)
+	// Block for 500ms, but generate charge pump drive enough to keep it charged if it already is
+	// (for example, when soft-resetting the system without pressing power switch)
+
+	pwrswitch_init();
+	chargepump_pulsetrain_low_power(500); // if this is removed, change the next replenish_pulsetrain to initial_pulsetrain.
+
+
+	// Pulse trains are needed with < 9ms intervals, until the proper timer takes over.
+	chargepump_replenish_pulsetrain();
 
 	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
 
 	IO_TO_GPO(GPIOC, 13); // LED
 
-//	LED_ON();
-//	delay_ms(20);
-//	LED_OFF();
-//	delay_ms(10);
+	LED_ON();
+	delay_ms(6/6);
+	chargepump_replenish_pulsetrain();
+	LED_OFF();
 
 /*
 	sys_ck (for CPU, etc.) is pll1_p_ck
@@ -284,8 +310,15 @@ void main()
 	
 */
 	RCC->CR |= 1UL<<16; // HSE clock on
+
+	delay_ms(6/6);
+	chargepump_replenish_pulsetrain();
+
 	while(!(RCC->CR & 1UL<<17)) ; // Wait for HSE oscillator stabilization
-	delay_ms(1);
+
+	delay_ms(6/6);
+	chargepump_replenish_pulsetrain();
+
 	// M prescalers - set to 0 when PLL is disabled. 1 = div by 1 (bypass)
 	RCC->PLLCKSELR = 0UL<<20 /* PLL3 M(prescaler)*/ | 
 			 1UL<<12 /* PLL2 M(prescaler)*/ | 
@@ -317,14 +350,31 @@ void main()
 	RCC->AHB1ENR |= 1UL<<1 /*DMA2*/ | 1UL<<0 /*DMA1*/;
 	RCC->AHB4ENR |= 1UL<<21 /*BDMA*/;
 
+	chargepump_replenish_pulsetrain();
 
 	while(!(RCC->CR & 1UL<<25)) ; // Wait for PLL1 ready
+
+	chargepump_replenish_pulsetrain();
 
 	RCC->CFGR |= 0b011; // Change PLL to system clock
 	while((RCC->CFGR & (0b111UL<<3)) != (0b011UL<<3)) ; // Wait for switchover to PLL.
 
 	RCC->CR |= 1UL<<26; // PLL2 on
+
+	relocate_vectors();
+	init_sram1234();
+	chargepump_replenish_pulsetrain();
+	init_axi_data();
+	init_dtcm();
+
 	while(!(RCC->CR & 1UL<<27)) ; // Wait for PLL2 ready
+
+	chargepump_replenish_pulsetrain();
+
+	NVIC_SetPriorityGrouping(0);
+	IO_TO_GPI(GPIOE,2); // power switch sense
+	init_timebase();
+
 
 //	RCC->CR |= 1UL<<28; // PLL3 on
 //	while(!(RCC->CR & 1UL<<29)) ; // Wait for PLL3 ready
@@ -376,7 +426,7 @@ void main()
 
 		Priority 0 is the highest quick-safety-shutdown level which won't be disabled for atomic operations.
 	*/
-	NVIC_SetPriorityGrouping(0);
+
 //	NVIC_SetPriority(PVD_IRQn, 0b0000);
 //	NVIC_EnableIRQ(PVD_IRQn);
 
@@ -403,11 +453,10 @@ void main()
 //	init_imu();
 	uart_print_string_blocking("init ok\r\n"); 
 	extern void timer_test();
-	init_timebase();
 //	timer_test();
 	init_adcs();
 	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
-	init_charger(); // Requires working ADC1 data, so init_bldc() first.
+//	init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
 //	extern void adc_test();
 //	while(1)
