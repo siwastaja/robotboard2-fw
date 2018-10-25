@@ -139,7 +139,15 @@ extern uint32_t vbat_per_vinbus_mult;
 #define AWD_VBAT_HI    MV_TO_VBAT_MEAS(21000) // 26.0V = 4.33 V/cell
 
 #define AWD_CHA_VINBUS_LO   MV_TO_CHA_VINBUS_MEAS(13000) // 14.0V -> more than diode drop less from VBAT low limit
-#define AWD_CHA_VINBUS_HI   MV_TO_CHA_VINBUS_MEAS(38000) // 55V quick-reacting absolute maximum on Vinbus (Vdsmax for MOSFETs = 80V)
+
+// Abs max charger voltage is 50.0V
+// Due to noise, the quick-reacting watchdog needs to a bit over - 53V.
+// Vdsmax for MOSFETs is 80V, but there is SW node overshoot due to fast switching.
+// Prototype was tested with this limit set at 54V - SW node overshoot was measured at
+// 70.4V max (over hundreds of thousands of cycles, running at 2.4A/phase) when the 54V limit triggered.
+// So, there is around 9V of margin to the MOSFET rating. The MOSFETs are avalanche rated, so this should be enough.
+// But DO NOT increase this limit over 54V.
+#define AWD_CHA_VINBUS_HI   MV_TO_CHA_VINBUS_MEAS(53000)
 
 // Hard-coded sanity limit checks, so that the AWDs have a chance of working at all.
 #if (AWD_VBAT_LO < 100 || AWD_VBAT_HI > 16364)

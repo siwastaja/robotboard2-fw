@@ -6,6 +6,9 @@
 #define CHARGER_FREQ250
 
 
+#define DEADTIMES_FOR_EMI // else, for efficiency - which doesn't seem to work properly, and is less efficient, so keep this defined for now.
+
+
 /*
 
 	STM32 CONFUSION WARNING:
@@ -140,21 +143,30 @@
 // -12.0V .. +48.8V Vin=31.6V, 15ns deadtime  QuickPrint6
 
 
-//15ns: undershoot -12.0V at 8A, Vin=31.6V, Vout=16.0V
-//17.5ns: undershoot -6.8V
-//20ns: undershoot -6.4V
-//30ns: undershoot -6.4V
-#define DEADTIME_FALLING_NS (20.0F)
-#define DEADTIME_FALLING_REG ((int)((DEADTIME_FALLING_NS/2.5)+0.5))
+// Deadtime tests
+// Both phases
+// Falling edges ("rising" in HRTIM register)
+// 20, 16,15,....4
+// Rising edges ("HRTIM falling")
 
-//30ns: overshoot 47.6V (quickprint7), quickprint12
-//20ns: 47.2V (quickprint8)
-//15ns: 47.2V (quickprint10)
-//10ns: quickprint11
-//7.5ns: quickprint14
-#define DEADTIME_RISING_NS (12.5F)
-#define DEADTIME_RISING_REG ((int)((DEADTIME_RISING_NS/2.5)+0.5))
+// "falling" setting (rising edge): regval 10 (25.0ns) results lowest EMI (clear sweet spot)
+// At regval 8 (20.0ns), cross conduction starts to appear
 
+// "rising" setting (falling edge): regval 17 (42.5ns) and over results in almost zero EMI and only -3V undershoot
+// At regval 8 (20.0ns), the edge is fast and clean, but with -12V undershoot and EMI comparable to the rising EMI.
+// There is a slight local sweetspot at regval 8. At 9..14, it's worse, after 15, it's getting very good.
+
+#ifdef DEADTIMES_FOR_EMI
+	#define DEADTIME_FALLING_REG (10) // For rising SW edge
+	#define DEADTIME_RISING_REG (17)  // For falling SW edge
+#else
+	#define DEADTIME_FALLING_REG (10) // For rising SW edge
+	#define DEADTIME_RISING_REG (8)  // For falling SW edge
+#endif
+
+#if DEADTIME_FALLING_REG < 5 || DEADTIME_FALLING_REG > 20 || DEADTIME_RISING_REG < 5 || DEADTIME_RISING_REG > 20
+	#error Invalid deadtime values
+#endif
 
 // Gate driver enables: when disabled, both fets of the relevant half bridge are off. When enabled, one is on at a time.
 #define en_gate_pha()  do{ HI(GPIOG, 1); }while(0)
@@ -403,7 +415,7 @@ void start_pump()
 
 	Actual duty cycle is always more (current driven into the battery, unidirectional losses)
 
-	-> min design duty cycle = 30% (on: 900ns (360 units), off: 2100ns (840 units))
+	-> min design duty cycle = 15% (on: 900ns (360 units), off: 2100ns (840 units))
 	-> max design duty cycle = 90% (on: 2700ns (1080 units), off: 300ns (120 units))
 
 	Duty cycles of the phases are tied together, with small variance allowed. If significant
@@ -444,8 +456,8 @@ PHB:         ---------_---------_---------_
 #define PERIOD       1200
 #define MAX_DUTY_ON  1080
 #define MAX_DUTY_OFF 120
-#define MIN_DUTY_ON  360
-#define MIN_DUTY_OFF 840
+#define MIN_DUTY_ON  180
+#define MIN_DUTY_OFF 1020
 
 #endif
 
@@ -454,8 +466,8 @@ PHB:         ---------_---------_---------_
 #define PERIOD       1600
 #define MAX_DUTY_ON  1440
 #define MAX_DUTY_OFF 160
-#define MIN_DUTY_ON  480
-#define MIN_DUTY_OFF 1120
+#define MIN_DUTY_ON  240
+#define MIN_DUTY_OFF 1360
 
 #endif
 
@@ -604,10 +616,12 @@ int phase;
 int32_t current_setpoint = MA_TO_ADC(2000);
 volatile int interrupt_count;
 
+#define MIN_CURRENT 700
+#define MAX_CURRENT 10000
 
 void set_current(int ma)
 {
-	if(ma < 1000 || ma > 8000)
+	if(ma < MIN_CURRENT || ma > MAX_CURRENT)
 		error(27);
 	current_setpoint = MA_TO_ADC(ma);
 
@@ -646,7 +660,7 @@ int phb_err_integral;
 
 void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 
-#define ERR_INTEGRAL_MIN (-30*256)
+#define ERR_INTEGRAL_MIN (-31*256)
 #define ERR_INTEGRAL_MAX (10*256)
 
 // 66.27% CPU
@@ -809,6 +823,8 @@ void charger_adc2_phb_inthandler()
 	LED_OFF();
 }
 
+//uint32_t dead_rising = 10;
+//uint32_t dead_falling = 10;
 
 void charger_test()
 {
@@ -869,8 +885,31 @@ void charger_test()
 	o_utoa32(interrupt_count, printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
 
+
+//	DBG_PR_VAR_U32(dead_falling);
+//	DBG_PR_VAR_U32(dead_rising);
+
 /*
+
 	uint8_t cmd = uart_input();
+
+	if(cmd == 'q')
+	{
+		if(dead_rising < 20) dead_rising++;
+	}
+	else if(cmd == 'a')
+	{
+		if(dead_rising>2) dead_rising--;
+	}
+
+	if(cmd == 'w')
+	{
+		if(dead_falling < 20) dead_falling++;
+	}
+	else if(cmd == 's')
+	{
+		if(dead_falling>2) dead_falling--;
+	}
 
 	if(cmd == 'a')
 	{
@@ -922,8 +961,8 @@ void charger_test()
 	{
 		start_phab(1);
 		delay_us(27);
-//		set_current(4000);
-//		delay_us(60);
+		set_current(3000);
+		delay_us(20);
 		stop_phab();
 
 		#ifdef ENABLE_TRACE
@@ -969,7 +1008,7 @@ void charger_test()
 
 // tr = 7ns, tf = 7ns
 
-// switching losses alone must be around 7.2W!!
+// switching losses alone must be around 7.2W (per phase)!!
 // Excel estimate for the MOSFETs was 2.3W/FET, but the actual tr/tf is shorter -> should be less
 // dialing in measured tr, tf, results in 1.4W/FET
 // Let's assume 2W/fet, total 4W -> 3.2W in caps and inductors.
@@ -986,6 +1025,7 @@ void charger_test()
 
 
 // New efficiency measurements, with support for lower freq:
+// (Two phases):
 
 // 333kHz
 // in  29.34V 2.13A 62.494W
@@ -1005,6 +1045,26 @@ void charger_test()
 // Ripple:
 // Vin_p-p  54mV RMS (20M BW lim)
 // Vout_p-p 12.5mV RMS (20M BW lim)
+
+
+// Yet again, 250kHz, deadtime for emi:
+// After 20 second runtime:
+// 34.91V 1.621A 56.58911W
+// 16.27V 3.107A 50.55089W
+// eff=89.3%
+
+// Deadtime for eff:
+// 34.80V 1.729A 60.16920W
+// 16.26V 3.110A 50.56860W
+// eff=84.0%
+
+// So the "for emi" settings seem to be better for efficiency, as well.
+// Basically, a long deadtime for the falling SW edge!
+
+
+// Tests on the extremes:
+// Vin=50.0V, Vbat=14.5V -> starts and runs fine
+// Vin=28.0V, Vbat=19.9V -> starts and runs fine
 
 void charger_test2()
 {
@@ -1028,7 +1088,7 @@ void charger_test2()
 			else
 			{
 				delay_us(100);
-				set_current(1500);
+				set_current(500);
 			}
 		}
 		else
@@ -1072,6 +1132,9 @@ void init_charger()
 	}
 
 }
+
+
+
 
 void start_phab(int start_b) __attribute__((section(".text_itcm")));
 void start_phab(int start_b)
@@ -1183,6 +1246,12 @@ void start_phab(int start_b)
 
 	HRTIM_CHE.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
 	HRTIM_CHD.DTxR = DEADTIME_FALLING_REG<<16 | DEADTIME_RISING_REG<<0 | 0b011<<10 /*prescaler = 1*/;
+
+//	if(dead_falling < 2 || dead_falling > 20 || dead_rising < 2 || dead_rising > 20)
+//		error(123);
+
+//	HRTIM_CHE.DTxR = dead_falling<<16 | dead_rising<<0 | 0b011<<10 /*prescaler = 1*/;
+//	HRTIM_CHD.DTxR = dead_falling<<16 | dead_rising<<0 | 0b011<<10 /*prescaler = 1*/;
 
 	HRTIM_MASTER.MCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | CONT | 1UL<<18 /*reset or PER triggers update*/;
 	HRTIM_CHE.TIMxCR = 1UL<<27 /*preload*/ | 0b101 /*prescaler = 1*/ | 1UL<<18 /*reset or PER triggers update*/;
