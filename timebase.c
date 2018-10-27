@@ -13,12 +13,9 @@ Timebase: 10kHz handler
 
 volatile uint32_t ms_cnt;
 
-volatile int main_power_enabled = 2;
-
 void timebase_inthandler() __attribute__((section(".text_itcm")));
 void timebase_inthandler()
 {
-	static int pwrswitch_cnt;
 	static int cnt;
 	TIM5->SR = 0;
 	__DSB();
@@ -31,44 +28,11 @@ void timebase_inthandler()
 
 	if(cnt == 7)
 	{
+		extern int main_power_enabled;
 		if(main_power_enabled) 
 			PLAT_CP_HI();
 
-		if(PWRSWITCH_PRESSED)
-		{
-			pwrswitch_cnt++;
-			if(main_power_enabled>1 && pwrswitch_cnt > 100)
-			{
-				main_power_enabled = 1;
-			}
-			else if(pwrswitch_cnt > 1000)
-			{
-				main_power_enabled = 0;
-			}
-		}
-		else
-		{
-			if(pwrswitch_cnt > 16) pwrswitch_cnt-= 16;
-		}
-
-		if(main_power_enabled > 1)
-		{
-			LED_ON();
-		}
-		else if(main_power_enabled == 1)
-		{
-			if(ms_cnt & (1UL<<8))
-				LED_ON();
-			else
-				LED_OFF();
-		}
-		else
-		{
-			LED_OFF();
-		}
-
-
-
+		pwrswitch_1khz();
 	}
 	else if(cnt >= 10)
 	{

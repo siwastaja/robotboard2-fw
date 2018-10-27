@@ -3,13 +3,82 @@
 #include "ext_include/stm32h7xx.h"
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
+#include "pwrswitch.h"
+#include "timebase.h" // for ms_cnt
 
 
-void pwrswitch_init()
+// QuickPrint86: 10mF elcap "battery" at 20V shorted at output,
+// yellow = desat, pink = UV
+// QuickPrint87:
+// yellow = desat, pink = OV. Both UV and OV flicker spuriously during desat protection
+// QuickPrint88:
+// Desat reaction to the short in 30 us
+
+// UV test:
+// 15.5V (2.58V/cell) goes black
+// 16.7V (2.78V/cell) allows restarting
+// Theoretical design value was 15.60V
+
+// QuickPrint92:
+// Vbat=20V (still the elcap bank), 1 ohm load connected (I = 20A),
+// UV trigs first (desat only triggers as a consequence 10us later)
+
+
+// Trig tests:
+// POS 5: UV trigs
+// POS 4: UV trigs
+// POS 3: UV trigs
+// POS 2: QP93,QP94,QP95,QP96 around 600-1500 us  R = 213mV / 1A
+// POS 1: QP97,QP98,QP99, around 100-300 us       R = 146mV / 1A
+// POS 0: QP101,102,103,104, repeatably 30us      R = 111mV / 1A  (mechanical switch isn't bouncing that much anymore at this current level)
+// "dead short": QP105, 106, 107: goes down to about 25us if the mechanical switch allows...
+
+// Results:
+// 93A: Trig in 500us
+// 136A: Trig in 100us
+// 180A: Trig in 30us
+// ~300A+: Trig in 25us
+// Excel calculated threshold at 25degC, Vbat=20V: 71.9A nominal
+// Close!
+
+// OV test:
+// At 25.46V (4.243V/cell), some oscillating spikes start to appear in the OV signal, but not long enough to bring it down (QP108)
+// At 25.50V (4.250V/cell), it shuts down
+// Theoretical design value was 25.49V, so it's really close.
+
+
+// TAP:
+// Vin=25.0V
+// TAPLO=11.90V
+// TAPHI=13.10V
+// --> 0.60V imbalance allowed - when off
+// TAPHI=12.57V
+// TAPLO=12.42V
+// --> 0.07V imbalance allowed - when on
+
+// Vin=19.0V
+// TAPLO=8.57V
+// TAPHI=9.43V
+// --> 0.43V imbalance allowed - when off or on
+
+// In-circuit test of the tap threshold change:
+// 24.6V -> lowed thresholds
+
+
+
+void pwrswitch_chargepump_init()
 {
 	RCC->AHB4ENR |= 1UL<<1;
 	LO(GPIOB, 2);
 	IO_TO_GPO(GPIOB, 2);
+}
+
+void init_pwrswitch_and_led()
+{
+	RCC->AHB4ENR |= 1UL<<4 | 1UL<<5; // PE and PF
+	IO_TO_GPI(GPIOE,2); // power switch sense
+	IO_TO_GPO(GPIOF,2); // power switch LED
+	IO_OPENDRAIN(GPIOF,2);
 }
 
 
@@ -88,24 +157,63 @@ void chargepump_pulsetrain_low_power(uint32_t del_ms)
 	}
 }
 
+int main_power_enabled = 2;
 
-static inline void alive_platform_0() __attribute__((always_inline));
-static inline void alive_platform_0()
+void pwrswitch_1khz() __attribute__((section(".text_itcm")));
+void pwrswitch_1khz()
 {
-	LO(GPIOB, 2);
+	static int pwrswitch_cnt;
+	static int shutdown_cnt;
+	static int ignore_pwrswitch = 2000; // for how many milliseconds the power button is ignored after bootup
+
+	if(ignore_pwrswitch == 0 && PWRSWITCH_PRESSED)
+	{
+		pwrswitch_cnt++;
+		if(main_power_enabled>1 && pwrswitch_cnt > 100)
+		{
+			main_power_enabled = 1;
+		}
+		else if(pwrswitch_cnt > 2000) // Milliseconds to keep the button pressed down to force power-off without extra waiting
+		{
+			main_power_enabled = 0;
+		}
+	}
+	else
+	{
+		if(ignore_pwrswitch > 0)
+			ignore_pwrswitch--;
+		if(pwrswitch_cnt > 16)
+			pwrswitch_cnt-= 16;
+	}
+
+	if(main_power_enabled > 1)
+	{
+		PWRLED_ON();
+	}
+	else if(main_power_enabled == 1)
+	{
+		if(++shutdown_cnt > 5000) // Milliseconds to give the SBC to shut down
+		{
+			main_power_enabled = 0;
+		}
+		if(ms_cnt & (1UL<<8))
+			PWRLED_ON();
+		else
+			PWRLED_OFF();
+	}
+	else
+	{
+		shutdown();
+	}
 }
 
-static inline void alive_platform_1() __attribute__((always_inline));
-static inline void alive_platform_1()
+void shutdown()
 {
-	// Check the actual gate voltage - if below Vbat, it's being pulled to GND by
-	// the protection circuit. In this case, don't fight back, stop the charge pump
-	// by constant low level.
-
-//	if(recent_adcs.v_bms_mainfet_gate /* */ < 1000 /* */)
-//		LO(GPIOB, 2);
-//	else
-		HI(GPIOB, 2);
+	__disable_irq();
+	main_power_enabled = 0;
+	__DSB(); __ISB();
+	SAFETY_SHUTDOWN();
+	while(1);
 }
 
 

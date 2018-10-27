@@ -23,23 +23,21 @@
 #include <stdint.h>
 
 
-void pwrswitch_init();
+void pwrswitch_chargepump_init();
+void init_pwrswitch_and_led();
+
 void chargepump_initial_pulsetrain();
 void chargepump_replenish_pulsetrain();
 void chargepump_pulsetrain_low_power(uint32_t del_ms);
 
-
-/*
-Call these two functions in two critical parts of the program, between 2 and 10 kHz, between 35% and 65% duty cycle.
-
-If these are not called alternatively, main power switch NFET gate charge depletes and power turns off.
-*/
-
-//void alive_platform_0();
-//void alive_platform_1();
+void pwrswitch_1khz();
+void shutdown();
 
 
 #define PLAT_CP_LO() do{LO(GPIOB, 2);}while(0)
 #define PLAT_CP_HI() do{HI(GPIOB, 2);}while(0)
+
+#define PWRLED_ON()  do{LO(GPIOF, 2);}while(0)
+#define PWRLED_OFF() do{HI(GPIOF, 2);}while(0)
 
 #define PWRSWITCH_PRESSED (!IN(GPIOE,2))

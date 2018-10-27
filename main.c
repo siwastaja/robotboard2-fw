@@ -258,7 +258,7 @@ void main()
 	// Block for 500ms, but generate charge pump drive enough to keep it charged if it already is
 	// (for example, when soft-resetting the system without pressing power switch)
 
-	pwrswitch_init();
+	pwrswitch_chargepump_init();
 	chargepump_pulsetrain_low_power(500); // if this is removed, change the next replenish_pulsetrain to initial_pulsetrain.
 
 
@@ -372,7 +372,8 @@ void main()
 	chargepump_replenish_pulsetrain();
 
 	NVIC_SetPriorityGrouping(0);
-	IO_TO_GPI(GPIOE,2); // power switch sense
+
+	init_pwrswitch_and_led();
 	init_timebase();
 
 

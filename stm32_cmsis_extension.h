@@ -20,6 +20,9 @@
 #define IO_PULLDOWN_ON(port, idx) do{ uint32_t _tmp_ = (port)->PUPDR; _tmp_ &= ~(1UL<<((idx)*2)); _tmp_ |= 1UL<<((idx)*2+1); (port)->PUPDR = _tmp_; }while(0)
 #define IO_PULLUPDOWN_OFF(port, idx) do{ uint32_t _tmp_ = (port)->PUPDR; _tmp_ &= ~(0b11UL<<((idx)*2)); (port)->PUPDR = _tmp_; }while(0)
 
+#define IO_PUSHPULL(port, idx)  do{(port)->OTYPER &= ~(1UL<<(idx));}while(0)
+#define IO_OPENDRAIN(port, idx) do{(port)->OTYPER |=  (1UL<<(idx));}while(0)
+
 #define IO_SPEED(port, idx, speed) do{uint32_t _tmp_ = (port)->OSPEEDR; _tmp_ &= ~(0b11UL<<((idx)*2)); _tmp_ |= (speed)<<((idx)*2); (port)->OSPEEDR = _tmp_;  }while(0)
 
 /*
