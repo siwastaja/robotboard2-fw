@@ -207,7 +207,8 @@ Test #6: QP120
 	Desat prot can be kept on during most of this period; Vs rises quickly after it's released.
 	About 200us is still needed.
 
-
+Test #7: QP121
+	With 10  20+40us pulses DESAT ENABLED, then just 8  20+40us pulses DESAT DISABLED, the current already flows
 
 
 
@@ -231,11 +232,16 @@ void app_power_on()
 	for(int i=0; i<1; i++)
 	{
 
-		for(int o=0; o<15; o++)
+		for(int o=0; o<10; o++)
 		{
-			if(o==6)
-				APP_DIS_DESAT_PROT();
-
+			APP_CP_HI();
+			delay_us(20);
+			APP_CP_LO();
+			delay_us(40);
+		}
+		APP_DIS_DESAT_PROT();
+		for(int o=0; o<8; o++)
+		{
 			APP_CP_HI();
 			delay_us(20);
 			APP_CP_LO();
