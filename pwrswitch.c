@@ -6,6 +6,8 @@
 #include "pwrswitch.h"
 #include "timebase.h" // for ms_cnt
 
+#include "adcs.h"
+#include "own_std.h"
 
 // QuickPrint86: 10mF elcap "battery" at 20V shorted at output,
 // yellow = desat, pink = UV
@@ -211,11 +213,29 @@ Test #7: QP121
 	With 10  20+40us pulses DESAT ENABLED, then just 8  20+40us pulses DESAT DISABLED, the current already flows
 
 
+Test #8: QP122
+	Same, but only 7 DESAT ENABLED pulses. As we can see, 10 gives quicker current rise after we go.
+	15 desat enabled pulses don't give any quicker rise anymore than 10.
 
 
+Test #9: QP123
+	Output voltage measurement decides the number of cycles needed to reach conducting Vg, trying to keep
+	the number of actually current-increasing (conducting) cycles to a constant.
+	QP124: Closeup of the second cycle (i=1): conducting time = 190us
+	QP125: Closeup of the 29th cycle (i=28): conducting time = 380us
+
+Test #10 QP126
+	Fairly reproducible gate voltage pump-up driven by ADC, until the point just before conduction.
+
+
+PCB revision changes:
+* Add Vapp measurement, 47k + 6.8k like Vbat, but 470pF only
+* Change Vg(app) measurement cap from 100n to 470pF
 
  (20.0V, 10mF elcap)
 */
+
+static char printbuf[128];
 
 void app_power_on()
 {
@@ -226,34 +246,155 @@ void app_power_on()
 	// 1.2mC/10mF = 120mV. Around 100 pulses are therefore required to properly precharge
 	// such pessimistic load. At 1kHz, this takes 100ms.
 
+	// RC time constant for measuring Vapp is 3us.
+	// ADC sampling & conversion takes 0.3us. For two channels, 0.6us. For two channels oversampled 4x, 2.4us
+	// 
+
 	APP_EN_DESAT_PROT();
 	APP_CP_LO();
 	delay_us(10000);
-	for(int i=0; i<1; i++)
+
+#define N_PULSES 1
+	int vas[N_PULSES];
+	int vgs[N_PULSES];
+	int changeover_vas[N_PULSES];
+	int changeover_vgs[N_PULSES];
+	int done_vas[N_PULSES];
+	int done_vgs[N_PULSES];
+	int n_cycs_1[N_PULSES];
+	int n_cycs_2[N_PULSES];
+	for(int i=0; i<N_PULSES; i++)
 	{
 
 		for(int o=0; o<10; o++)
 		{
 			APP_CP_HI();
-			delay_us(20);
+			delay_us(30);
 			APP_CP_LO();
-			delay_us(40);
+			delay_us(30);
 		}
 		APP_DIS_DESAT_PROT();
-		for(int o=0; o<8; o++)
+
+		ADC3_CONV_INJECTED();
+		delay_us(4);
+		
+		int va = VAPP_MEAS_TO_MV(ADC3_VAPP_DATAREG);
+		int vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
+		vas[i] = va;
+		vgs[i] = vg;
+
+		// APP_CP_LO brings the gate actually higher
+
+		// Gate rises at about 3V/500us
+		// 6mV/us -> 360mV / 60us cycle
+//		int n_cyc = 7 + va/360;
+		int n_cyc = 10 + va/330; // sanity max
+		n_cycs_1[i] = n_cyc;
+
+		int o;
+		for(o = 0; o<n_cyc; o++)
 		{
 			APP_CP_HI();
-			delay_us(20);
+			delay_us(26);
+			ADC3_CONV_INJECTED();
+			delay_us(4);
+			int peak_va1 = ADC3_VAPP_DATAREG;
 			APP_CP_LO();
-			delay_us(40);
+			delay_us(26);
+			ADC3_CONV_INJECTED();
+			delay_us(4);
+			int peak_va = VAPP_MEAS_TO_MV( (peak_va1 + ADC3_VAPP_DATAREG)>>1 );
+			int peak_vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
+
+			if(peak_vg > peak_va+1200)
+			{
+				changeover_vas[i] = peak_va;
+				changeover_vgs[i] = peak_vg;
+				goto SLOWER;
+			}
+		}
+		uart_print_string_blocking("\r\nShort detection 1\r\n");
+		o_utoa16_fixed(i, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking("\r\n");
+
+		break;
+
+		SLOWER:
+
+		n_cyc-=o;
+		n_cyc*=4;
+		n_cycs_2[i] = n_cyc;
+
+		for(int e=0; e<n_cyc; e++)
+		{
+			APP_CP_HI();
+			delay_us(26);
+			ADC3_CONV_INJECTED();
+			delay_us(4);
+			int peak_va1 = ADC3_VAPP_DATAREG;
+			APP_CP_LO();
+			delay_us(6);
+			ADC3_CONV_INJECTED();
+			delay_us(4);
+			int peak_va = VAPP_MEAS_TO_MV( (peak_va1 + ADC3_VAPP_DATAREG)>>1 );
+			int peak_vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
+
+			if(peak_vg > peak_va+3000)
+			{
+				done_vas[i] = peak_va;
+				done_vgs[i] = peak_vg;
+				goto DONE;
+			}
+		}
+		uart_print_string_blocking("\r\nShort detection 2 ");
+		o_utoa16_fixed(i, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking("\r\n");
+
+		break;
+
+		DONE:
+
+		for(int u=0; u<3; u++)
+		{
+			APP_CP_HI();
+			delay_us(30);
+			APP_CP_LO();
+			delay_us(10);
 		}
 
-
 		APP_EN_DESAT_PROT();
-		delay_us(10000);
+
+		delay_us(1000);
 	}
+	APP_EN_DESAT_PROT();
 
 	APP_CP_LO();
+
+	uart_print_string_blocking("\r\n PULSE TRAIN ENDED \r\n");
+	for(int i=0; i<N_PULSES; i++)
+	{
+		o_utoa16_fixed(i, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" va:");
+		o_utoa16_fixed(vas[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" vg:");
+		o_utoa16_fixed(vgs[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" n_cycs1:");
+		o_utoa16_fixed(n_cycs_1[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" co va:");
+		o_utoa16_fixed(changeover_vas[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" vg:");
+		o_utoa16_fixed(changeover_vgs[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" n_cycs2:");
+		o_utoa16_fixed(n_cycs_2[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" done va:");
+		o_utoa16_fixed(done_vas[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" vg:");
+		o_utoa16_fixed(done_vgs[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking("\r\n");
+	}
+	uart_print_string_blocking("\r\n");
+	
+
 //	app_precharge_pulsetrain = 100;
 }
 

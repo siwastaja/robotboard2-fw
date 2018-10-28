@@ -19,6 +19,10 @@ uint32_t cha_vinbus_mult = 36450;
 uint32_t cha_vin_mult = 37200;
 // 1.611343 << 13  = 13200.13
 uint32_t vbat_mult = 13200;
+uint32_t vapp_mult = 13200/4;
+
+// 3300/(10000/(300000+10000) *2^14) = 6.24389.   <<13 -> 51150
+uint32_t vgapp_mult = 51150/4;
 
 // (13200/36450)*2^13
 uint32_t vbat_per_vinbus_mult = 2967;
@@ -242,7 +246,17 @@ void adc_test()
 		o_utoa16(adc3.b[i], printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking("\r\n");
 	}
-	delay_ms(100);
+
+	ADC3_CONV_INJECTED();
+	delay_us(100);
+	
+	uart_print_string_blocking("injected Vapp = ");
+	o_utoa16(VAPP_MEAS_TO_MV(ADC3->JDR1), printbuf); uart_print_string_blocking(printbuf);
+	uart_print_string_blocking("\r\n");
+
+	delay_ms(500);
+
+
 }
 
 // assuming init_adcs() has been done
@@ -400,10 +414,13 @@ void init_adcs()
 
 	init_calib_adc(ADC3);
 	CONF_ADC_SEQ(ADC3, ADC3_SEQ_LEN, ADC3_SEQ);
+
+
 	CONF_ADC_SMPTIMES(ADC3, ADC3_SMPTIMES);
 	ADC3->PCSEL = ADC3_CHANNELS_IN_USE;
 
 	ADC3->CFGR = 
+		1UL<<31 /* JQDIS makes the injected mode work properly*/ |
 //		EN_AWD1 |
 //		AWD1_ON_SINGLE_CHAN |
 //		AWD1_CHAN(0) |
@@ -414,6 +431,15 @@ void init_adcs()
 //		DISCON |
 		DMA_CIRCULAR;
 
+	// Injected reg:  SW trigger. needs to be written after CFGR
+	ADC3->JSQR = (2UL/*len*/  -1UL) |
+			16UL<<9 | /*Injected1: channel 16 (Vapp_meas)*/
+			14UL<<15; /*Injected2: channel 14 (appfet_g_meas)*/
+			//<<21
+			//<<27
+
+
+	ADC3->CFGR2 = (4UL/*oversampling ratio*/   -1UL)<<16 | 1UL<<1 /*enable oversampling on injected channels*/;
 
 	// Analog watchdog 2 enabled on channels (bit index = channel number):
 	ADC3->AWD2CR = 0; 

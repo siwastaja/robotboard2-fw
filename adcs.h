@@ -119,7 +119,11 @@
 extern uint32_t cha_vinbus_mult;
 extern uint32_t cha_vin_mult;
 extern uint32_t vbat_mult;
+extern uint32_t vapp_mult;
+extern uint32_t vgapp_mult;
+
 extern uint32_t vbat_per_vinbus_mult;
+
 
 
 //#define CHA_VINBUS_MEAS_TO_MV(x_) (ADC_RDIV_LSB_TO_MV((x_), 464, 22))
@@ -130,6 +134,9 @@ extern uint32_t vbat_per_vinbus_mult;
 
 // #define VBAT_MEAS_TO_MV(x_)       (ADC_RDIV_LSB_TO_MV((x_), 475, 68))
 #define VBAT_MEAS_TO_MV(x_)       (((x_)*vbat_mult)>>13)
+
+#define VAPP_MEAS_TO_MV(x_)       (((x_)*vapp_mult)>>13)
+#define VGAPP_MEAS_TO_MV(x_)      (((x_)*vgapp_mult)>>13)
 
 #define MV_TO_CHA_VINBUS_MEAS(x_) (ADC_RDIV_MV_TO_LSB((x_), 464, 22))
 #define MV_TO_CHA_VIN_MEAS(x_)    (ADC_RDIV_MV_TO_LSB((x_), 474, 22))
@@ -170,8 +177,8 @@ extern uint32_t vbat_per_vinbus_mult;
 #define ADC2_DISCONTINUOUS_GROUP_LEN 1
 #define ADC2_CHANNELS_IN_USE ((1<<9)|(1<<5))
 
-#define ADC3_SEQ_LEN 9
-#define ADC3_SEQ  5, 6,10, 1,14,15,16,13,18,0,0,0,0,0,0,0
+#define ADC3_SEQ_LEN 8
+#define ADC3_SEQ  5, 6,10, 1,15,13,18,0,0,0,0,0,0,0,0,0
 #define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<14)|(1<<15)|(1<<16)|(1<<13)|(1<<18))
 
 typedef union
@@ -252,9 +259,9 @@ typedef union
 		uint16_t eb_analog1;            // ADC3   6+  PF10  Extension B analog in 1
 		uint16_t eb_analog2;            // ADC123 10+ PC0   Extension B analog in 2
 		uint16_t bms_mainfet_g_meas;    // ADC3   1+  PC3   Main power switch MOSFET gate voltage
-		uint16_t bms_appfet_g_meas;     // ADC3   14+ PH3   Application power switch MOSFET gate voltage
-		uint16_t bms_vref3;             // ADC3   15+ PH4   TI BMS chip 3.0V reference voltage
-		uint16_t bms_vmeas;             // ADC3   16+ PH5   TI BMS chip cell measurement voltage
+//		uint16_t bms_appfet_g_meas;     // ADC3   14+ PH3   Application power switch MOSFET gate voltage         <--- IN INJECTED SEQUENCE
+		uint16_t bms_vref3;             // ADC3   15+ PH4   (not connected, was related to the removed TI BMS chip)
+//		uint16_t vapp_meas;             // ADC3   16+ PH5   App voltage meas (was originally TI BMS chip Vcell)  <--- IN INJECTED SEQUENCE
 		uint16_t bms_temp_app_mosfets;  // ADC3   13+ PH2   Application power switch MOSFET&fuse temperature NTC
 		uint16_t cpu_temp;              // ADC3   18+ internal
 	} s;
@@ -264,14 +271,15 @@ typedef union
 extern volatile adc3_group_t adc3;
 
 
-
+#define ADC3_VAPP_DATAREG  (ADC3->JDR1)
+#define ADC3_VGAPP_DATAREG (ADC3->JDR2)
 
 
 // Sample times from channel 0 to channel 19
 #define ADC3_SMPTIMES 6,6,6,6,6, \
                       6,6,6,6,6, \
-                      6,6,6,6,6, \
-                      6,6,6,6,6
+                      6,6,6,6,1, \
+                      6,1,6,6,6
 
 #ifdef DEFINE_VARS
 const char* const adc1_names[ADC1_SEQ_LEN] =
@@ -304,9 +312,9 @@ const char* const adc3_names[ADC3_SEQ_LEN] =
 	"eb_analog1",
 	"eb_analog2",
 	"bms_mainfet_g_meas",
-	"bms_appfet_g_meas",
+//	"bms_appfet_g_meas",
 	"bms_vref3",
-	"bms_vmeas",
+//	"vapp_meas",
 	"bms_temp_app_mosfets",
 	"cpu_temp"
 };
@@ -342,4 +350,5 @@ void init_adcs();
 void init_adc2();
 void deinit_adc2();
 
+#define ADC3_CONV_INJECTED() do{ADC3->CR |= 1UL<<3;}while(0)
 
