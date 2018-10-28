@@ -199,6 +199,14 @@ Test #4: QP118
 Test #5: QP119
 	20 times, 20us,40us
 
+	20us,40us takes the same actual time (600us) as 10us,20us to reach Vs=0, where real gate charging starts.
+	Exactly the same for 40,80; 40,40; or even 40,20.
+	Input voltage doesn't matter.
+
+Test #6: QP120
+	Desat prot can be kept on during most of this period; Vs rises quickly after it's released.
+	About 200us is still needed.
+
 
 
 
@@ -222,10 +230,12 @@ void app_power_on()
 	delay_us(10000);
 	for(int i=0; i<1; i++)
 	{
-		APP_DIS_DESAT_PROT();
 
-		for(int o=0; o<20; o++)
+		for(int o=0; o<15; o++)
 		{
+			if(o==6)
+				APP_DIS_DESAT_PROT();
+
 			APP_CP_HI();
 			delay_us(20);
 			APP_CP_LO();
