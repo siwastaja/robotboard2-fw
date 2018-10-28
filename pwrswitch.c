@@ -190,6 +190,8 @@ Test #2: QP116
 	Desat enabled
 	-> Vs goes negative in 10us
 
+Test #3: Same but 10us, 10us
+
 
 
 
@@ -208,13 +210,13 @@ void app_power_on()
 	APP_EN_DESAT_PROT();
 	APP_CP_LO();
 	delay_us(10000);
-	for(int i=0; i<10; i++)
+	for(int i=0; i<1; i++)
 	{
 		APP_DIS_DESAT_PROT();
 		APP_CP_HI();
-		delay_us(100);
+		delay_us(10);
 		APP_CP_LO();
-		delay_us(100);
+		delay_us(10);
 		APP_EN_DESAT_PROT();
 		delay_us(10000);
 	}
