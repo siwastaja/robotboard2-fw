@@ -196,6 +196,10 @@ Test #3: QP117
 Test #4: QP118
 	Same, but 10 times back-to-back
 
+Test #5: QP119
+	20 times, 20us,40us
+
+
 
 
 
@@ -220,12 +224,12 @@ void app_power_on()
 	{
 		APP_DIS_DESAT_PROT();
 
-		for(int o=0; o<10; o++)
+		for(int o=0; o<20; o++)
 		{
 			APP_CP_HI();
-			delay_us(10);
+			delay_us(20);
 			APP_CP_LO();
-			delay_us(10);
+			delay_us(40);
 		}
 
 
