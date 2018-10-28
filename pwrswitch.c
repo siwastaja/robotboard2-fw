@@ -179,9 +179,16 @@ yellow = App pwr out
 pink = Vg
 Blue = Vs
 
-QP115:	Output 5mF || 10.5 ohm,
+Test #1: QP115
+	Output 5mF || 10.5 ohm,
 	10 cycles of 100us CP_HI, 10000 us CP_LO,
 	desat prot disabled during the cycles
+
+Test #2: QP116
+	100 us HI, desat disabled
+	100 us LO, desat still disabled
+	Desat enabled
+	-> Vs goes negative in 10us
 
 
 
@@ -198,15 +205,21 @@ void app_power_on()
 	// 1.2mC/10mF = 120mV. Around 100 pulses are therefore required to properly precharge
 	// such pessimistic load. At 1kHz, this takes 100ms.
 
-	APP_DIS_DESAT_PROT();
+	APP_EN_DESAT_PROT();
+	APP_CP_LO();
+	delay_us(10000);
 	for(int i=0; i<10; i++)
 	{
+		APP_DIS_DESAT_PROT();
 		APP_CP_HI();
 		delay_us(100);
 		APP_CP_LO();
+		delay_us(100);
+		APP_EN_DESAT_PROT();
 		delay_us(10000);
 	}
-	APP_EN_DESAT_PROT();
+
+	APP_CP_LO();
 //	app_precharge_pulsetrain = 100;
 }
 
