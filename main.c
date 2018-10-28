@@ -472,10 +472,10 @@ void main()
 	{
 		LED_ON();
 		app_power_on();
-		delay_ms(100);
+		delay_ms(2000);
 		LED_OFF();
 		app_power_off();
-		delay_ms(1500);
+		delay_ms(2000);
 	}
 
 //	pointer_system_test();

@@ -227,6 +227,40 @@ Test #9: QP123
 Test #10 QP126
 	Fairly reproducible gate voltage pump-up driven by ADC, until the point just before conduction.
 
+Test #11 QP127
+	Proper precharge into 5mF | 10.5 ohm in 60ms
+
+	00000 va:00223 vg:00995 n_cycs1:00000 co va:00103 vg:02481 n_cycs2:00007 done va:00161 vg:03928 vdiff:19622 cl_cnt:00006
+	00001 va:01106 vg:01114 n_cycs1:00000 co va:00936 vg:02812 n_cycs2:00010 done va:01061 vg:04792 vdiff:18690 cl_cnt:00007
+	00002 va:02095 vg:01175 n_cycs1:00001 co va:02209 vg:03599 n_cycs2:00011 done va:02120 vg:05755 vdiff:17621 cl_cnt:00008
+	00003 va:03179 vg:01261 n_cycs1:00003 co va:03132 vg:04792 n_cycs2:00011 done va:03102 vg:06757 vdiff:16644 cl_cnt:00009
+	00004 va:04234 vg:01323 n_cycs1:00005 co va:04290 vg:05828 n_cycs2:00011 done va:04163 vg:07734 vdiff:15582 cl_cnt:00010
+	00005 va:05368 vg:01404 n_cycs1:00007 co va:05287 vg:06891 n_cycs2:00011 done va:05257 vg:08775 vdiff:14494 cl_cnt:00011
+	00006 va:06546 vg:01401 n_cycs1:00009 co va:06521 vg:07809 n_cycs2:00012 done va:06210 vg:09822 vdiff:13548 cl_cnt:00012
+	00007 va:07500 vg:01526 n_cycs1:00011 co va:07468 vg:08928 n_cycs2:00012 done va:07281 vg:10931 vdiff:12477 cl_cnt:00013
+	00008 va:09202 vg:01771 n_cycs1:00014 co va:08855 vg:10167 n_cycs2:00013 done va:08915 vg:12434 vdiff:10846 cl_cnt:00015
+	00009 va:10331 vg:01696 n_cycs1:00017 co va:10178 vg:11592 n_cycs2:00012 done va:09955 vg:13553 vdiff:09809 cl_cnt:00016
+	00010 va:11456 vg:01784 n_cycs1:00019 co va:11239 vg:12552 n_cycs2:00012 done va:11009 vg:14558 vdiff:08757 cl_cnt:00017
+	00011 va:12811 vg:01854 n_cycs1:00021 co va:12334 vg:13584 n_cycs2:00013 done va:12020 vg:15758 vdiff:07750 cl_cnt:00018
+	00012 va:14114 vg:01898 n_cycs1:00024 co va:13450 vg:14858 n_cycs2:00011 done va:13214 vg:16737 vdiff:06545 cl_cnt:00019
+	00013 va:15015 vg:01913 n_cycs1:00027 co va:14563 vg:16044 n_cycs2:00011 done va:14315 vg:17905 vdiff:05455 cl_cnt:00020
+	00014 va:16157 vg:02044 n_cycs1:00029 co va:15431 vg:16956 n_cycs2:00012 done va:15329 vg:18935 vdiff:04445 cl_cnt:00021
+	00015 va:17295 vg:02133 n_cycs1:00031 co va:16460 vg:17888 n_cycs2:00009 done va:16148 vg:19783 vdiff:03624 cl_cnt:00022
+	00016 va:17396 vg:02116 n_cycs1:00031 co va:16679 vg:17928 n_cycs2:00012 done va:16821 vg:21130 vdiff:02953 cl_cnt:00023
+	00017 va:19379 vg:27436 n_cycs1:00000 co va:19593 vg:27339 n_cycs2:00000 done va:19350 vg:27202 vdiff:00168 cl_cnt:03657
+
+
+Test #12 QP128: Very successful precharge
+	QP130: Driving into short
+	QP131: Closeup at 2V/div. MOSFET is driven into short:
+	QP132: Determining the max current from 10mF input: dt=65us, dV=212mV, 
+	A = VF/s = 0.212V*10e-3F/65e-6s = 3.26A.
+	Peak current = 3.26A, duration 65 us, at Vds=25V. SOA says 300A is OK for 65us at Vds=25V!
+
+	QP133: Increased the precharge current.
+	A = VF/s = 0.428V*10e-3F/180e-6s = 2.37A. (maximum peak might still be around 3.26A).
+	Driving into the short lasts now about 250us.
+	Per SOA, at Vds=25V, at 3A, 7-8ms is ok. Alternatively, for 250us, 70-80 A is ok
 
 PCB revision changes:
 * Add Vapp measurement, 47k + 6.8k like Vbat, but 470pF only
@@ -254,7 +288,7 @@ void app_power_on()
 	APP_CP_LO();
 	delay_us(10000);
 
-#define N_PULSES 1
+#define N_PULSES 50
 	int vas[N_PULSES];
 	int vgs[N_PULSES];
 	int changeover_vas[N_PULSES];
@@ -263,6 +297,14 @@ void app_power_on()
 	int done_vgs[N_PULSES];
 	int n_cycs_1[N_PULSES];
 	int n_cycs_2[N_PULSES];
+	int vdiffs[N_PULSES];
+	int currlim_cnts[N_PULSES];
+
+	int success = 0;
+	int prev_va = -100;
+	int prev_prev_va = -200;
+	int short_cnt = 0;
+	int boost = 0;
 	for(int i=0; i<N_PULSES; i++)
 	{
 
@@ -283,13 +325,29 @@ void app_power_on()
 		vas[i] = va;
 		vgs[i] = vg;
 
+		if(va < prev_prev_va+400)
+		{
+			if(++short_cnt > 3)
+			{
+				APP_EN_DESAT_PROT();
+				uart_print_string_blocking("\r\nShort detection (non-rising): ");
+				o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking("\r\n");
+				break;
+			}
+		}
+		else
+			short_cnt = 0;
+
+		prev_prev_va = prev_va;
+		prev_va = va;
+
 		// APP_CP_LO brings the gate actually higher
 
 		// Gate rises at about 3V/500us
 		// 6mV/us -> 360mV / 60us cycle
 //		int n_cyc = 7 + va/360;
 		int n_cyc = 10 + va/330; // sanity max
-		n_cycs_1[i] = n_cyc;
 
 		int o;
 		for(o = 0; o<n_cyc; o++)
@@ -311,21 +369,26 @@ void app_power_on()
 				changeover_vas[i] = peak_va;
 				changeover_vgs[i] = peak_vg;
 				goto SLOWER;
-			}
+			}		
 		}
-		uart_print_string_blocking("\r\nShort detection 1\r\n");
-		o_utoa16_fixed(i, printbuf); uart_print_string_blocking(printbuf);
+		APP_EN_DESAT_PROT();
+
+		uart_print_string_blocking("\r\nGate charge issue 1: ");
+		o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking("\r\n");
 
 		break;
 
 		SLOWER:
+		n_cycs_1[i] = o;
 
 		n_cyc-=o;
 		n_cyc*=4;
-		n_cycs_2[i] = n_cyc;
 
-		for(int e=0; e<n_cyc; e++)
+		int latest_va;
+
+		int e;
+		for(e=0; e<n_cyc; e++)
 		{
 			APP_CP_HI();
 			delay_us(26);
@@ -339,36 +402,80 @@ void app_power_on()
 			int peak_va = VAPP_MEAS_TO_MV( (peak_va1 + ADC3_VAPP_DATAREG)>>1 );
 			int peak_vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
 
-			if(peak_vg > peak_va+3000)
+			if(peak_vg > peak_va+3500)
 			{
+				latest_va = peak_va;
 				done_vas[i] = peak_va;
 				done_vgs[i] = peak_vg;
 				goto DONE;
 			}
 		}
-		uart_print_string_blocking("\r\nShort detection 2 ");
-		o_utoa16_fixed(i, printbuf); uart_print_string_blocking(printbuf);
+		APP_EN_DESAT_PROT();
+
+		uart_print_string_blocking("\r\nGate charge issue 2: ");
+		o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking("\r\n");
 
 		break;
 
 		DONE:
+		n_cycs_2[i] = e;
 
-		for(int u=0; u<3; u++)
+		int vdiff = VBAT_MEAS_TO_MV(adc1.s.vbat_meas) - latest_va;
+
+		vdiffs[i] = vdiff;
+
+		int currlim_cnt = (25-(vdiff>>10 /*/1024*/));
+		if(currlim_cnt < 2) currlim_cnt=2;
+
+		if(short_cnt > 0 && vdiff < 10000)
+		{
+			// Load has increased, this isn't just a capacitive precharge.
+			// Vdiff is low enough (SOA has widened) so we can afford an extra
+			// boost compared to the above linear equation.
+
+			// This setting applies if the short detection is almost triggering near the
+			// end of precharge. Even if this happens once, the boost setting keeps applied
+			// till the end of precharge.
+			boost = 2*(10-(vdiff>>10));
+		}
+
+		currlim_cnt += boost;
+
+		currlim_cnts[i] = currlim_cnt;
+
+		for(int u=0; u<currlim_cnt; u++)
 		{
 			APP_CP_HI();
-			delay_us(30);
+			delay_us(20);
 			APP_CP_LO();
-			delay_us(10);
+			delay_us(20);
 		}
 
 		APP_EN_DESAT_PROT();
+
+		if(vdiff < 1000)
+		{
+			uart_print_string_blocking("\r\nDone precharging: ");
+			o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking("\r\n");
+			success = 1;
+			break;
+		}
 
 		delay_us(1000);
 	}
 	APP_EN_DESAT_PROT();
 
 	APP_CP_LO();
+
+	if(success)
+	{
+		app_power_enabled = 1;
+	}
+	else
+		uart_print_string_blocking("\r\n PRECHARGE PROBLEM \r\n");
+
 
 	uart_print_string_blocking("\r\n PULSE TRAIN ENDED \r\n");
 	for(int i=0; i<N_PULSES; i++)
@@ -390,6 +497,10 @@ void app_power_on()
 		o_utoa16_fixed(done_vas[i], printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking(" vg:");
 		o_utoa16_fixed(done_vgs[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" vdiff:");
+		o_utoa16_fixed(vdiffs[i], printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" cl_cnt:");
+		o_utoa16_fixed(currlim_cnts[i], printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking("\r\n");
 	}
 	uart_print_string_blocking("\r\n");
@@ -401,7 +512,10 @@ void app_power_on()
 void app_power_off()
 {
 	APP_EN_DESAT_PROT();
+	DIS_IRQ();
 	app_power_enabled = 0;
+	APP_CP_LO();
+	ENA_IRQ();
 }
 
 void pwrswitch_1khz() __attribute__((section(".text_itcm")));

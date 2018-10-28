@@ -26,13 +26,13 @@ void timebase_inthandler()
 
 	// See test report in pwrswitch.c - (250us HI, 500us LO) provided the highest Vgs. We'll round that up to 300us HI, 700us LO)
 
+	extern int app_power_enabled;
 	if(cnt == 7)
 	{
 		extern int main_power_enabled;
 		if(main_power_enabled) 
 			PLAT_CP_HI();
 
-		extern int app_power_enabled;
 		if(app_power_enabled)
 			APP_CP_HI();
 
@@ -53,7 +53,8 @@ void timebase_inthandler()
 	else if(cnt >= 10)
 	{
 		PLAT_CP_LO();
-		APP_CP_LO();
+		if(app_power_enabled)
+			APP_CP_LO();
 		ms_cnt++;
 		cnt = 0;
 	}
