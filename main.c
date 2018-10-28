@@ -468,7 +468,17 @@ void main()
 //	sbc_comm_test();
 //	dump_scb();
 
-	pointer_system_test();
+	while(1)
+	{
+		LED_ON();
+		app_power_on();
+		delay_ms(100);
+		LED_OFF();
+		app_power_off();
+		delay_ms(1500);
+	}
+
+//	pointer_system_test();
 /*	while(1)
 	{
 

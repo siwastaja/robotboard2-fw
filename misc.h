@@ -28,8 +28,9 @@ uint8_t uart_input();
 
 void charger_safety_shutdown();
 void epc_safety_shutdown();
+void pwrswitch_safety_shutdown();
 
-#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); epc_safety_shutdown();}while(0)
+#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); epc_safety_shutdown(); pwrswitch_safety_shutdown();}while(0)
 
 
 

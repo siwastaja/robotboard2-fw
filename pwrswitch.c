@@ -65,7 +65,6 @@
 // 24.6V -> lowed thresholds
 
 
-
 void pwrswitch_chargepump_init()
 {
 	RCC->AHB4ENR |= 1UL<<1;
@@ -76,9 +75,18 @@ void pwrswitch_chargepump_init()
 void init_pwrswitch_and_led()
 {
 	RCC->AHB4ENR |= 1UL<<4 | 1UL<<5; // PE and PF
+
 	IO_TO_GPI(GPIOE,2); // power switch sense
+
 	IO_TO_GPO(GPIOF,2); // power switch LED
 	IO_OPENDRAIN(GPIOF,2);
+
+	APP_CP_LO();
+	IO_TO_GPO(GPIOF,12); // APP charge pump
+
+	APP_EN_DESAT_PROT();
+	IO_TO_GPO(GPIOE,15); // App desat protection disable output
+	
 }
 
 
@@ -122,9 +130,9 @@ void chargepump_initial_pulsetrain()
 
 	for(int i=0; i<30; i++)
 	{
-		HI(GPIOB, 2);
+		PLAT_CP_HI();
 		delay_us(16);
-		LO(GPIOB, 2);
+		PLAT_CP_LO();
 		delay_us(32);
 	}
 }
@@ -136,9 +144,9 @@ void chargepump_replenish_pulsetrain()
 {
 	for(int i=0; i<18; i++)
 	{
-		HI(GPIOB, 2);
+		PLAT_CP_HI();
 		delay_us(16);
-		LO(GPIOB, 2);
+		PLAT_CP_LO();
 		delay_us(32);
 	}
 }
@@ -150,14 +158,63 @@ void chargepump_pulsetrain_low_power(uint32_t del_ms)
 {
 	while(del_ms--)
 	{
-		HI(GPIOB, 2);
+		PLAT_CP_HI();
 		delay_us(16);
-		LO(GPIOB, 2);
+		PLAT_CP_LO();
 		delay_us(144);
 	}
 }
 
 int main_power_enabled = 2;
+int app_power_enabled = 0;
+
+
+int app_precharge_pulsetrain;
+
+/*
+
+App pwr switch tests:
+cyan = Vbat
+yellow = App pwr out
+pink = Vg
+Blue = Vs
+
+QP115:	Output 5mF || 10.5 ohm,
+	10 cycles of 100us CP_HI, 10000 us CP_LO,
+	desat prot disabled during the cycles
+
+
+
+
+ (20.0V, 10mF elcap)
+*/
+
+void app_power_on()
+{
+//	app_power_enabled = 1;
+
+	// Each 6us pulse, resistance and inductance limited to, say, 200A average, supplies
+	// 1.2mC charge. If the app has 10mF of capacitance, each pulse precharges by about
+	// 1.2mC/10mF = 120mV. Around 100 pulses are therefore required to properly precharge
+	// such pessimistic load. At 1kHz, this takes 100ms.
+
+	APP_DIS_DESAT_PROT();
+	for(int i=0; i<10; i++)
+	{
+		APP_CP_HI();
+		delay_us(100);
+		APP_CP_LO();
+		delay_us(10000);
+	}
+	APP_EN_DESAT_PROT();
+//	app_precharge_pulsetrain = 100;
+}
+
+void app_power_off()
+{
+	APP_EN_DESAT_PROT();
+	app_power_enabled = 0;
+}
 
 void pwrswitch_1khz() __attribute__((section(".text_itcm")));
 void pwrswitch_1khz()
@@ -192,7 +249,7 @@ void pwrswitch_1khz()
 	}
 	else if(main_power_enabled == 1)
 	{
-		if(++shutdown_cnt > 5000) // Milliseconds to give the SBC to shut down
+		if(++shutdown_cnt > 1000) // Milliseconds to give the SBC to shut down
 		{
 			main_power_enabled = 0;
 		}
@@ -205,6 +262,16 @@ void pwrswitch_1khz()
 	{
 		shutdown();
 	}
+}
+
+void pwrswitch_safety_shutdown() __attribute__((section(".text_itcm")));
+void pwrswitch_safety_shutdown()
+{
+	APP_EN_DESAT_PROT();
+//	main_power_enabled = 0;  // keep on for flashing
+	app_power_enabled = 0;
+	__DSB(); __ISB();
+		
 }
 
 void shutdown()

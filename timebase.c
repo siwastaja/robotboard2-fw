@@ -32,11 +32,28 @@ void timebase_inthandler()
 		if(main_power_enabled) 
 			PLAT_CP_HI();
 
+		extern int app_power_enabled;
+		if(app_power_enabled)
+			APP_CP_HI();
+
+		extern int app_precharge_pulsetrain;
+		if(app_precharge_pulsetrain > 0)
+		{
+//			DIS_IRQ();
+//			APP_DIS_DESAT_PROT();
+//			delay_us(8);
+//			APP_EN_DESAT_PROT();
+//			ENA_IRQ();
+			app_precharge_pulsetrain--;
+		}
+
+
 		pwrswitch_1khz();
 	}
 	else if(cnt >= 10)
 	{
 		PLAT_CP_LO();
+		APP_CP_LO();
 		ms_cnt++;
 		cnt = 0;
 	}
