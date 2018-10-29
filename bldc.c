@@ -3,6 +3,7 @@
 #include "own_std.h"
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
+#include "adcs.h"
 
 #define PWM_MAX 8192
 #define PWM_MID (PWM_MAX/2)
@@ -139,13 +140,24 @@ static volatile uint8_t pid_p = 80;
 static volatile uint8_t pid_i = 50;
 static volatile uint8_t pid_d = 50;
 
-void bldc_inthandler() __attribute__((section(".text_itcm")));
-void bldc_inthandler()
+#define TRACE_LEN 8
+int trace_at = 0;
+volatile int ib[TRACE_LEN], ic[TRACE_LEN];
+
+#define ADC_MID 8192
+void bldc0_inthandler() __attribute__((section(".text_itcm")));
+void bldc0_inthandler()
 {
+	LED_ON();
 	TIM1->SR = 0; // Clear interrupt flags
 	__DSB();
-	LED_ON();
-	delay_us(1);
+	
+	ib[trace_at] = ADC_MID-adc1.s.mc0_imeasb;
+	ic[trace_at] = ADC_MID-adc1.s.mc0_imeasc;
+	trace_at++;
+	if(trace_at >= TRACE_LEN)
+		trace_at=0;
+
 	LED_OFF();
 }
 
@@ -157,14 +169,26 @@ void bldc_safety_shutdown()
 
 }
 
+
 void bldc_test()
 {
 	MC0_EN_GATE();
 //	MC1_EN_GATE();
+	init_cpu_profiler();
+
+	TIM1->CCR3 = PWM_MID+400;
 
 	while(1)
 	{
-		;
+		profile_cpu_blocking_20ms();
+		for(int i=0; i<TRACE_LEN; i++)
+		{
+			DBG_PR_VAR_I16(ib[i]);
+			DBG_PR_VAR_I16(ic[i]);
+		}
+		uart_print_string_blocking("\r\n");
+	
+		delay_ms(80);
 	}
 }
 
@@ -526,6 +550,7 @@ void init_bldc()
 
 	TIM1->CCR1 = PWM_MID; // CCR1 not needed for syncing anymore.
 
+	delay_us(100); // Make sure CCR1 updates before turning on outputs:
 	// Now both timers are running OK, enable the output signals:
 
 	// TIM1:
