@@ -273,41 +273,45 @@ static char printbuf[128];
 
 void app_power_on()
 {
-//	app_power_enabled = 1;
-
-	// Each 6us pulse, resistance and inductance limited to, say, 200A average, supplies
-	// 1.2mC charge. If the app has 10mF of capacitance, each pulse precharges by about
-	// 1.2mC/10mF = 120mV. Around 100 pulses are therefore required to properly precharge
-	// such pessimistic load. At 1kHz, this takes 100ms.
-
 	// RC time constant for measuring Vapp is 3us.
-	// ADC sampling & conversion takes 0.3us. For two channels, 0.6us. For two channels oversampled 4x, 2.4us
-	// 
+	// RC time constant for measuring Vg is 6us.
+	// ADC sampling & conversion takes 0.3us. For two channels, 0.6us.
+	// For two channels oversampled 4x, 2.4us
 
 	APP_EN_DESAT_PROT();
 	APP_CP_LO();
-	delay_us(10000);
+	delay_us(100);
 
 #define N_PULSES 50
-	int vas[N_PULSES];
-	int vgs[N_PULSES];
-	int changeover_vas[N_PULSES];
-	int changeover_vgs[N_PULSES];
-	int done_vas[N_PULSES];
-	int done_vgs[N_PULSES];
-	int n_cycs_1[N_PULSES];
-	int n_cycs_2[N_PULSES];
-	int vdiffs[N_PULSES];
-	int currlim_cnts[N_PULSES];
+
+	#ifdef PWRSWITCH_DBG_PRINT
+		int vas[N_PULSES];
+		int vgs[N_PULSES];
+		int changeover_vas[N_PULSES];
+		int changeover_vgs[N_PULSES];
+		int done_vas[N_PULSES];
+		int done_vgs[N_PULSES];
+		int n_cycs_1[N_PULSES];
+		int n_cycs_2[N_PULSES];
+		int vdiffs[N_PULSES];
+		int currlim_cnts[N_PULSES];
+	#endif
 
 	int success = 0;
 	int prev_va = -100;
 	int prev_prev_va = -200;
 	int short_cnt = 0;
 	int boost = 0;
+
+	// APP_CP_LO brings the gate actually higher
+
 	for(int i=0; i<N_PULSES; i++)
 	{
 
+		// First, we give charge pump cycles that bring the gate out of negative voltage, still
+		// against the desat circuit. Actually measured that 7 such pulses really decrease the
+		// number of pulses needed in the next step (which will be protection disabled).
+		// Perform 10 such pulses.
 		for(int o=0; o<10; o++)
 		{
 			APP_CP_HI();
@@ -315,24 +319,39 @@ void app_power_on()
 			APP_CP_LO();
 			delay_us(30);
 		}
-		APP_DIS_DESAT_PROT();
 
+		APP_DIS_DESAT_PROT();
+		// Now, we are unprotected, and rely on the charge pump generating proper amount of
+		// gate charge, timed carefully.
+
+
+		// Measure the application output voltage (Va) and the gate voltage (Vg)
 		ADC3_CONV_INJECTED();
 		delay_us(4);
 		
 		int va = VAPP_MEAS_TO_MV(ADC3_VAPP_DATAREG);
-		int vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
-		vas[i] = va;
-		vgs[i] = vg;
+		#ifdef PWRSWITCH_DBG_PRINT
+			int vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
+			vas[i] = va;
+			vgs[i] = vg;
+		#endif
 
+		// See if the output voltage is actually rising at sufficient rate.
+		// Require 200mV increase per precharge cycle
+		// Measurement has a bit of noise, so we look two cycles back, and expect
+		// 400mV per two cycles.
+		// Don't bail out immediately, see if the problem persists for over 3 cycles.
+		// The code later also looks at short_cnt, to react before the short detection hits.
 		if(va < prev_prev_va+400)
 		{
 			if(++short_cnt > 3)
 			{
 				APP_EN_DESAT_PROT();
-				uart_print_string_blocking("\r\nShort detection (non-rising): ");
-				o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
-				uart_print_string_blocking("\r\n");
+				#ifdef PWRSWITCH_DBG_PRINT
+					uart_print_string_blocking("\r\nShort detection (non-rising): ");
+					o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
+					uart_print_string_blocking("\r\n");
+				#endif
 				break;
 			}
 		}
@@ -342,12 +361,16 @@ void app_power_on()
 		prev_prev_va = prev_va;
 		prev_va = va;
 
-		// APP_CP_LO brings the gate actually higher
-
-		// Gate rises at about 3V/500us
-		// 6mV/us -> 360mV / 60us cycle
-//		int n_cyc = 7 + va/360;
-		int n_cyc = 10 + va/330; // sanity max
+		// Now, as the desat protection was on (and active), the gate is always at 0V.
+		// Bring it up to near conduction, which will be at Vapp + Vgs(th), so around
+		// Vapp + 3V.
+		// First do coarse pulses, pumping the gate up to Vapp + 1.2V.
+		// Implement a safety limit on number of pulses:
+		// Measured:
+		// At 0V,  0 cycles needed
+		// At 17000mV, 31 cycles needed.
+		// 17000/438=38 cycles or 25% extra.
+		int n_cyc = 6 + va/438; // sanity max
 
 		int o;
 		for(o = 0; o<n_cyc; o++)
@@ -366,29 +389,29 @@ void app_power_on()
 
 			if(peak_vg > peak_va+1200)
 			{
-				changeover_vas[i] = peak_va;
-				changeover_vgs[i] = peak_vg;
+				#ifdef PWRSWITCH_DBG_PRINT
+					changeover_vas[i] = peak_va;
+					changeover_vgs[i] = peak_vg;
+				#endif
 				goto SLOWER;
 			}		
 		}
-		APP_EN_DESAT_PROT();
+		error(47);
+		SLOWER:;
 
-		uart_print_string_blocking("\r\nGate charge issue 1: ");
-		o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking("\r\n");
+		#ifdef PWRSWITCH_DBG_PRINT
+			n_cycs_1[i] = o;
+		#endif
 
-		break;
-
-		SLOWER:
-		n_cycs_1[i] = o;
-
-		n_cyc-=o;
-		n_cyc*=4;
+		// Then, do fine pulses, each pulse pumps the gate up considerably less than the
+		// coarse pulses before. Bring the Vgs to 3.5V, which is just on the brink of conduction.
+		// The MOSFETs might be conducting a little, but this is negligible regarding the safe
+		// operating area. The most important bit is that this is fairly repeatable, regardless of
+		// the actual operating conditions such as battery voltage or temperature.
 
 		int latest_va;
-
 		int e;
-		for(e=0; e<n_cyc; e++)
+		for(e=0; e<20; e++) // Actually measured that 7..13 pulses are needed.
 		{
 			APP_CP_HI();
 			delay_us(26);
@@ -405,25 +428,53 @@ void app_power_on()
 			if(peak_vg > peak_va+3500)
 			{
 				latest_va = peak_va;
-				done_vas[i] = peak_va;
-				done_vgs[i] = peak_vg;
+				#ifdef PWRSWITCH_DBG_PRINT
+					done_vas[i] = peak_va;
+					done_vgs[i] = peak_vg;
+				#endif
 				goto DONE;
 			}
 		}
-		APP_EN_DESAT_PROT();
+		error(48);
+		while(1); // to tell the compiler we don't come back from error(), to prevent Wmaybe-uninitialized
+		DONE:;
 
-		uart_print_string_blocking("\r\nGate charge issue 2: ");
-		o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking("\r\n");
+		#ifdef PWRSWITCH_DBG_PRINT
+			n_cycs_2[i] = e;
+		#endif
 
-		break;
+		// Now, we are at conduction. Any pulses will basically immediately pump the MOSFET current
+		// higher. Do a controlled amount of pulses. Constantly doing 1 pulse here is enough to give careful,
+		// almost constant-current precharge into capacitive load. More pulses means bigger current, in a
+		// somewhat quadratic way (at least steeper than linear).
+		// Now, doing constant number of pulses (1-5 depending on how fast we want to precharge) is perfectly
+		// fine for capacitive-only loads, but many loads may have resistive elements, or something is actually
+		// starting up and consuming current way before the target voltage is reached. As such, more current
+		// is needed, or the voltage rise stops. Luckily, the closer we are the target voltage, the less the
+		// Vds over the MOSFETS, meaning wider SOA - so we can safely increase the current.
 
-		DONE:
-		n_cycs_2[i] = e;
+		// Calculate vdiff = voltage over the MOSFETs
+		// If the difference is <1V, consider the precharge finished
+		// If the difference is low, it's safe to use more pulses, to produce higher current.
+		// If the output voltage is not rising, and the short detection is about to trigger, and
+		// the precharge is almost complete (Vdiff<10V), we can safely increase the current even further,
+		// the MOSFETs are fine.
 
 		int vdiff = VBAT_MEAS_TO_MV(adc1.s.vbat_meas) - latest_va;
 
-		vdiffs[i] = vdiff;
+		#ifdef PWRSWITCH_DBG_PRINT
+			vdiffs[i] = vdiff;
+		#endif
+
+		// At 25Vdiff, 2 pulses
+		// At 22Vdiff, 3 pulses
+		// At 20Vdiff, 5 pulses
+		// At 15Vdiff, 10 pulses
+		// At 10Vdiff, 15 pulses
+		// At  5Vdiff, 20 pulses
+		// At  5Vdiff, 30 pulses if the short detection is about to trigger
+		// At  2Vdiff, 23 pulses
+		// At  2Vdiff, 39 pulses if the short detection is about to trigger
 
 		int currlim_cnt = (25-(vdiff>>10 /*/1024*/));
 		if(currlim_cnt < 2) currlim_cnt=2;
@@ -442,7 +493,9 @@ void app_power_on()
 
 		currlim_cnt += boost;
 
-		currlim_cnts[i] = currlim_cnt;
+		#ifdef PWRSWITCH_DBG_PRINT
+			currlim_cnts[i] = currlim_cnt;
+		#endif
 
 		for(int u=0; u<currlim_cnt; u++)
 		{
@@ -452,13 +505,17 @@ void app_power_on()
 			delay_us(20);
 		}
 
+		// Cycle ended. Enable desat protection again, which brings the gate quickly down.
+
 		APP_EN_DESAT_PROT();
 
 		if(vdiff < 1000)
 		{
-			uart_print_string_blocking("\r\nDone precharging: ");
-			o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking("\r\n");
+			#ifdef PWRSWITCH_DBG_PRINT
+				uart_print_string_blocking("\r\nDone precharging: ");
+				o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking("\r\n");
+			#endif
 			success = 1;
 			break;
 		}
@@ -468,45 +525,49 @@ void app_power_on()
 	APP_EN_DESAT_PROT();
 
 	APP_CP_LO();
+	delay_us(10);
 
 	if(success)
 	{
+		// Start generating gate pump signals in the timebase ISR:
 		app_power_enabled = 1;
 	}
 	else
-		uart_print_string_blocking("\r\n PRECHARGE PROBLEM \r\n");
-
-
-	uart_print_string_blocking("\r\n PULSE TRAIN ENDED \r\n");
-	for(int i=0; i<N_PULSES; i++)
 	{
-		o_utoa16_fixed(i, printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" va:");
-		o_utoa16_fixed(vas[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" vg:");
-		o_utoa16_fixed(vgs[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" n_cycs1:");
-		o_utoa16_fixed(n_cycs_1[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" co va:");
-		o_utoa16_fixed(changeover_vas[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" vg:");
-		o_utoa16_fixed(changeover_vgs[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" n_cycs2:");
-		o_utoa16_fixed(n_cycs_2[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" done va:");
-		o_utoa16_fixed(done_vas[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" vg:");
-		o_utoa16_fixed(done_vgs[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" vdiff:");
-		o_utoa16_fixed(vdiffs[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" cl_cnt:");
-		o_utoa16_fixed(currlim_cnts[i], printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking("\r\n");
+		#ifdef PWRSWITCH_DBG_PRINT
+			uart_print_string_blocking("\r\n PRECHARGE PROBLEM \r\n");
+		#endif
 	}
-	uart_print_string_blocking("\r\n");
-	
 
-//	app_precharge_pulsetrain = 100;
+	#ifdef PWRSWITCH_DBG_PRINT
+		uart_print_string_blocking("\r\n PULSE TRAIN ENDED \r\n");
+		for(int i=0; i<N_PULSES; i++)
+		{
+			o_utoa16_fixed(i, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" va:");
+			o_utoa16_fixed(vas[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" vg:");
+			o_utoa16_fixed(vgs[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" n_cycs1:");
+			o_utoa16_fixed(n_cycs_1[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" co va:");
+			o_utoa16_fixed(changeover_vas[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" vg:");
+			o_utoa16_fixed(changeover_vgs[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" n_cycs2:");
+			o_utoa16_fixed(n_cycs_2[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" done va:");
+			o_utoa16_fixed(done_vas[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" vg:");
+			o_utoa16_fixed(done_vgs[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" vdiff:");
+			o_utoa16_fixed(vdiffs[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" cl_cnt:");
+			o_utoa16_fixed(currlim_cnts[i], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking("\r\n");
+		}
+		uart_print_string_blocking("\r\n");
+	#endif	
 }
 
 void app_power_off()
