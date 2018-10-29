@@ -464,11 +464,14 @@ void main()
 //		adc_test();
 
 	delay_ms(10);
+
+	extern void bldc_test();
+	bldc_test();
 //	tof_ctrl_init();
 //	sbc_comm_test();
 //	dump_scb();
 
-	while(1)
+/*	while(1)
 	{
 		LED_ON();
 		app_power_on();
@@ -477,6 +480,8 @@ void main()
 		app_power_off();
 		delay_ms(2000);
 	}
+*/
+
 
 //	pointer_system_test();
 /*	while(1)

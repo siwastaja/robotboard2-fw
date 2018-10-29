@@ -166,7 +166,7 @@ extern uint32_t vbat_per_vinbus_mult;
 #endif
 
 #define ADC1_SEQ_LEN 10
-#define ADC1_SEQ  2, 7,16,17, 4,15,14,12,18, 8, 0, 0, 0, 0, 0, 0
+#define ADC1_SEQ 15,14,16,17, 4,2,7,12,18, 8, 0, 0, 0, 0, 0, 0
 #define ADC1_DISCONTINUOUS_GROUP_LEN 5
 
 // Which channels are used? LSb = ch 0
@@ -187,8 +187,8 @@ typedef union
 	{
 		// CONVERSION GROUP 1: 5 items
 
-		uint16_t mc0_imeasb;            // ADC1   2+  PF11  Motor controller 0 phase B current measurement
-		uint16_t mc0_imeasc;            // ADC12  7+  PA7   Motor controller 0 phase C current measurement
+		uint16_t mc1_imeasb;            // ADC12  15+ PA3   Motor controller 1 phase B current measurement
+		uint16_t mc1_imeasc;            // ADC12  14+ PA2   Motor controller 1 phase C current measurement
 
 		uint16_t bms_temp_contacts;     // ADC1   16+ PA0   Charger contact temperature NTC
 		uint16_t bms_temp_plat_mosfets; // ADC1   17+ PA1   Platform power switch MOSFET&fuse temperature NTC
@@ -196,8 +196,8 @@ typedef union
 
 		// CONVERSION GROUP 2: 5 items
 
-		uint16_t mc1_imeasb;            // ADC12  15+ PA3   Motor controller 1 phase B current measurement
-		uint16_t mc1_imeasc;            // ADC12  14+ PA2   Motor controller 1 phase C current measurement
+		uint16_t mc0_imeasb;            // ADC1   2+  PF11  Motor controller 0 phase B current measurement
+		uint16_t mc0_imeasc;            // ADC12  7+  PA7   Motor controller 0 phase C current measurement
 
 		uint16_t bms_temp_battery;      // ADC123 12+ PC2   Battery temperature NTC
 

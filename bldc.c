@@ -22,6 +22,9 @@
 
 #define DLED_ON() {}
 
+static char printbuf[128];
+
+
 int timing_shift = 5000*65536; // hall sensors are not exactly where you could think they are.
 
 volatile int precise_curr_lim; // if exceeded, the duty cycle multiplier is kept (not increased like normally)
@@ -135,6 +138,35 @@ static volatile uint8_t pid_feedfwd = 30;
 static volatile uint8_t pid_p = 80;
 static volatile uint8_t pid_i = 50;
 static volatile uint8_t pid_d = 50;
+
+void bldc_inthandler() __attribute__((section(".text_itcm")));
+void bldc_inthandler()
+{
+	TIM1->SR = 0; // Clear interrupt flags
+	__DSB();
+	LED_ON();
+	delay_us(1);
+	LED_OFF();
+}
+
+void bldc_safety_shutdown() __attribute__((section(".text_itcm")));
+void bldc_safety_shutdown()
+{
+	MC0_DIS_GATE();
+	MC1_DIS_GATE();
+
+}
+
+void bldc_test()
+{
+	MC0_EN_GATE();
+//	MC1_EN_GATE();
+
+	while(1)
+	{
+		;
+	}
+}
 
 #if 0
 void tim1_inthandler()
@@ -399,12 +431,29 @@ Since the trigger source has to be fixed to either TIM1 or TIM8, we use TIM1. Th
 need to create two ADC triggers per cycle, which will be:
 	* TIM1 TRGO2 (Master Mode 2) = update event (which will happen for both overflow
 	  and underflow).
+This way, we can't trig the ADC exactly centered, it'll send the trigger _start_ at the exact center,
+but this is no big deal, the ADC is fast compared to our slow PWM.
 
 
 Timers run at 200MHz
 Timer is up/down counting, halving the freq.
 With PWM_MAX = 8192, PWM will run at 12.2kHz
 
+ADC converts the two currents in 0.6us, let's assume DMA takes 0.2us more to finish, and add 0.2us
+safety margin. Hence, we want the IRQ earliest 1us after the ADC trigger (update event).
+
+On the other hand, if we want to allocate at least 2us for worst-case calculation in the ISR,
+the IRQ needs to happen latest 2us before the update event (so the new PWM values are in at update).
+
+It would be nice to be able to trig the IRQ at OCR4 rising edge 1us after the ADC trigger, but this
+is impossible: the TIMer generates two triggers (rising and falling).
+
+The only sane way is to make the IRQ trigger from TIM1 only, at equidistant intervals, this is, at PWM_MID,
+so it happens about 41us after the ADC trigger, and 41us before the update event of the relevant timer.
+
+CORRECTION TO ABOVE:
+As an undocumented and unexpected feature, CC IRQs only happen at the rising edge - exactly where we want them
+to be! We can use separate interrupt triggers for both timers.
 
 */
 void init_bldc()
@@ -432,20 +481,17 @@ void init_bldc()
 		      1UL<<8 /*OC3 on*/ | 1UL<<10 /*OC3 complementary output enable*/;
 
 
-//	TIM1->CCR1 = PWM_MID; // Sync pulse for 90 deg phase diff
-	TIM1->CCR1 = PWM_MAX-10; // Sync pulse for 180 deg phase diff.
-
-	// Tested that "1" is actually long enough to sync. Using a bit wider pulse to be sure.
-
 	TIM1->ARR = PWM_MAX;
 
-//	TIM1->CCR1 = PWM_MID;
-	TIM1->CCR2 = PWM_MID/2;
+	// CCR1 is reused for the temporary purpose of sync-starting TIM8:
+	TIM1->CCR1 = PWM_MAX-10; // Sync pulse for 180 deg phase diff.
+	// Tested that "1" is actually long enough to sync. Using a bit wider pulse (-10) to be sure.
+
+	TIM1->CCR2 = PWM_MID;
 	TIM1->CCR3 = PWM_MID;
-	TIM1->CCR4 = 1020; // Generate the ADC trigger near the middle of the PWM waveforms
+	TIM1->CCR4 = PWM_MAX-400; // Interrupt trigger 2us after ADC trigger
 	TIM1->BDTR = 1UL<<15 /*Main output enable*/ | 1UL /*21ns deadtime*/;
 	TIM1->EGR |= 1; // Generate Reinit+update
-//	TIM1->DIER = 1UL /*Update interrupt enable*/;
 	__DSB();
 	TIM1->CR1 |= 1; // Enable the timer
 	__DSB();
@@ -467,9 +513,8 @@ void init_bldc()
 	TIM8->ARR = PWM_MAX;
 
 	TIM8->CCR1 = PWM_MID;
-	TIM8->CCR2 = PWM_MID+PWM_MID/2;
+	TIM8->CCR2 = PWM_MID;
 	TIM8->CCR3 = PWM_MID;
-	TIM8->CCR4 = 1020; // Generate the ADC trigger near the middle of the PWM waveforms
 	TIM8->BDTR = 1UL<<15 /*Main output enable*/ | 1UL /*21ns deadtime*/;
 	TIM8->EGR |= 1; // Generate Reinit+update
 //	TIM8->DIER = 1UL /*Update interrupt enable*/;
@@ -479,8 +524,9 @@ void init_bldc()
 	while(!(TIM8->CR1 & 1UL)) ;
 	__DSB();
 
-	TIM1->CCR1 = PWM_MID;
+	TIM1->CCR1 = PWM_MID; // CCR1 not needed for syncing anymore.
 
+	// Now both timers are running OK, enable the output signals:
 
 	// TIM1:
 	IO_ALTFUNC(GPIOA,8,  1);
@@ -492,6 +538,7 @@ void init_bldc()
 	IO_ALTFUNC(GPIOI,6,  3);
 	IO_ALTFUNC(GPIOI,7,  3);
 
-//	NVIC_EnableIRQ(TIM1_BRK_UP_TRG_COM_IRQn);
+	TIM1->DIER = 1UL<<4 /*Compare 4 interrupt*/;
+	NVIC_EnableIRQ(TIM1_CC_IRQn);
 
 }

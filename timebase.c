@@ -10,6 +10,7 @@ Timebase: 10kHz handler
 #include "misc.h"
 #include "charger.h"
 #include "pwrswitch.h"
+#include "adcs.h"
 
 volatile uint32_t ms_cnt;
 
