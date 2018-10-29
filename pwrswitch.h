@@ -33,7 +33,7 @@ void chargepump_pulsetrain_low_power(uint32_t del_ms);
 void pwrswitch_1khz();
 void shutdown();
 
-void app_power_on();
+int app_power_on();
 void app_power_off();
 
 

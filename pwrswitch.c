@@ -168,7 +168,7 @@ void chargepump_pulsetrain_low_power(uint32_t del_ms)
 }
 
 int main_power_enabled = 2;
-int app_power_enabled = 0;
+volatile int app_power_enabled = 0;
 
 
 int app_precharge_pulsetrain;
@@ -271,8 +271,10 @@ PCB revision changes:
 
 static char printbuf[128];
 
-void app_power_on()
+int app_power_on()
 {
+	if(app_power_enabled)
+		return -2;
 	// RC time constant for measuring Vapp is 3us.
 	// RC time constant for measuring Vg is 6us.
 	// ADC sampling & conversion takes 0.3us. For two channels, 0.6us.
@@ -568,6 +570,8 @@ void app_power_on()
 		}
 		uart_print_string_blocking("\r\n");
 	#endif	
+
+	return success?0:-1;
 }
 
 void app_power_off()

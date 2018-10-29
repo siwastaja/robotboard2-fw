@@ -22,11 +22,10 @@ void timebase_inthandler()
 
 	cnt++;
 
-	// For performance, reuse this loop to run the charge pumps as well:
+	// For performance, this loop runs the charge pumps as well:
+	// See test report in pwrswitch.c - (250us HI, 500us LO) provided the highest Vgs. We'll round that up to 300us HI, 700us LO
 
-	// See test report in pwrswitch.c - (250us HI, 500us LO) provided the highest Vgs. We'll round that up to 300us HI, 700us LO)
-
-	extern int app_power_enabled;
+	extern volatile int app_power_enabled;
 	if(cnt == 7)
 	{
 		extern int main_power_enabled;
@@ -36,31 +35,32 @@ void timebase_inthandler()
 		if(app_power_enabled)
 			APP_CP_HI();
 
-		extern int app_precharge_pulsetrain;
-		if(app_precharge_pulsetrain > 0)
-		{
-//			DIS_IRQ();
-//			APP_DIS_DESAT_PROT();
-//			delay_us(8);
-//			APP_EN_DESAT_PROT();
-//			ENA_IRQ();
-			app_precharge_pulsetrain--;
-		}
-
-
 		pwrswitch_1khz();
+	}
+	else if(cnt == 9)
+	{
+		if(app_power_enabled)
+			ADC3_CONV_INJECTED();
 	}
 	else if(cnt >= 10)
 	{
 		PLAT_CP_LO();
 		if(app_power_enabled)
+		{
 			APP_CP_LO();
+			int vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
+			int vbat = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
+			if(vg < vbat+7000)
+			{
+				app_power_enabled = 0;
+			}
+		}
 		ms_cnt++;
 		cnt = 0;
 	}
 
 
-	// Keep all functions in ITCM!
+	// Keep all 10kHz functions in ITCM!
 	charger_10khz();
 }
 
