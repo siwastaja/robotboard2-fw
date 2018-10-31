@@ -127,9 +127,7 @@ void dump_stack()
 void error(int code)
 {
 	__disable_irq();
-	charger_safety_shutdown();
-	epc_safety_shutdown();
-
+	SAFETY_SHUTDOWN();
 
 	uart_print_string_blocking("\r\nERROR "); o_itoa32(code, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 //	dump_scb();
@@ -444,6 +442,9 @@ void main()
 	NVIC_EnableIRQ(PVD_IRQn);
 
 
+	IO_TO_GPO(GPIOF, 5);
+	BIG5V_ON();
+
 	init_sbc_comm();
 	delay_ms(2000);
 
@@ -465,9 +466,16 @@ void main()
 
 	delay_ms(10);
 
-	extern void bldc_test();
-	bldc_test();
-//	tof_ctrl_init();
+	init_audio();
+	while(1)
+	{
+		beep();
+		delay_ms(200);
+	}
+
+//	extern void bldc_test();
+//	bldc_test();
+	tof_ctrl_init();
 //	sbc_comm_test();
 //	dump_scb();
 

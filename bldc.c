@@ -142,21 +142,286 @@ static volatile uint8_t pid_d = 50;
 
 #define TRACE_LEN 8
 int trace_at = 0;
-volatile int ib[TRACE_LEN], ic[TRACE_LEN];
+volatile int ib_trace[TRACE_LEN], ic_trace[TRACE_LEN];
 
 #define ADC_MID 8192
+#define ADC_CURR_SAFETY_LIMIT 7000
+
+#if ADC_CURR_SAFETY_LIMIT > (ADC_MID-2)
+#error Recheck ADC_CURR_SAFETY_LIMIT
+#endif
+
+// Rshunt=1mOhm -> 1mA ~ 1uV. Gain = 50 -> 1mA ~ 50uV
+// 16384 ~ 3.3V -> 201.416 uV/LSB
+// --> multiplier = 4.0283
+#define MULT_ADC_TO_MA  4
+
+int32_t bldc_pos[2];
+
 void bldc0_inthandler() __attribute__((section(".text_itcm")));
 void bldc0_inthandler()
 {
 	LED_ON();
 	TIM1->SR = 0; // Clear interrupt flags
 	__DSB();
-	
-	ib[trace_at] = ADC_MID-adc1.s.mc0_imeasb;
-	ic[trace_at] = ADC_MID-adc1.s.mc0_imeasc;
+
+	int ib = ADC_MID-adc1.s.mc0_imeasb;
+	int ic = ADC_MID-adc1.s.mc0_imeasc;
+
+	if(ib < -ADC_CURR_SAFETY_LIMIT || ib > ADC_CURR_SAFETY_LIMIT || ic < -ADC_CURR_SAFETY_LIMIT || ic > ADC_CURR_SAFETY_LIMIT)
+	{
+		MC0_DIS_GATE();
+		error(16);
+	}
+
+	ib_trace[trace_at] = ib;
+	ic_trace[trace_at] = ic;
 	trace_at++;
 	if(trace_at >= TRACE_LEN)
 		trace_at=0;
+
+
+#if 0
+
+
+
+
+
+
+
+	static int reverse = 0;
+	static int prev_reverse = 1;
+	static int mult = 0;
+	static int currlim_mult = 255;
+	static int32_t cnt = 0;
+	static int expected_next_hall_pos;
+	static int expected_fwd_hall_pos;  // for step counting only
+	static int expected_back_hall_pos; // for step counting only
+	static int32_t expected_next_hall_cnt;
+	static int cnt_at_prev_hall_valid = 0;
+	static int cnt_at_prev_hall;
+	static int prev_hall_pos;
+	static int resync = 5;
+	static int prev_ferr = 0;
+	static int f = 0;
+	static int loc;
+	static int pid_f_set;
+	static int64_t pid_integral = 0;
+
+	int hall_pos = hall_loc[MC0_HALL_CBA()];
+	if(hall_pos == -1) hall_pos = prev_hall_pos;
+
+	if(pid_f_set < 0 ) reverse = 1; else reverse = 0;
+	if(reverse != prev_reverse)
+	{
+		resync = 2;
+		f = 0;
+		pid_integral = 0;
+	}
+	prev_reverse = reverse;
+
+/*
+	Note: this code did sine interpolation earlier on. Now the relevant parts are commented out so it does
+	a simple 6-step: it's working more robustly at low speeds.
+*/
+
+	if(resync)
+	{
+		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
+		cnt_at_prev_hall_valid = 0;
+		expected_next_hall_cnt = cnt+22000;
+		f = 0;
+	}
+	else if(cnt_at_prev_hall_valid && hall_pos == prev_hall_pos) // We haven't advanced a step yet, do sine interpolation
+	{
+		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
+		// Interpolation freezes if the hall sync is not received on time.
+		if((cnt - expected_next_hall_cnt) < 0) // this comparison works with counter wrapping around.
+		{
+			// Sine interpolation hasn't advanced to the next hall sync point, run it
+//			if(reverse)
+//				loc -= f;
+//			else
+//				loc += f;
+		}
+		else // We are overdue: recalculate the freq.
+		{
+			f = (PH120SHIFT)  /  ((cnt-cnt_at_prev_hall));
+		}
+
+		// TODO: prev_error feedforward to frequency generation.
+	}
+	else if(hall_pos == expected_next_hall_pos) 
+	{
+		// We have advanced one step in the right dirction - we can synchronize the sine phase, 
+		// and calculate a valid frequency from the delta time.
+		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
+
+		if(cnt_at_prev_hall_valid)
+		{
+//			f = (reverse?(-PH120SHIFT):(PH120SHIFT))  /  ((cnt-cnt_at_prev_hall));
+			f = (PH120SHIFT)  /  ((cnt-cnt_at_prev_hall));
+			expected_next_hall_cnt = cnt+(cnt-cnt_at_prev_hall);
+		}
+		else
+		{
+			f = 0;
+			expected_next_hall_cnt = cnt+22000; // at smallest possible freq, we'll wait for 0.5 sec for the next hall pulse.
+		}
+
+		cnt_at_prev_hall_valid = 1;
+		cnt_at_prev_hall = cnt;
+	}
+	else // We are lost - synchronize the phase to the current hall status
+	{
+		//lost_count++;
+		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
+		cnt_at_prev_hall_valid = 0;
+		expected_next_hall_cnt = cnt+22000;
+		f = 0;
+	}
+
+	if(resync) resync--;
+
+	if(hall_pos == expected_fwd_hall_pos)
+	{
+		bldc_pos[0]++;
+	}
+	else if(hall_pos == expected_back_hall_pos)
+	{
+		bldc_pos[0]--;
+	}
+
+	prev_hall_pos = hall_pos;
+
+	expected_next_hall_pos = hall_pos;
+	if(!reverse) { expected_next_hall_pos++; if(expected_next_hall_pos > 5) expected_next_hall_pos = 0; }
+	else         { expected_next_hall_pos--; if(expected_next_hall_pos < 0) expected_next_hall_pos = 5; }
+
+	expected_fwd_hall_pos  = hall_pos+1; if(expected_fwd_hall_pos > 5) expected_fwd_hall_pos = 0;
+	expected_back_hall_pos = hall_pos-1; if(expected_back_hall_pos < 0) expected_back_hall_pos = 5;
+
+	int idxa = (((uint32_t)loc)&0xff000000)>>24;
+	int idxb = (((uint32_t)loc+PH120SHIFT)&0xff000000)>>24;
+	int idxc = (((uint32_t)loc+2*PH120SHIFT)&0xff000000)>>24;
+
+	// Ramp the setpoint.
+	int next_pid_f_set = (speed_setpoint[0]*100);
+
+	if(next_pid_f_set > pid_f_set) pid_f_set+=256;
+	else if(next_pid_f_set < pid_f_set) pid_f_set-=256;
+	if((next_pid_f_set - pid_f_set) > -256 && (next_pid_f_set - pid_f_set) < 256) next_pid_f_set = pid_f_set;
+
+	int pid_f_meas = f>>3;
+	if(reverse) pid_f_meas *= -1;
+
+	int ferr;
+
+	ferr = pid_f_set - pid_f_meas;
+
+	measured_speed[0] = pid_f_meas>>8;
+
+	// Run the speed PID loop - not on every ISR cycle
+	if(!(cnt & 15))
+	{
+		int dferr = (ferr - prev_ferr);
+		prev_ferr = ferr;
+
+		pid_integral += ferr;
+
+		int64_t pid_i_max_extended = (int64_t)pid_i_max<<25;
+		int64_t pid_i_min_extended = -1*pid_i_max_extended;
+		if(pid_integral > pid_i_max_extended) pid_integral = pid_i_max_extended;
+		else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
+
+		mult = (((int64_t)pid_feedfwd*(int64_t)pid_f_set)>>10) /* feedforward */
+			+ (((int64_t)pid_p*(int64_t)ferr)>>9) /* P */
+			+ (((int64_t)pid_i*(int64_t)pid_integral)>>21)  /* I */
+			+ (((int64_t)pid_d*(int64_t)dferr)>>14); /* D */
+
+	}
+
+	
+	#define MAX_MULT (200*256)
+	#define MIN_MULT (-200*256)
+
+	if(mult > MAX_MULT) mult = MAX_MULT;
+	else if(mult < MIN_MULT) mult = MIN_MULT;
+
+	int sin_mult = mult>>8;
+
+	if(reverse) sin_mult *= -1;	
+
+	if(sin_mult < 0) sin_mult = 0;
+
+#define MIN_MULT_OFFSET 8 // no point in outputting extremely low amplitudes
+	if(sin_mult != 0)
+		sin_mult += MIN_MULT_OFFSET;
+
+
+	uint8_t m = (sin_mult * currlim_mult)>>8; // 254 max
+	TIM1->CCR1 = (PWM_MID) + ((m*sine[idxa])>>11); // sine: -32768..32767, times 254 max: multiplication result ranges +/- 4064
+	TIM1->CCR2 = (PWM_MID) + ((m*sine[idxb])>>11);
+	TIM1->CCR3 = (PWM_MID) + ((m*sine[idxc])>>11);
+
+	cnt++;
+
+	int current_b = ib;
+	int current_c = ic;
+	if(current_b < 0) current_b *= -1;
+	if(current_c < 0) current_c *= -1;
+
+	int current;
+	if(current_c > current_b) current = current_c; else current = current_b;
+
+	static int32_t current_flt = 0;
+
+	current_flt = ((current<<8) + 63*current_flt)>>6;
+
+	int32_t current_ma = current*MULT_ADC_TO_MA;
+	int32_t filtered_current_ma = (current_flt>>8)*MULT_ADC_TO_MA;
+//	spi_tx_data.current = current_ma;
+
+
+	if(OVERCURR()) // hard overcurrent, protection has acted, quickly ramp down the multiplier to avoid hitting it again
+	{
+//		spi_tx_data.num_hard_limits++;
+		LED_ON(); led_short = 0;
+		currlim_mult-=40;
+	}
+	else if(current > higher_curr_lim)
+	{
+		LED_ON(); led_short = 1;
+		currlim_mult-=2;
+	}
+	else if(current_flt > precise_curr_lim)
+	{
+		// keep the currlim_mult
+	}
+	else if(currlim_mult < 255)
+		currlim_mult++;
+
+	if(currlim_mult < 5) currlim_mult = 5;
+
+	static int32_t currlim_mult_flt = 0;
+
+	currlim_mult_flt = ((currlim_mult<<8) + 63*currlim_mult_flt)>>6;
+
+//	spi_tx_data.cur_limit_mul = currlim_mult_flt>>8;
+
+
+
+
+
+#endif
+
+
+
+
+
+
+
+
 
 	LED_OFF();
 }
@@ -172,19 +437,19 @@ void bldc_safety_shutdown()
 
 void bldc_test()
 {
-	MC0_EN_GATE();
+//	MC0_EN_GATE();
 //	MC1_EN_GATE();
 	init_cpu_profiler();
 
-	TIM1->CCR3 = PWM_MID+400;
+//	TIM1->CCR3 = PWM_MID+400;
 
 	while(1)
 	{
 		profile_cpu_blocking_20ms();
 		for(int i=0; i<TRACE_LEN; i++)
 		{
-			DBG_PR_VAR_I16(ib[i]);
-			DBG_PR_VAR_I16(ic[i]);
+			DBG_PR_VAR_I16(ib_trace[i]);
+			DBG_PR_VAR_I16(ic_trace[i]);
 		}
 		uart_print_string_blocking("\r\n");
 	

@@ -740,6 +740,7 @@ void cool_effect2()
 		if(r<0) r=0; else if(r>255) r = 255;
 		if(g<0) g=0; else if(g>255) g = 255;
 		if(b<0) b=0; else if(b>255) b = 255;
+
 		rgb_update(bright, r,  g,  b);
 
 		delay_ms(5);
@@ -861,8 +862,8 @@ void init_sensors()
 
 	epc_i2c_init();
 
-//	tof_mux_select(0);
-//	cool_effect();
+	tof_mux_select(0);
+	cool_effect();
 
 	/*
 		Even with 40cm cable, 40MHz (div 2) works well!
