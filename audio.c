@@ -21,17 +21,19 @@ void init_audio()
 
 }
 
-void beep()
+void beep_blocking(int pulses, int us, int volume)
 {
+	if(volume > 2000) volume = 2000; else if(volume < 50) volume = 50;
+
 	AUDIO_DAC = 2048;
 	HI(GPIOH, 12);
 	delay_ms(50);
-	for(int i=0; i<10; i++)
+	for(int i=0; i<pulses; i++)
 	{
-		AUDIO_DAC = 2048-1000;
-		delay_us(200);
-		AUDIO_DAC = 2048+1000;
-		delay_us(200);
+		AUDIO_DAC = 2048-volume;
+		delay_us(us);
+		AUDIO_DAC = 2048+volume;
+		delay_us(us);
 	}
 	LO(GPIOH, 12);
 }

@@ -22,4 +22,7 @@
 #include <stdint.h>
 
 void init_audio();
-void beep();
+
+void beep_blocking(int pulses, int us, int volume);
+
+

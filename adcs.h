@@ -121,6 +121,7 @@ extern uint32_t cha_vin_mult;
 extern uint32_t vbat_mult;
 extern uint32_t vapp_mult;
 extern uint32_t vgapp_mult;
+extern uint32_t vgplat_mult;
 
 extern uint32_t vbat_per_vinbus_mult;
 
@@ -137,6 +138,7 @@ extern uint32_t vbat_per_vinbus_mult;
 
 #define VAPP_MEAS_TO_MV(x_)       (((x_)*vapp_mult)>>13)
 #define VGAPP_MEAS_TO_MV(x_)      (((x_)*vgapp_mult)>>13)
+#define VGPLAT_MEAS_TO_MV(x_)     (((x_)*vgplat_mult)>>13)
 
 #define MV_TO_CHA_VINBUS_MEAS(x_) (ADC_RDIV_MV_TO_LSB((x_), 464, 22))
 #define MV_TO_CHA_VIN_MEAS(x_)    (ADC_RDIV_MV_TO_LSB((x_), 474, 22))
@@ -177,7 +179,7 @@ extern uint32_t vbat_per_vinbus_mult;
 #define ADC2_DISCONTINUOUS_GROUP_LEN 1
 #define ADC2_CHANNELS_IN_USE ((1<<9)|(1<<5))
 
-#define ADC3_SEQ_LEN 8
+#define ADC3_SEQ_LEN 7
 #define ADC3_SEQ  5, 6,10, 1,15,13,18,0,0,0,0,0,0,0,0,0
 #define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<14)|(1<<15)|(1<<16)|(1<<13)|(1<<18))
 

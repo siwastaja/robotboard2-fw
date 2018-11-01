@@ -24,6 +24,8 @@ uint32_t vapp_mult = 13200/4;
 // 3300/(10000/(300000+10000) *2^14) = 6.24389.   <<13 -> 51150
 uint32_t vgapp_mult = 51150/4;
 
+uint32_t vgplat_mult = 51150;
+
 // (13200/36450)*2^13
 uint32_t vbat_per_vinbus_mult = 2967;
 
@@ -253,6 +255,9 @@ void adc_test()
 	uart_print_string_blocking("injected Vapp = ");
 	o_utoa16(VAPP_MEAS_TO_MV(ADC3->JDR1), printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("Vgplat converted mV = ");
+	o_utoa16(VGPLAT_MEAS_TO_MV(adc3.s.bms_mainfet_g_meas), printbuf); uart_print_string_blocking(printbuf);
 
 	delay_ms(500);
 

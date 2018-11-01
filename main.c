@@ -19,6 +19,7 @@
 #include "audio.h"
 #include "sbc_comm.h"
 #include "timebase.h"
+#include "backup_ram.h"
 
 #include "own_std.h"
 
@@ -373,7 +374,7 @@ void main()
 
 	init_pwrswitch_and_led();
 	init_timebase();
-
+	
 
 //	RCC->CR |= 1UL<<28; // PLL3 on
 //	while(!(RCC->CR & 1UL<<29)) ; // Wait for PLL3 ready
@@ -394,6 +395,26 @@ void main()
 		USART1->CR1 = 0UL<<5 /*RX interrupt*/ | 1UL<<3 /*TX ena*/ | 1UL<<2 /*RX ena*/ |  1UL /*USART ENA*/;
 
 	#endif
+
+	init_adcs();
+	init_audio();
+	init_sbc_comm();
+
+	delay_ms(2); // let the ADC convert...
+
+	extern int main_power_enabled;
+
+	int vgplat = VGPLAT_MEAS_TO_MV(adc3.s.bms_mainfet_g_meas);
+	uart_print_string_blocking("Vgplat converted mV = ");
+	o_utoa16(vgplat, printbuf); uart_print_string_blocking(printbuf);
+	if(vgplat < 6*3000 + 10000)
+	{
+		beep_blocking(20, 4000, 1500);
+		main_power_enabled = 1; // blink and die
+		while(1);
+	}
+	main_power_enabled = 2;
+
 
 	// Enable FPU
 
@@ -441,14 +462,28 @@ void main()
 	NVIC_SetPriority(PVD_IRQn, 0);
 	NVIC_EnableIRQ(PVD_IRQn);
 
+	beep_blocking(100, 250, 1000);
 
 	IO_TO_GPO(GPIOF, 5);
 	BIG5V_ON();
 
-	init_sbc_comm();
+
 	delay_ms(2000);
 
+
 	uart_print_string_blocking("No terse\r\n\r\n"); 
+
+	DBG_PR_VAR_U32_HEX(backup_ram.immediate_5v);
+	backup_ram.immediate_5v = 11;
+
+	DBG_PR_VAR_U32(backup_ram.boot_cnt);
+	DBG_PR_VAR_U32(backup_ram.dummy);
+
+	backup_ram.boot_cnt++;
+	backup_ram.dummy = 55;
+
+	DBG_PR_VAR_U32(backup_ram.boot_cnt);
+	DBG_PR_VAR_U32(backup_ram.dummy);
 
 
 
@@ -456,22 +491,21 @@ void main()
 	uart_print_string_blocking("init ok\r\n"); 
 	extern void timer_test();
 //	timer_test();
-	init_adcs();
 	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
 //	init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
-//	extern void adc_test();
-//	while(1)
-//		adc_test();
+	extern void adc_test();
+	while(1)
+		adc_test();
 
 	delay_ms(10);
 
-	init_audio();
-	while(1)
-	{
-		beep();
-		delay_ms(200);
-	}
+//	init_audio();
+//	while(1)
+//	{
+//		beep();
+//		delay_ms(200);
+//	}
 
 //	extern void bldc_test();
 //	bldc_test();

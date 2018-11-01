@@ -7,6 +7,9 @@
 #include <stdint.h>
 
 #include "ext_include/stm32h7xx.h"
+#include "stm32_cmsis_extension.h"
+#include "backup_ram.h"
+#include "misc.h"
 
 void stm32init();
 void nmi_handler();
@@ -470,9 +473,49 @@ void relocate_vectors()
 
 }
 
+/*
+void init_delay_us(uint32_t i)
+{
+	i *= 10;
+	i -= 7;
+	while(i--)
+		__asm__ __volatile__ ("nop");
+}
+*/
+
 // Get the bare minimum ready ASAP so that the charge pump can start.
 void stm32init(void)
 {
+//	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
+//	IO_TO_GPO(GPIOC, 13); // LED
+
+	PWR->CR1 |= 1UL<<8; // Enable write access to the backup SRAM, and the PWR->CR2 register
+	__DSB();
+
+
+//	int backup_sram_lost = 0;
+	if(!(PWR->CR2 & 1UL)) // Backup regulator was turned off, for example, because the Vbat was disconnected
+	{
+//		backup_sram_lost = 1;
+		PWR->CR2 |= 1UL; // Turn the regulator on, so it will continue working the next time the robot is turned off.
+		RCC->BDCR = 1UL /*LSE oscillator on, for RTC*/ | 0b01UL<<8 /*LSE clock drives RTC*/ |
+		            1UL<<15 /*Enable RTC*/;
+//		LED_ON();
+//		init_delay_us(200000);
+//		LED_OFF();
+	}
+
+	RCC->AHB4ENR |= 1UL<<28; // Enable backup ram access clock.
+
+	if(backup_ram.immediate_5v == 0x420b1a5e)
+	{
+		RCC->AHB4ENR |= 1UL<<5;
+		IO_TO_GPO(GPIOF, 5);
+		BIG5V_ON();
+		backup_ram.immediate_5v = 0;		
+		backup_ram.immediate_5v; // dummy read, see flash.c
+	}
+
 	RCC->APB4ENR |= 1UL<<1 /*SYSCFG needs to be on for some configuration thingies often needed when fighting against
 		 device errata*/;
 

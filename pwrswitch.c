@@ -167,7 +167,7 @@ void chargepump_pulsetrain_low_power(uint32_t del_ms)
 	}
 }
 
-int main_power_enabled = 2;
+int main_power_enabled = 1;
 volatile int app_power_enabled = 0;
 
 
@@ -616,7 +616,7 @@ void pwrswitch_1khz()
 	}
 	else if(main_power_enabled == 1)
 	{
-		if(++shutdown_cnt > 1000) // Milliseconds to give the SBC to shut down
+		if(++shutdown_cnt > 5000) // Milliseconds to give the SBC to shut down
 		{
 			main_power_enabled = 0;
 		}
@@ -645,6 +645,7 @@ void shutdown()
 {
 	__disable_irq();
 	main_power_enabled = 0;
+	PWRLED_OFF();
 	__DSB(); __ISB();
 	SAFETY_SHUTDOWN();
 	while(1);

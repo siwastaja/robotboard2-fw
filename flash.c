@@ -23,6 +23,8 @@
 #include "flash.h"
 #include "misc.h"
 #include "own_std.h"
+#include "audio.h"
+#include "backup_ram.h"
 
 #define FLASH_OFFSET 0x08000000
 
@@ -472,12 +474,16 @@ void flasher()
 
 	}
 }
-
+//static char printbuf[128];
 void run_flasher()
 {
 	// Maximize the TIM5 ISR priority so it will pre-empt our current context, which is the SPI interrupt where
 	// run_flasher() was called from.
 	NVIC_SetPriority(TIM5_IRQn, 0);
+	extern int main_power_enabled;
+	main_power_enabled = 2;
+
+	beep_blocking(150, 120, 1000);
 
 	// Disable all interrupts, except the charge pump
 	// TIM5_IRQn is #50, which is in register 1.
@@ -492,7 +498,29 @@ void run_flasher()
 	__DSB();
 	__ISB();
 
+
 	SAFETY_SHUTDOWN();
+
+	beep_blocking(200, 80, 1000);
+
+
+	// The backup ram is completely fucked up, either by ST (wouldn't be too surprised...),
+	// or maybe there is a power supply issue. Reproducing the problem:
+	// * 8-bit writes don't happen at all, unless followed by another 32-bit write
+	// * When writing 32 bit word, the most significant byte corrupts to zero: i.e.,
+	//   0x420b1a5e corrupts to 0x000b1a5e
+	// * If the 32-bit write is followed by a read, then everything is fine.
+	// No mention of any backup sram issues in the errata sheet, but this is a fairly new chip
+	// and ST typically reports less than half of the silicon faults in the errata sheet anyway.
+	// This issue needs to be investigated; for now, we work around with a dummy read.
+
+	backup_ram.immediate_5v = 0x420b1a5e;
+	backup_ram.immediate_5v; // dummy read to prevent data corruption
+
+
+//	DBG_PR_VAR_U32_HEX(backup_ram.immediate_5v);
+
+	__DSB();
 
 	// Disable all other DMAs so they can't mess up our buffers
 	DMA1_Stream0->CR = 0;
