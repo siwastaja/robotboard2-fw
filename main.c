@@ -21,6 +21,8 @@
 #include "timebase.h"
 #include "backup_ram.h"
 
+#include "run.h"
+
 #include "own_std.h"
 
 #define DBG_UART
@@ -492,24 +494,18 @@ void main()
 	extern void timer_test();
 //	timer_test();
 	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
-//	init_charger(); // Requires working ADC1 data, so init_bldc() first.
+	init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
 	extern void adc_test();
-	while(1)
-		adc_test();
+//	while(1)
+//		adc_test();
 
 	delay_ms(10);
 
-//	init_audio();
-//	while(1)
-//	{
-//		beep();
-//		delay_ms(200);
-//	}
 
 //	extern void bldc_test();
 //	bldc_test();
-	tof_ctrl_init();
+//	tof_ctrl_init();
 //	sbc_comm_test();
 //	dump_scb();
 
@@ -526,29 +522,13 @@ void main()
 
 
 //	pointer_system_test();
-/*	while(1)
+
+	init_cpu_profiler();
+
+	while(1)
 	{
+		run_cycle();
+	}
 
-		char printbuf[128];
-
-		extern volatile int spi_test_cnt;
-		extern volatile int spi_test_cnt2;
-		extern volatile int spi_dbg1, spi_dbg2;
-		extern volatile int new_rx_len;
-
-		uart_print_string_blocking("SPI SR = "); o_btoa16_fixed(SPI1->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("SPI TSIZE = "); o_utoa16(SPI1->TSIZE, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("tx NDTR = "); o_utoa16(DMA1_Stream0->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("rx NDTR = "); o_utoa16(DMA1_Stream1->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("spi_test_cnt = "); o_utoa16(spi_test_cnt, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("spi_test_cnt2 = "); o_utoa16(spi_test_cnt2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("spi_dbg1 = "); o_utoa16(spi_dbg1, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("spi_dbg2 = "); o_utoa16(spi_dbg2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("rx_len = "); o_utoa16(new_rx_len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-		uart_print_string_blocking("\r\n\r\n");
-		delay_ms(100);		
-	}*/
-
-	while(1);
+//	while(1);
 }

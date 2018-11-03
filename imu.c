@@ -526,25 +526,25 @@ static const m_dma_packet_t  m_bdma_command __attribute__((aligned(4))) __attrib
 #if M_ACCURACY == 0
 #define M_NUM_XY_REPETITIONS 9
 #define M_NUM_Z_REPETITIONS  15
-#define M_INTERVAL_MS 100
+#define M_INTERVAL_100US 1000
 #endif
 
 #if M_ACCURACY == 1
 #define M_NUM_XY_REPETITIONS 15
 #define M_NUM_Z_REPETITIONS  27
-#define M_INTERVAL_MS 100
+#define M_INTERVAL_100US 1000
 #endif
 
 #if M_ACCURACY == 2
 #define M_NUM_XY_REPETITIONS 31
 #define M_NUM_Z_REPETITIONS  55
-#define M_INTERVAL_MS 75
+#define M_INTERVAL_100US 750
 #endif
 
 #if M_ACCURACY == 3
 #define M_NUM_XY_REPETITIONS 47
 #define M_NUM_Z_REPETITIONS  83
-#define M_INTERVAL_MS 50
+#define M_INTERVAL_100US 500
 #endif
 
 
@@ -1001,7 +1001,7 @@ static void inthandler7()
 	__DSB();
 }
 
-static volatile uint32_t m_conv_start_ms;
+static volatile uint32_t m_conv_start_100us;
 
 volatile int ms;
 
@@ -1015,8 +1015,8 @@ static void inthandler8()
 	g_packet3.n = fifo.lvls.g[3];
 	g_packet5.n = fifo.lvls.g[5];
 
-	uint32_t dt = ms_cnt - m_conv_start_ms;
-	if(dt >= M_INTERVAL_MS) // Purposedly wrapping uint32 subtraction as per C specification
+	uint32_t dt = cnt_100us - m_conv_start_100us;
+	if(dt >= M_INTERVAL_100US) // Purposedly wrapping uint32 subtraction as per C specification
 	{
 		ms++;
 		SEL_M024();
@@ -1099,7 +1099,7 @@ static void inthandler12()
 {
 	TIM3->SR = 0UL;
 	DESEL_A135();
-	m_conv_start_ms = ms_cnt;
+	m_conv_start_100us = cnt_100us;
 //	a_temps[1] = ((int8_t)(AGM01_RD16>>8))+23;
 //	a_temps[3] = ((int8_t)(AGM23_RD16>>8))+23;
 //	a_temps[5] = ((int8_t)(AGM45_RD16>>8))+23;
@@ -1345,8 +1345,8 @@ static void printings()
 
 	uart_print_string_blocking("\r\n");
 
-	uart_print_string_blocking("ms_cnt="); 
-	o_utoa32_fixed(ms_cnt, printbuf); uart_print_string_blocking(printbuf); 
+	uart_print_string_blocking("cnt_100us="); 
+	o_utoa32_fixed(cnt_100us, printbuf); uart_print_string_blocking(printbuf); 
 	uart_print_string_blocking("\r\n");
 
 	uart_print_string_blocking("m count="); 

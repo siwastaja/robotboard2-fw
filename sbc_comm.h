@@ -21,6 +21,12 @@
 #pragma once
 #include <stdint.h>
 
+#include "../robotsoft/api_board_to_soft.h"
+
 void init_sbc_comm();
 void deinit_sbc_comm();
+
+void check_rx();
+int is_tx_overrun();
+void tx_fifo_push();
 

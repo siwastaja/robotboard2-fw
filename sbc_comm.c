@@ -441,7 +441,7 @@ void sbc_spi_cs_end_inthandler()
 	uart_print_string_blocking("was_ena = "); o_utoa16(tx_dma_was_enabled, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 */
 
-	uart_print_string_blocking("len = "); o_utoa16(len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//	uart_print_string_blocking("len = "); o_utoa16(len, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 	// This is not needed, RCC reset clears this as well:
 //	SPI1->IFCR = 0b111111111000; // TRAP: Clear EOT and TXTF flags, otherwise the TX DMA won't start if TSIZE is ever non-zero, causing EOT to be high.
@@ -621,9 +621,8 @@ void parse_rx_packet()
 	
 }
 
-void check_rx_test()
+void check_rx()
 {
-
 	if(rx_fifo_spi != rx_fifo_cpu)
 	{
 		uart_print_string_blocking("rx pop:"); o_utoa32_hex(*(uint32_t*)rx_fifo[rx_fifo_cpu], printbuf); uart_print_string_blocking(printbuf); 
@@ -651,7 +650,7 @@ void sbc_comm_test()
 		for(int i = 0; i<1; i++)
 		{
 			delay_ms(1000);
-			check_rx_test();
+			check_rx();
 		}
 
 		cnt++;
@@ -699,7 +698,7 @@ void sbc_comm_test()
 }
 
 
-uint64_t initial_subs[B2S_SUBS_U64_ITEMS] = {0};
+uint64_t initial_subs[B2S_SUBS_U64_ITEMS] = {1UL<<4, 0};
 
 uint64_t subs_test1[4] = {0b1110,0,0,0};
 uint64_t subs_test2[4] = {0b1010,0,0,0};
@@ -775,7 +774,7 @@ void pointer_system_test()
 		{
 			uart_print_string_blocking("!");
 			delay_ms(100);
-//			check_rx_test();
+//			check_rx();
 		}
 
 		if(is_tx_overrun())
@@ -806,7 +805,7 @@ void pointer_system_test()
 			cnt_u8++;
 		}
 
-		check_rx_test();
+		check_rx();
 
 		cnt++;
 	}

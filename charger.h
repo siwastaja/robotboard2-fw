@@ -27,3 +27,7 @@ void deinit_charger();
 
 
 void charger_10khz();
+void charger_1khz();
+
+int charger_get_latest_cur_pha();
+int charger_get_latest_cur_phb();

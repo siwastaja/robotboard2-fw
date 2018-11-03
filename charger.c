@@ -214,7 +214,7 @@
 
 #define MA_TO_DAC(x_) (((x_)*1271)>>12)
 
-void start_phab();
+void start_phab(int start_b);
 void stop_phab();
 
 volatile int run_pump = 0;
@@ -631,7 +631,17 @@ void set_current(int ma)
 	CURRLIM_DAC = dac;
 }
 
-volatile int latest_cur_pha, latest_cur_phb;
+int latest_cur_pha, latest_cur_phb;
+
+int charger_get_latest_cur_pha()
+{
+	return ADC_TO_MA(latest_cur_pha);
+}
+
+int charger_get_latest_cur_phb()
+{
+	return ADC_TO_MA(latest_cur_pha);
+}
 
 #ifdef ENABLE_TRACE
 	#define TRACE_LEN 256
@@ -719,6 +729,7 @@ void charger_adc2_pha_inthandler()
 	}
 
 	int err = cur - current_setpoint;
+	latest_cur_pha = cur;
 
 	pha_err_integral += err;
 	if(pha_err_integral < ERR_INTEGRAL_MIN || pha_err_integral > ERR_INTEGRAL_MAX)
@@ -792,6 +803,8 @@ void charger_adc2_phb_inthandler()
 
 
 	int err = cur - current_setpoint;
+	latest_cur_phb = cur;
+
 
 	phb_err_integral += err;
 	if(phb_err_integral < ERR_INTEGRAL_MIN || phb_err_integral > ERR_INTEGRAL_MAX)
@@ -1067,6 +1080,8 @@ void charger_test()
 // Vin=50.0V, Vbat=14.5V -> starts and runs fine
 // Vin=28.0V, Vbat=19.9V -> starts and runs fine
 
+
+
 void charger_test2()
 {
 	init_cpu_profiler();
@@ -1113,6 +1128,24 @@ void charger_test2()
 	}
 }
 
+void charger_1khz() __attribute__((section(".text_itcm")));
+void charger_1khz()
+{
+	if(!is_running() && (CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas) > 33000))
+	{
+		start_phab(1);
+		if(!is_running())
+		{
+			uart_print_string_blocking("CHARGER START FAILED\r\n");
+		}
+		else
+		{
+			delay_us(100);
+			set_current(5000);
+		}
+	}
+}
+
 void init_charger()
 {
 	dis_gate_pha();
@@ -1125,12 +1158,6 @@ void init_charger()
 
 	pulseout_0();
 	IO_TO_GPO(GPIOE, 11);
-
-	while(1)
-	{
-
-		charger_test2();
-	}
 
 }
 

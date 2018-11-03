@@ -4,7 +4,7 @@
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
 #include "pwrswitch.h"
-#include "timebase.h" // for ms_cnt
+#include "timebase.h" // for cnt_100us
 
 #include "adcs.h"
 #include "own_std.h"
@@ -620,7 +620,7 @@ void pwrswitch_1khz()
 		{
 			main_power_enabled = 0;
 		}
-		if(ms_cnt & (1UL<<8))
+		if(cnt_100us & (1UL<<11))
 			PWRLED_ON();
 		else
 			PWRLED_OFF();

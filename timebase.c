@@ -12,7 +12,7 @@ Timebase: 10kHz handler
 #include "pwrswitch.h"
 #include "adcs.h"
 
-volatile uint32_t ms_cnt;
+volatile uint32_t cnt_100us;
 
 void timebase_inthandler() __attribute__((section(".text_itcm")));
 void timebase_inthandler()
@@ -40,6 +40,8 @@ void timebase_inthandler()
 	}
 	else if(cnt == 9)
 	{
+		charger_1khz();
+
 		if(app_power_enabled)
 			ADC3_CONV_INJECTED();
 	}
@@ -56,10 +58,10 @@ void timebase_inthandler()
 				app_power_enabled = 0;
 			}
 		}
-		ms_cnt++;
 		cnt = 0;
 	}
 
+	cnt_100us++;
 
 	// Keep all 10kHz functions in ITCM!
 	charger_10khz();
