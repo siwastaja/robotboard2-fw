@@ -505,7 +505,7 @@ void main()
 
 //	extern void bldc_test();
 //	bldc_test();
-//	tof_ctrl_init();
+	tof_ctrl_init();
 //	sbc_comm_test();
 //	dump_scb();
 

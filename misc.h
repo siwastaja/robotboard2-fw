@@ -49,3 +49,7 @@ void bldc_safety_shutdown();
 void init_cpu_profiler();
 void profile_cpu_blocking_20ms();
 
+
+#define sq(x) ((x)*(x))
+#define abso(x) ((x<0)?(-x):(x))
+

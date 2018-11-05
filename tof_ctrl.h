@@ -24,29 +24,34 @@
 #include <stdint.h>
 
 
-#define EPC_XS 160
-#define EPC_YS 60
-
-typedef struct __attribute__((packed))
-{
-	uint16_t start_pad[2];
-	uint16_t img[EPC_XS*EPC_YS];
-} epc_img_t;
-
-typedef struct __attribute__((packed))
-{
-	epc_img_t dcs[4];
-} epc_4dcs_t;
-
-typedef struct __attribute__((packed))
-{
-	epc_img_t dcs[2];
-} epc_2dcs_t;
-
-#define SIZEOF_MONO (sizeof(epc_img_t))  //(EPC_XS*EPC_YS*2)
-#define SIZEOF_2DCS (sizeof(epc_2dcs_t)) //(EPC_XS*EPC_YS*2*2)
-#define SIZEOF_4DCS (sizeof(epc_4dcs_t)) //(EPC_XS*EPC_YS*2*4)
-
-
 void epc_safety_shutdown();
 void tof_ctrl_init();
+
+
+void epc_trig();
+void epc_clk_div(int div);
+void epc_dis_leds();
+void epc_ena_wide_leds();
+void epc_ena_narrow_leds();
+void epc_greyscale(); // OK to do while acquiring: shadow registered: applied to next trigger.
+void epc_2dcs(); // OK to do while acquiring: shadow registered: applied to next trigger.
+void epc_4dcs(); // OK to do while acquiring: shadow registered: applied to next trigger.
+void epc_4dcs_dualint(); // OK to do while acquiring: shadow registered: applied to next trigger.
+void epc_dualphase_or_int(); // OK to do while acquiring: shadow registered: applied to next trigger.
+void epc_normalphase_or_int(); // OK to do while acquiring: shadow registered: applied to next trigger.
+void epc_intlen(uint8_t multiplier, uint16_t time); // OK to do while acquiring: shadow registered: applied to next trigger.
+// time1 = odd rows, time2 = even rows
+// epc_4dcs_dualint() and epc_dualphase_or_int() must be called first
+void epc_intlen_dual(uint8_t multiplier, uint16_t time1, uint16_t time2); // OK to do while acquiring: shadow registered: applied to next trigger.
+// Do the magic stuff specified in the datasheet to enable temperature sensor conversion:
+void epc_temperature_magic_mode(int idx);
+// Do the magic stuff specified in the datasheet to disable temperature sensor conversion, back to normal operation
+void epc_temperature_magic_mode_off(int idx);
+uint16_t epc_read_temperature_regs();
+
+int epc_i2c_is_busy();
+void dcmi_start_dma(void *data, int size);
+int poll_capt_with_timeout();
+int poll_capt_with_timeout_complete();
+
+

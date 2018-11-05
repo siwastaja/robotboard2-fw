@@ -7,8 +7,8 @@ LD = arm-none-eabi-gcc
 SIZE = arm-none-eabi-size
 OBJCOPY = arm-none-eabi-objcopy
 
-OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o run.o
-ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s
+OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o run.o
+ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s
 
 CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -Winline -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
 
@@ -40,8 +40,8 @@ main.bin: $(OBJ)
 # .settings is also removed - this makes the binary small, and keeps the old settings through reflash process
 
 ff: main.bin
-	scp main_full.bin $(DEVIP):~/main_full.bin
-	ssh $(DEVIP) ~/spiprog r 10 main_full.bin
+	scp main_full.bin $(DEVIP):~/robotsoft/main_full.bin
+	ssh $(DEVIP) ~/robotsoft/spiprog r 10 ~/robotsoft/main_full.bin
 
 fr:
 	ssh $(DEVIP) ~/spiprog r

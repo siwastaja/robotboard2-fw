@@ -26,6 +26,41 @@
 #define TOF_XS 160
 #define TOF_YS 60
 
+typedef struct __attribute__((packed))
+{
+	uint16_t start_pad[2];
+	uint16_t img[TOF_XS*TOF_YS];
+} epc_img_t;
+
+typedef struct __attribute__((packed))
+{
+	epc_img_t dcs[4];
+} epc_4dcs_t;
+
+typedef struct __attribute__((packed))
+{
+	epc_img_t dcs[2];
+} epc_2dcs_t;
+
+#define SIZEOF_MONO (sizeof(epc_img_t))
+#define SIZEOF_2DCS (sizeof(epc_2dcs_t))
+#define SIZEOF_4DCS (sizeof(epc_4dcs_t))
+
+
+void tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, int offset_mm, int clk_div);
+void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in);
+void calc_toofar_ignore_from_2dcs(uint8_t *ignore_out, epc_4dcs_t *in, int threshold /*mm*/, int offset_mm, int clk_div);
+void calc_interference_ignore_from_2dcs(uint8_t *ignore_out, epc_4dcs_t *in, int threshold);
+void tof_calc_dist_3hdr_with_ignore(uint16_t* dist_out, uint8_t* ampl, uint16_t* dist, uint8_t* ignore_in);
+void tof_calc_dist_3hdr_with_ignore_with_straycomp(uint16_t* dist_out, uint8_t* ampl, uint16_t* dist, uint8_t* ignore_in, uint16_t stray_ampl, uint16_t stray_dist);
+void tof_remove_midliers(uint16_t* out, uint16_t* in);
+void process_bw(uint8_t *out, epc_img_t *in);
+void process_dcs(uint8_t *out, epc_img_t *in);
+
+
+
+
+
 #define LINEARITY_NGROUPS 256  // Max 256 to hold the index in 8 bits
 #define LINEARITY_NSTEPS 64
 

@@ -4,6 +4,7 @@
 
 #include "own_std.h"
 #include "tof_ctrl.h"
+#include "tof_process.h" // for epc_img_t for taking the dummy image
 
 // Including the proprietary sensor firmware for EPC635, (c) Espros Photonics Corporation,
 // not available for public distribution. Pulu Robotics has a permission to redistribute this
@@ -373,11 +374,10 @@ void dcmi_start_dma(void *data, int size)
 	__DSB();
 }
 
-void trig()
+void epc_trig()
 {
 	static volatile uint8_t b[2] = {0xa4, 1};
 	epc_i2c_write(i2c_addr, b, 2);
-	while(epc_i2c_is_busy());
 }
 
 
@@ -597,7 +597,7 @@ static int err_cnt = 0;
 
 int poll_capt_with_timeout()
 {
-	int timeout = 1600000; // 40000 tested to be barely ok with exposure time 125*5*5
+	int timeout = 2*1600000; // 40000 tested (on 216MHz CPU) to be barely ok with exposure time 125*5*5
 
 	while(DCMI_DMA_STREAM->NDTR > 1 && timeout>0) timeout--;
 
@@ -624,7 +624,7 @@ int poll_capt_with_timeout()
 
 int poll_capt_with_timeout_complete()
 {
-	int timeout = 1600000;
+	int timeout = 2*1600000;
 
 	while(DCMI_DMA_STREAM->NDTR > 0 && timeout>0) timeout--;
 
@@ -648,57 +648,6 @@ int poll_capt_with_timeout_complete()
 	return 0;
 }
 
-static epc_img_t mono_comp __attribute__((aligned(4)));
-static epc_4dcs_t dcsa __attribute__((aligned(4)));
-
-
-void epc_run()
-{
-	int idx = 0;
-	int cnt = 0;
-
-	tof_mux_select(0);
-
-	while(1)
-	{
-		epc_clk_div(1);
-		while(epc_i2c_is_busy());
-
-		if(cnt==0)
-			epc_dis_leds();
-		else if(cnt==1)
-			epc_ena_wide_leds();
-		else if(cnt==2)
-			epc_ena_narrow_leds();
-
-		while(epc_i2c_is_busy());
-
-		epc_4dcs(idx);
-		while(epc_i2c_is_busy());
-
-		epc_intlen(8, 600);
-		while(epc_i2c_is_busy());
-
-		dcmi_start_dma(&dcsa, SIZEOF_4DCS);
-		trig();
-//		LED_ON();
-		if(poll_capt_with_timeout()) error(8);
-//		LED_OFF();
-
-		delay_ms(100);
-		uart_print_string_blocking("val middle = "); o_utoa16_fixed(dcsa.dcs[0].img[40*EPC_XS+80], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-//		rgb_update(4, 255,  220,  215);
-//		rgb_update(4, 255,  127,   0);
-//		delay_ms(100);
-//		rgb_update(1,   0,   0,   0);
-		delay_ms(200);
-
-		cnt++;
-		if(cnt==3) cnt=0;
-	}
-
-
-}
 
 void cool_effect2()
 {
@@ -862,9 +811,6 @@ void init_sensors()
 
 	epc_i2c_init();
 
-	tof_mux_select(0);
-	cool_effect();
-
 	/*
 		Even with 40cm cable, 40MHz (div 2) works well!
 
@@ -1000,8 +946,9 @@ void init_sensors()
 
 	tof_mux_select(0);
 	{
+		extern epc_img_t mono_comp;
 		dcmi_start_dma(&mono_comp, SIZEOF_MONO);
-		trig();
+		epc_trig();
 		delay_ms(100);
 	}
 	tof_mux_all_off();
@@ -1038,5 +985,4 @@ void tof_ctrl_init()
 
 	init_sensors();
 
-	epc_run();
 }
