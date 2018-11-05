@@ -1130,8 +1130,8 @@ void charger_test2()
 }
 
 int combined_current_setpoint;
-int combined_max_output_current;
-int combined_max_output_power; // mW
+int combined_max_output_current; // mA - use this to limit the output current to the batteries
+int combined_max_output_power; // mW - use this to limit power from the charger (remember to account for losses)
 #define CV_VOLTAGE 21850 // 25200
 
 
@@ -1154,16 +1154,16 @@ void charger_1khz()
 		{
 			combined_current_setpoint -= 2;
 		}
-		else if(combined_current_setpoint < current_by_max_power-50 &&
-		   combined_current_setpoint < combined_max_output_current-50 &&
-		   vbat < CV_VOLTAGE-20)
+		else if(combined_current_setpoint < current_by_max_power-20 &&
+		   combined_current_setpoint < combined_max_output_current-20 &&
+		   vbat < CV_VOLTAGE-10)
 		{
 			combined_current_setpoint += 2;
 		}
 
 		set_current(combined_current_setpoint>>1);
 
-		if(vbat > CV_VOLTAGE-20 && combined_current_setpoint < 2000)
+		if(vbat > CV_VOLTAGE-10 && combined_current_setpoint < 2000)
 		{
 			stop_phab();
 		}
