@@ -620,6 +620,7 @@ volatile int interrupt_count;
 #define MIN_CURRENT 700
 #define MAX_CURRENT 10000
 
+void set_current(int ma)  __attribute__((section(".text_itcm")));
 void set_current(int ma)
 {
 	if(ma < MIN_CURRENT || ma > MAX_CURRENT)
@@ -1128,20 +1129,62 @@ void charger_test2()
 	}
 }
 
+int combined_current_setpoint;
+int combined_max_output_current;
+int combined_max_output_power; // mW
+#define CV_VOLTAGE 21850 // 25200
+
+
 void charger_1khz() __attribute__((section(".text_itcm")));
 void charger_1khz()
 {
-	if(!is_running() && (CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas) > 33000))
+	int vin = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
+	int vbat = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
+	if(is_running())
 	{
-		start_phab(1);
-		if(!is_running())
+		// I = P/U
+		// 1000*mW per mV = mA
+		// example: 1000*200000/23000 = 8695
+		int current_by_max_power = (1000*combined_max_output_power) / vbat;
+
+		// A very sluggish I controller is fine
+		if(combined_current_setpoint > current_by_max_power ||
+		   combined_current_setpoint > combined_max_output_current ||
+		   vbat > CV_VOLTAGE)
 		{
-			uart_print_string_blocking("CHARGER START FAILED\r\n");
+			combined_current_setpoint -= 2;
 		}
-		else
+		else if(combined_current_setpoint < current_by_max_power-50 &&
+		   combined_current_setpoint < combined_max_output_current-50 &&
+		   vbat < CV_VOLTAGE-20)
 		{
-			delay_us(100);
-			set_current(5000);
+			combined_current_setpoint += 2;
+		}
+
+		set_current(combined_current_setpoint>>1);
+
+		if(vbat > CV_VOLTAGE-20 && combined_current_setpoint < 2000)
+		{
+			stop_phab();
+		}
+	}
+	else 
+	{
+		if(vin > 33000)
+		{
+			combined_current_setpoint = 2000;
+			combined_max_output_power = 200000.0*0.93; // 186000
+			combined_max_output_current = 20000;
+			start_phab(1);
+			if(!is_running())
+			{
+				uart_print_string_blocking("CHARGER START FAILED\r\n");
+			}
+			else
+			{
+//				delay_us(100);
+//				set_current(5000);
+			}
 		}
 	}
 }
@@ -1477,6 +1520,9 @@ void stop_phab()
 	RCC->APB2ENR &= ~(1UL<<29); // HRTIM clock
 	RCC->APB4ENR &= ~(1UL<<14); // COMP1,2 clock
 	// We won't turn the DACs off due to other uses for DAC2.
+
+	latest_cur_pha = 0;
+	latest_cur_phb = 0;
 
 }
 
