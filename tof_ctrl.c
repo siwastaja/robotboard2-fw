@@ -335,6 +335,11 @@ void dcmi_init()
 	DCMI->ESCR = 0x1eUL<<0 /*frame start*/ | 0xffUL<<24 /*frame end*/ | 0xaaUL<<8 /*line start*/ | 0x55<<16 /*line end*/;
 	DCMI->ESUR = 0xffffffffUL; // mask for the previous: all bits compared
 
+	// Program the crop values for narrow beam data. Crop enable bit is toggled on or off later.
+	DCMI->CWSTRTR = (TOF_NARROW_Y_START)<<16 | ((TOF_NARROW_X_START*2));
+	DCMI->CWSIZER = (TOF_YS_NARROW -1)<<16 | ((TOF_XS_NARROW*2)-1);
+
+
 	DCMI->CR |= 1UL<<14; // Enable
 
 	DCMI_DMA_STREAM->PAR = (uint32_t)&(DCMI->DR);
@@ -598,8 +603,13 @@ static int err_cnt = 0;
 int poll_capt_with_timeout()
 {
 	int timeout = 2*1600000; // 40000 tested (on 216MHz CPU) to be barely ok with exposure time 125*5*5
+//	int timeout = 30;
 
-	while(DCMI_DMA_STREAM->NDTR > 1 && timeout>0) timeout--;
+	while(DCMI_DMA_STREAM->NDTR > 1 && timeout>0)
+	{
+//		DBG_PR_VAR_U16(DCMI_DMA_STREAM->NDTR);
+		timeout--;
+	}
 
 	if(timeout == 0)
 	{
@@ -955,6 +965,15 @@ void init_sensors()
 
 }
 
+void dcmi_crop_narrow()
+{
+	DCMI->CR |= 1UL<<2;
+}
+
+void dcmi_crop_wide()
+{
+	DCMI->CR &= ~(1UL<<2);
+}
 
 void tof_ctrl_init()
 {

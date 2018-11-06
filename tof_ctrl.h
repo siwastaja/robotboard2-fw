@@ -54,4 +54,5 @@ void dcmi_start_dma(void *data, int size);
 int poll_capt_with_timeout();
 int poll_capt_with_timeout_complete();
 
-
+void dcmi_crop_narrow();
+void dcmi_crop_wide();

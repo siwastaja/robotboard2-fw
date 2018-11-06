@@ -78,7 +78,7 @@ void tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, i
 
 			if(dcs20_mod == 0)
 			{
-				dist = 65535;
+				dist = 65534;
 				ampl = 0;
 			}
 			else
@@ -107,7 +107,103 @@ void tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, i
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/23;
 #endif
 
-				dist = dist_i;
+				if(ampl<3)
+					dist = 65534;
+				else
+					dist = dist_i;
+
+			}
+
+		}
+		ampl_out[i] = ampl;
+		dist_out[i] = dist;
+	}
+}
+
+
+void tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, int offset_mm, int clk_div) __attribute__((section(".text_itcm")));
+void tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, int offset_mm, int clk_div)
+{
+	int16_t offset = offset_mm/clk_div;
+
+	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
+	{
+		uint16_t dist;
+		int ampl;
+
+		int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs2 = ((in->dcs[2].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs3 = ((in->dcs[3].img[i]&0b0011111111111100)>>2)-2048;
+
+		if(dcs0 < -2047 || dcs0 > 2046 || dcs1 < -2047 || dcs1 > 2046 || dcs2 < -2047 || dcs2 > 2046 || dcs3 < -2047 || dcs3 > 2046)
+		{
+			ampl = 255;
+			dist = 0;
+		}
+		else
+		{
+			int16_t dcs31 = dcs3-dcs1;
+			int16_t dcs20 = dcs2-dcs0;
+
+			// Use the lookup table to perform atan:
+
+			int16_t dcs31_mod, dcs20_mod;
+
+			if(dcs31<0)
+				dcs31_mod = -dcs31;
+			else
+				dcs31_mod = dcs31;
+
+			if(dcs20<0)
+				dcs20_mod = -dcs20;
+			else
+				dcs20_mod = dcs20;
+
+			int swapped = 0;
+			if(dcs20_mod<dcs31_mod)
+			{
+				swapped = 1;
+				int16_t tmp = dcs20_mod;
+				dcs20_mod = dcs31_mod;
+				dcs31_mod = tmp;
+			}
+
+			if(dcs20_mod == 0)
+			{
+				dist = 65534;
+				ampl = 0;
+			}
+			else
+			{
+
+				int idx = (dcs31_mod*(TOF_TBL_LEN-1))/dcs20_mod;
+
+				int32_t dist_i = tof_tbl[idx];
+				if(swapped) dist_i = TOF_TBL_QUART_PERIOD - dist_i;
+				if(dcs20<0) dist_i = TOF_TBL_HALF_PERIOD - dist_i;
+				if(dcs31<0) dist_i = -dist_i;
+
+				dist_i += offset;
+				
+				dist_i *= clk_div;
+
+				if(dist_i < 1) dist_i = 1; else if(dist_i>6000) dist_i=6000;
+//				if(dist_i < 1) dist_i += 3000; 
+//				if(dist_i < 1) dist_i = 1;
+
+				if(dist_i>6000) dist_i=6000;
+
+#ifdef FAST_APPROX_AMPLITUDE
+				ampl = (abso(dcs20)+abso(dcs31))/30; if(ampl > 255) ampl = 255;
+#else
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/23;
+#endif
+
+				if(ampl<3)
+					dist = 65534;
+				else
+					dist = dist_i;
 
 			}
 

@@ -23,8 +23,14 @@
 #pragma once
 #include <stdint.h>
 
-#define TOF_XS 160
-#define TOF_YS 60
+#define TOF_XS (160)
+#define TOF_YS (60)
+
+#define TOF_XS_NARROW (32)
+#define TOF_YS_NARROW (44)
+
+#define TOF_NARROW_Y_START (8)
+#define TOF_NARROW_X_START (64)
 
 typedef struct __attribute__((packed))
 {
@@ -34,20 +40,40 @@ typedef struct __attribute__((packed))
 
 typedef struct __attribute__((packed))
 {
+//	uint16_t start_pad[2];
+	uint16_t img[TOF_XS_NARROW*TOF_YS_NARROW];
+} epc_img_narrow_t;
+
+typedef struct __attribute__((packed))
+{
 	epc_img_t dcs[4];
 } epc_4dcs_t;
+
+typedef struct __attribute__((packed))
+{
+	epc_img_narrow_t dcs[4];
+} epc_4dcs_narrow_t;
 
 typedef struct __attribute__((packed))
 {
 	epc_img_t dcs[2];
 } epc_2dcs_t;
 
+typedef struct __attribute__((packed))
+{
+	epc_img_narrow_t dcs[2];
+} epc_2dcs_narrow_t;
+
+
 #define SIZEOF_MONO (sizeof(epc_img_t))
 #define SIZEOF_2DCS (sizeof(epc_2dcs_t))
+#define SIZEOF_2DCS_NARROW (sizeof(epc_2dcs_narrow_t))
 #define SIZEOF_4DCS (sizeof(epc_4dcs_t))
+#define SIZEOF_4DCS_NARROW (sizeof(epc_4dcs_narrow_t))
 
 
 void tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, int offset_mm, int clk_div);
+void tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, int offset_mm, int clk_div);
 void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in);
 void calc_toofar_ignore_from_2dcs(uint8_t *ignore_out, epc_4dcs_t *in, int threshold /*mm*/, int offset_mm, int clk_div);
 void calc_interference_ignore_from_2dcs(uint8_t *ignore_out, epc_4dcs_t *in, int threshold);
