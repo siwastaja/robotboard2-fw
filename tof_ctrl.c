@@ -44,7 +44,7 @@ static char printbuf[128];
 	This makes everything simple.
 */
 
-#define N_SENSORS 1
+const uint8_t sensors_in_use[MAX_N_SENSORS] = {0, 0};
 
 #define WR_DMA DMA1
 #define WR_DMA_STREAM DMA1_Stream2
@@ -64,10 +64,8 @@ static const uint8_t i2c_addr = 0b0100000;
 static const uint8_t rgb_addr = 0b1101000;
 
 // Temperature sensor readout procedure is weird, and requires storing and restoring some undocumented internal registers to the chip:
-static uint8_t epc_tempsens_regx[N_SENSORS], epc_tempsens_regy[N_SENSORS];
-static float epc_tempsens_factory_offset[N_SENSORS]; // in some intermediate format, as specified in datasheet parameter "z"
-int temperatures[N_SENSORS]; // in degs/10
-
+static uint8_t epc_tempsens_regx[MAX_N_SENSORS], epc_tempsens_regy[MAX_N_SENSORS];
+static float epc_tempsens_factory_offset[MAX_N_SENSORS]; // in some intermediate format, as specified in datasheet parameter "z"
 
 volatile uint8_t epc_wrbuf[16] __attribute__((aligned(4)));
 volatile uint8_t epc_rdbuf[16] __attribute__((aligned(4)));
@@ -517,7 +515,7 @@ void epc_temperature_magic_mode_off(int idx)
 	while(epc_i2c_is_busy());
 }
 
-uint16_t epc_read_temperature_regs()
+static uint16_t epc_read_temperature_regs()
 {
 	uint8_t hi, lo;
 	epc_i2c_read(i2c_addr, 0x60, &hi, 1);
@@ -530,6 +528,11 @@ uint16_t epc_read_temperature_regs()
 	return ((uint16_t)hi<<8) | ((uint16_t)lo);
 }
 
+int32_t epc_read_temperature(int idx)
+{
+	int32_t temp = epc_read_temperature_regs();
+	return ((float)(temp-0x2000)*0.134 + epc_tempsens_factory_offset[idx])*10.0;
+}
 
 void epc_fix_modulation_table_defaults()
 {
@@ -827,12 +830,16 @@ void init_sensors()
 	*/
 //	uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
-	for(int idx = 0; idx < N_SENSORS; idx++)
-//	for(int idx = 0; idx < 1; idx++)
+	for(int i = 0; i < N_SENSORS; i++)
 	{
+		int idx = sensors_in_use[i];
+		if(idx < 0 || idx >= MAX_N_SENSORS)
+		{
+			error(27);
+		}
 		tof_mux_select(idx);
 		init_err_cnt = idx;
-		delay_ms(10);
+		delay_us(100);
 
 //		uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
@@ -952,9 +959,9 @@ void init_sensors()
 	dcmi_init();
 
 	// Take a dummy frame, which will eventually output the end-of-frame sync marker, to get the DCMI sync marker parser in the right state
-	// Any camera works for this, let's use 0.
+	// Any camera works for this, let's use the first.
 
-	tof_mux_select(0);
+	tof_mux_select(sensors_in_use[0]);
 	{
 		extern epc_img_t mono_comp;
 		dcmi_start_dma(&mono_comp, SIZEOF_MONO);

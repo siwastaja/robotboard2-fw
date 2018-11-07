@@ -482,8 +482,8 @@ void run_flasher()
 	NVIC_SetPriority(TIM5_IRQn, 0);
 	extern int main_power_enabled;
 	main_power_enabled = 2;
-
-	beep_blocking(150, 120, 1000);
+	SET_TIMEBASE_VECTOR_TO_KEEPON();
+	beep_blocking(100, 120, 1000);
 
 	// Disable all interrupts, except the charge pump
 	// TIM5_IRQn is #50, which is in register 1.
@@ -501,7 +501,7 @@ void run_flasher()
 
 	SAFETY_SHUTDOWN();
 
-	beep_blocking(200, 80, 1000);
+	beep_blocking(150, 80, 1000);
 
 
 	// The backup ram is completely fucked up, either by ST (wouldn't be too surprised...),

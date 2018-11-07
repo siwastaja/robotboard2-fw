@@ -132,40 +132,62 @@ void error(int code)
 	__disable_irq();
 	SAFETY_SHUTDOWN();
 
+	NVIC_SetPriority(TIM5_IRQn, 0);
+	SET_TIMEBASE_VECTOR_TO_KEEPON();
+
+	// Disable all interrupts, except the charge pump, and for reflashing, the SPI nCS handler
+	// TIM5_IRQn is #50, which is in register 1.
+	// EXTI15_10_IRQn is #40, which is in register 1.
+	NVIC->ICER[0] = 0xffffffffUL;
+	NVIC->ICER[1] = ~(   (uint32_t)(1UL << ((50UL) & 0x1FUL))  |  (uint32_t)(1UL << ((40UL) & 0x1FUL))    );
+	NVIC->ICER[2] = 0xffffffffUL;
+	NVIC->ICER[3] = 0xffffffffUL;
+	NVIC->ICER[4] = 0xffffffffUL;
+	NVIC->ICER[5] = 0xffffffffUL;
+	NVIC->ICER[6] = 0xffffffffUL;
+	NVIC->ICER[7] = 0xffffffffUL;
+	__DSB();
+	__ISB();
+	__enable_irq();
+
 	uart_print_string_blocking("\r\nERROR "); o_itoa32(code, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 //	dump_scb();
 //	dump_stack();
 //	__enable_irq();
 
-	int i = 0;
-	int o = 0;
 	if(code < 1)
 	{
 		while(1);
 	}
 
+	int volume = 200;
 	while(1)
 	{
-		LED_ON();
-		delay_ms(250);
-		LED_OFF();
-		delay_ms(250);
+		int tens = code/10;
+		int ones = code - tens*10;
 
-		i++;
-		if(i >= code)
+		for(int i=0; i<tens; i++)
 		{
-			i = 0;
-			delay_ms(600);
-			o++;
-
-/*			if(o > 10)
-			{
-				NVIC_SystemReset();
-				while(1);
-			}
-*/
+			LED_ON();
+			beep_blocking(150, 1000, volume);
+			delay_ms(300);
+			LED_OFF();
+			delay_ms(500);
 		}
 
+		delay_ms(500);
+
+		for(int i=0; i<ones; i++)
+		{
+			LED_ON();
+			beep_blocking(50, 700, volume);
+			delay_ms(70);
+			LED_OFF();
+			delay_ms(400);
+		}
+
+		delay_ms(1200);
+		volume=100;
 	}
 }
 

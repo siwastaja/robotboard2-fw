@@ -29,6 +29,9 @@ uint8_t uart_input();
 #define SET_TIM3_VECTOR(v) do{*((volatile uint32_t*)(VECTORS+0x00B4)) = (uint32_t)(v);}while(0)
 #define SET_ADC12_VECTOR(v) do{*((volatile uint32_t*)(VECTORS+0x0088)) = (uint32_t)(v);}while(0)
 
+void timebase_alternative_inthandler();
+#define SET_TIMEBASE_VECTOR_TO_KEEPON() do{*((volatile uint32_t*)(VECTORS+0x0108)) = (uint32_t)(timebase_alternative_inthandler);}while(0)
+
 
 void charger_safety_shutdown();
 void epc_safety_shutdown();

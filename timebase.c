@@ -14,10 +14,35 @@ Timebase: 10kHz handler
 
 volatile uint32_t cnt_100us;
 
+static int cnt;
+
+
+void timebase_alternative_inthandler() __attribute__((section(".text_itcm")));
+void timebase_alternative_inthandler()
+{
+	TIM5->SR = 0;
+	__DSB();
+
+	cnt++;
+
+	if(cnt == 7)
+	{
+		extern int main_power_enabled;
+		if(main_power_enabled) 
+			PLAT_CP_HI();
+		pwrswitch_1khz();
+	}
+	else if(cnt >= 10)
+	{
+		PLAT_CP_LO();
+		cnt = 0;
+	}
+}
+
+
 void timebase_inthandler() __attribute__((section(".text_itcm")));
 void timebase_inthandler()
 {
-	static int cnt;
 	TIM5->SR = 0;
 	__DSB();
 

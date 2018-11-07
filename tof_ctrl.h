@@ -47,7 +47,6 @@ void epc_intlen_dual(uint8_t multiplier, uint16_t time1, uint16_t time2); // OK 
 void epc_temperature_magic_mode(int idx);
 // Do the magic stuff specified in the datasheet to disable temperature sensor conversion, back to normal operation
 void epc_temperature_magic_mode_off(int idx);
-uint16_t epc_read_temperature_regs();
 
 int epc_i2c_is_busy();
 void dcmi_start_dma(void *data, int size);
@@ -56,3 +55,9 @@ int poll_capt_with_timeout_complete();
 
 void dcmi_crop_narrow();
 void dcmi_crop_wide();
+int32_t epc_read_temperature(int idx);
+
+#define MAX_N_SENSORS 10
+#define N_SENSORS 1
+extern const uint8_t sensors_in_use[MAX_N_SENSORS];
+
