@@ -457,10 +457,23 @@ void epc_normalphase_or_int() // OK to do while acquiring: shadow registered: ap
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 }
 
+// Actually a 10-bit multiplier is supported, but we never want such long integration times, and save one register write.
+// Multiplier: 1 to 255
+// time: From 1 to 16384
+// Integration length will be:
+// clk_div/80MHz * multiplier * (regval+1), which equals:
+// clk_div/80MHz * multiplier * time*4, which equals:
+// clk_div/20MHz * multiplier * time, or,
+// 1/led_freq * multiplier * time.
+
+// Set the multiplier to LED freq in MHz, and time is us directly!
+// 20MHz LED, mult=20, time=1000 -> 1 ms.
+// Remember this is the length of one frame: 4dcs has four times total exposure.
+
 
 void epc_intlen(uint8_t multiplier, uint16_t time) // OK to do while acquiring: shadow registered: applied to next trigger.
 {
-	int intlen = ((int)time<<2)-1;
+	int intlen = ((int)time<<2)-1; // Actual regval must be a multiple of four: this guarantees this condition.
 	epc_wrbuf[0] = 0xA1;
 	epc_wrbuf[1] = multiplier;
 	epc_wrbuf[2] = (intlen&0xff00)>>8;
@@ -826,6 +839,8 @@ void init_sensors()
 
 	/*
 		Even with 40cm cable, 40MHz (div 2) works well!
+		But, the readout speed is limited by the ADC conversion in the sensor - so we get the same performance at 20MHz.
+		Frame readout is 1.874ms anyway.
 
 	*/
 //	uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
@@ -867,6 +882,7 @@ void init_sensors()
 
 		delay_ms(10);
 
+		// Registers 0xaa and 0xab (undocumented) need to be set to 4, and 4. The reason is not explained.
 
 		{
 			epc_wrbuf[0] = 0xaa; 
@@ -883,7 +899,7 @@ void init_sensors()
 		}
 
 
-// Temperature sensor readout procedure is weird, and requires storing and restoring some undocumented internal registers to the chip:
+// Temperature sensor readout procedure is a bit weird, and requires storing and restoring some undocumented internal registers to the chip:
 
 		{
 
@@ -923,14 +939,14 @@ void init_sensors()
 
 		{
 			epc_wrbuf[0] = 0x89; 
-			epc_wrbuf[1] = (2 /*TCMI clock div 2..16, default 4*/ -1) | 0<<7 /*add clock delay?*/;
+			epc_wrbuf[1] = (4 /*TCMI clock div 2..16, default 4*/ -1) | 0<<7 /*add clock delay?*/;
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 			while(epc_i2c_is_busy());
 		}
 
 		{
 			epc_wrbuf[0] = 0xcb; // i2c&tcmi control
-			epc_wrbuf[1] = 0b01101111; // saturation bit, split mode, gated dclk, ESM
+			epc_wrbuf[1] = 0b01101111; // saturation bit, split mode, gated dclk, embedded sync
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 			while(epc_i2c_is_busy());
 		}
