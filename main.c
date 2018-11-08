@@ -25,6 +25,8 @@
 
 #include "own_std.h"
 
+#include "tof_calibrator.h"
+
 #define DBG_UART
 
 #ifdef DBG_UART
@@ -544,6 +546,9 @@ void main()
 
 
 //	pointer_system_test();
+
+
+	init_tof_calibrator_ambient();
 
 	init_cpu_profiler();
 

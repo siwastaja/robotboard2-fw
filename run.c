@@ -20,6 +20,10 @@
 #include "run.h"
 #include "own_std.h"
 
+#include "tof_calibrator.h"
+
+
+static char printbuf[128];
 
 uint8_t conv_bat_percent(int mv)
 {
@@ -250,8 +254,15 @@ void run_cycle()
 		tx_fifo_push();
 	}
 
+	static int test_cnt = 0;
 
-	for(int i=0; i<10; i++)
+	DBG_PR_VAR_U16(test_cnt);
+	tof_calibrator_ambient_lvl(test_cnt);
+
+	test_cnt++;
+	if(test_cnt >= 16) test_cnt = 0;
+
+	for(int i=0; i<200; i++)
 	{
 		check_rx();
 		delay_ms(10);
