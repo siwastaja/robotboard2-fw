@@ -72,8 +72,9 @@ volatile uint8_t epc_rdbuf[16] __attribute__((aligned(4)));
 
 
 
+// Tested digital filter up to max 15 without ill effects. Use a bit shorter anyway...
 // Things written to I2C CR1 every time:
-#define I2C_CR1_BASICS_OFF (0UL<<8 /*Digital filter len 0 to 15*/)
+#define I2C_CR1_BASICS_OFF (12UL<<8 /*Digital filter len 0 to 15*/)
 #define I2C_CR1_BASICS_ON (I2C_CR1_BASICS_OFF | 1UL /*keep it on*/)
 
 
@@ -111,23 +112,23 @@ void epc_i2c_write_dma(uint8_t slave_addr_7b, volatile uint8_t *buf, uint8_t len
 	__DSB();
 
 	if(epc_i2c_write_busy || epc_i2c_read_busy || epc_i2c_read_state)
-		error(16);
+		error(61);
 
 	if(DMA1->LISR & 1UL<<22)
-		error(17);
+		error(62);
 	if(DMA1->LISR & 1UL<<24)
-		error(18);
+		error(63);
 	if(DMA1->LISR & 1UL<<25)
-		error(19);
+		error(64);
 
 	if(WR_DMA_STREAM->CR & 1UL)
 	{
 		if(DMA1->LISR & 1UL<<27)
-			error(20);
+			error(65);
 
 		uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
-		error(15+init_err_cnt);
+		error(80+init_err_cnt);
 	}
 
 	epc_i2c_write_busy = 1;
@@ -202,7 +203,7 @@ void epc_i2c_read(uint8_t slave_addr_7b, uint8_t reg_addr, volatile uint8_t *buf
 	__DSB();
 
 	if(epc_i2c_write_busy || epc_i2c_read_busy)
-		error(10);
+		error(66);
 	/*
 		Full I2C read cycle consists of a write cycle (payload = reg_addr), without stop condition,
 		then the actual read cycle starting with the repeated start condition.
@@ -262,9 +263,10 @@ void epc_i2c_inthandler()
 	}
 	else  // STOPF interrupt - this was a write.
 	{
+		// Seems to be high, sometimes: let's try removing the check?
 		if(I2C1->ISR & (1UL<<15)) // busy shouldn't be high - at least fail instead of doing random shit
 		{
-			error(11);
+			error(67);
 		}
 
 		// Write is now finished.
@@ -505,12 +507,12 @@ void epc_temperature_magic_mode(int idx)
 	epc_wrbuf[0] = 0xD3;
 	epc_wrbuf[1] = epc_tempsens_regx[idx] | 0x60;
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	block_epc_i2c(0);
 
 	epc_wrbuf[0] = 0xD5;
 	epc_wrbuf[1] = epc_tempsens_regy[idx] & 0x0f;
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	block_epc_i2c(0);
 }
 
 
@@ -520,24 +522,26 @@ void epc_temperature_magic_mode_off(int idx)
 	epc_wrbuf[0] = 0xD3;
 	epc_wrbuf[1] = epc_tempsens_regx[idx];
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	block_epc_i2c(0);
 
 	epc_wrbuf[0] = 0xD5;
 	epc_wrbuf[1] = epc_tempsens_regy[idx];
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	block_epc_i2c(0);
 }
 
 static uint16_t epc_read_temperature_regs()
 {
 	uint8_t hi, lo;
 	epc_i2c_read(i2c_addr, 0x60, &hi, 1);
-	while(epc_i2c_is_busy());
-	epc_i2c_read(i2c_addr, 0x61, &lo, 1);
-	while(epc_i2c_is_busy());
-
+	block_epc_i2c(5);
 	delay_us(50); // see the comment about i2c read bug in top_init
 
+	epc_i2c_read(i2c_addr, 0x61, &lo, 1);
+	block_epc_i2c(6);
+
+	delay_us(50); // see the comment about i2c read bug in top_init
+	__DSB();
 	return ((uint16_t)hi<<8) | ((uint16_t)lo);
 }
 
@@ -547,25 +551,65 @@ int32_t epc_read_temperature(int idx)
 	return ((float)(temp-0x2000)*0.134 + epc_tempsens_factory_offset[idx])*10.0;
 }
 
+uint8_t epc_reg_read(uint8_t addr)
+{
+	uint8_t val;
+	epc_i2c_read(i2c_addr, addr, &val, 1);
+	block_epc_i2c(7);
+	delay_us(50); // see the comment about i2c read bug in top_init
+	__DSB();
+	return val;
+}
+
 void epc_fix_modulation_table_defaults()
 {
 	epc_wrbuf[0] = 0x22;
 	epc_wrbuf[1] = 0x30;
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	block_epc_i2c(0);
 	epc_wrbuf[0] = 0x25;
 	epc_wrbuf[1] = 0x35;
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	block_epc_i2c(0);
 	epc_wrbuf[0] = 0x28;
 	epc_wrbuf[1] = 0x3A;
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	block_epc_i2c(0);
 	epc_wrbuf[0] = 0x2B;
 	epc_wrbuf[1] = 0x3F;
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-	while(epc_i2c_is_busy());
+	block_epc_i2c(0);
 }
+
+void epc_enable_dll()
+{
+	epc_wrbuf[0] = 0xae;
+	epc_wrbuf[1] = 0x04;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
+void epc_disable_dll()
+{
+	epc_wrbuf[0] = 0xae;
+	epc_wrbuf[1] = 0x01;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
+void epc_coarse_dll_steps(int steps)
+{
+	epc_wrbuf[0] = 0x73;
+	epc_wrbuf[1] = steps;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
+void epc_fine_dll_steps(int steps)
+{
+	epc_wrbuf[0] = 0x71;
+	epc_wrbuf[1] = (steps&0xff00)>>8;
+	epc_wrbuf[2] = (steps&0x00ff)>>0;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 3);
+}
+
 
 static const uint8_t curr_settings[5] = {0b01000 /*5 mA*/, 0b01000 /*5 mA*/, 0b00100 /*10mA*/, 0b10000 /*17.5mA*/, 0b01100 /*30mA*/};
 void rgb_update(int bright, uint8_t r, uint8_t g, uint8_t b)
@@ -578,39 +622,39 @@ void rgb_update(int bright, uint8_t r, uint8_t g, uint8_t b)
 		epc_wrbuf[0] = 0x00;
 		epc_wrbuf[1] = 0<<5 /*EN*/ | 1<<0 /*Software shutdown?*/;
 		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
-		while(epc_i2c_is_busy());
+		block_epc_i2c(2);
 	}
 	else
 	{
 		epc_wrbuf[0] = 0x00;
 		epc_wrbuf[1] = 1<<5 /*EN*/ | 0<<0 /*Software shutdown?*/;
 		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
-		while(epc_i2c_is_busy());
+		block_epc_i2c(2);
 
 		epc_wrbuf[0] = 0x03;
 		epc_wrbuf[1] = curr_settings[bright];
 		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
-		while(epc_i2c_is_busy());
+		block_epc_i2c(2);
 
 		epc_wrbuf[0] = 0x04;
 		epc_wrbuf[1] = g;
 		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
-		while(epc_i2c_is_busy());
+		block_epc_i2c(2);
 
 		epc_wrbuf[0] = 0x05;
 		epc_wrbuf[1] = r;
 		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
-		while(epc_i2c_is_busy());
+		block_epc_i2c(2);
 
 		epc_wrbuf[0] = 0x06;
 		epc_wrbuf[1] = b;
 		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
-		while(epc_i2c_is_busy());
+		block_epc_i2c(2);
 
 		epc_wrbuf[0] = 0x07; // perform update
 		epc_wrbuf[1] = 0;
 		epc_i2c_write(rgb_addr, epc_wrbuf, 2);
-		while(epc_i2c_is_busy());
+		block_epc_i2c(2);
 	}
 }
 
@@ -639,7 +683,7 @@ int poll_capt_with_timeout()
 		err_cnt++;
 		if(err_cnt > 200)
 		{
-			error(13);
+			error(68);
 		}
 		return 1;
 	}
@@ -666,12 +710,22 @@ int poll_capt_with_timeout_complete()
 		err_cnt++;
 		if(err_cnt > 200)
 		{
-			error(14);
+			error(69);
 		}
 		return 1;
 	}
 
 	return 0;
+}
+
+void block_epc_i2c(int err_idx)
+{
+	int timeout = 100000;
+	while(epc_i2c_is_busy())
+	{
+		if(--timeout == 0)
+			error(90+err_idx);
+	}
 }
 
 
@@ -850,7 +904,7 @@ void init_sensors()
 		int idx = sensors_in_use[i];
 		if(idx < 0 || idx >= MAX_N_SENSORS)
 		{
-			error(27);
+			error(71);
 		}
 		tof_mux_select(idx);
 		init_err_cnt = idx;
@@ -863,7 +917,7 @@ void init_sensors()
 //			epc_wrbuf[0] = 0xaa; 
 //			epc_wrbuf[1] = 4;
 //			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-//			while(epc_i2c_is_busy());
+//			block_epc_i2c();
 //		}
 
 //		uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
@@ -877,7 +931,7 @@ void init_sensors()
 		for(int seq=0; seq<SEQ_LEN; seq++)
 		{
 			epc_i2c_write(i2c_addr, epc_seq[seq].d, epc_seq[seq].len);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(0);
 		}
 
 		delay_ms(10);
@@ -888,14 +942,14 @@ void init_sensors()
 			epc_wrbuf[0] = 0xaa; 
 			epc_wrbuf[1] = 4;
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(0);
 		}
 
 		{
 			epc_wrbuf[0] = 0xab; 
 			epc_wrbuf[1] = 4;
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(0);
 		}
 
 
@@ -904,14 +958,16 @@ void init_sensors()
 		{
 
 			epc_i2c_read(i2c_addr, 0xd3, &epc_tempsens_regx[idx], 1);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(1);
+			delay_us(50);
 
 			epc_i2c_read(i2c_addr, 0xd5, &epc_tempsens_regy[idx], 1);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(1);
+			delay_us(50);
 
 			uint8_t temp_offset;
 			epc_i2c_read(i2c_addr, 0xe8, &temp_offset, 1);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(1);
 			__DSB(); __ISB();
 
 			epc_tempsens_factory_offset[idx] = (float)temp_offset/4.7 - (float)0x12b;
@@ -932,7 +988,7 @@ void init_sensors()
 			epc_wrbuf[0] = 0xcc; // tcmi polarity settings
 			epc_wrbuf[1] = 1<<0 /*dclk rising edge*/ | 1<<7 /*saturate data*/; // bit 0 actually defaults to 1, at least on stock sequencer
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(0);
 			__DSB(); __ISB();
 		}
 
@@ -941,28 +997,28 @@ void init_sensors()
 			epc_wrbuf[0] = 0x89; 
 			epc_wrbuf[1] = (4 /*TCMI clock div 2..16, default 4*/ -1) | 0<<7 /*add clock delay?*/;
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(0);
 		}
 
 		{
 			epc_wrbuf[0] = 0xcb; // i2c&tcmi control
 			epc_wrbuf[1] = 0b01101111; // saturation bit, split mode, gated dclk, embedded sync
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(0);
 		}
 
 		{
 			epc_wrbuf[0] = 0x90; // led driver control
 			epc_wrbuf[1] = 0b11001000;
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(0);
 		}
 
 		{
 			epc_wrbuf[0] = 0x92; // modulation select
 			epc_wrbuf[1] = 0b11000100; // grayscale
 			epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-			while(epc_i2c_is_busy());
+			block_epc_i2c(0);
 		}
 
 

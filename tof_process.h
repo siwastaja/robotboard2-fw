@@ -81,7 +81,8 @@ void tof_calc_dist_3hdr_with_ignore(uint16_t* dist_out, uint8_t* ampl, uint16_t*
 void tof_calc_dist_3hdr_with_ignore_with_straycomp(uint16_t* dist_out, uint8_t* ampl, uint16_t* dist, uint8_t* ignore_in, uint16_t stray_ampl, uint16_t stray_dist);
 void tof_remove_midliers(uint16_t* out, uint16_t* in);
 void process_bw(uint8_t *out, epc_img_t *in);
-void process_dcs(uint8_t *out, epc_img_t *in);
+void process_dcs(int16_t *out, epc_img_t *in);
+void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in);
 
 
 

@@ -229,6 +229,22 @@ void tx_fifo_push()
 	}
 }
 
+// Doesn't work properly in corner case timing, avoid using:
+void flush_fifos()
+{
+	DIS_IRQ();
+	__DSB();
+	tx_fifo_cpu = tx_fifo_spi;
+	rx_fifo_cpu = rx_fifo_spi;
+	__DSB();
+	ENA_IRQ();
+}
+
+void block_until_tx_fifo_empty()
+{
+	while(tx_fifo_cpu != tx_fifo_spi) ;
+}
+
 
 enum {RASPI=0, ODROID=1} sbc_iface;
 
@@ -608,6 +624,16 @@ void parse_rx_packet()
 				clear_err();
 			}
 			break;
+
+			#ifdef CALIBRATOR
+				case CMD_CALIBRATION:
+				{
+					uart_print_string_blocking("PARSE: calibrator cmd\r\n");
+					extern void calibrator_cmd_in(s2b_calibration_t*);
+					calibrator_cmd_in((s2b_calibration_t*)p_data);
+				}
+				break;
+			#endif
 
 			default:
 			{

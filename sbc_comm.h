@@ -22,6 +22,7 @@
 #include <stdint.h>
 
 #include "../robotsoft/api_board_to_soft.h"
+#include "../robotsoft/api_soft_to_board.h"
 
 void init_sbc_comm();
 void deinit_sbc_comm();
@@ -29,4 +30,6 @@ void deinit_sbc_comm();
 void check_rx();
 int is_tx_overrun();
 void tx_fifo_push();
-
+void flush_fifos();
+void update_subs(uint64_t *subs_vector);
+void block_until_tx_fifo_empty();

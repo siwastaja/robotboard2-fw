@@ -25,7 +25,9 @@
 
 #include "own_std.h"
 
-#include "tof_calibrator.h"
+#ifdef CALIBRATOR
+#include "../robotboard2-fw-calibrator/tof_calibrator.h"
+#endif
 
 #define DBG_UART
 
@@ -548,7 +550,9 @@ void main()
 //	pointer_system_test();
 
 
-	init_tof_calibrator_ambient();
+	#ifdef CALIBRATOR
+		init_tofcal_ambient();
+	#endif
 
 	init_cpu_profiler();
 

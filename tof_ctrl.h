@@ -48,7 +48,17 @@ void epc_temperature_magic_mode(int idx);
 // Do the magic stuff specified in the datasheet to disable temperature sensor conversion, back to normal operation
 void epc_temperature_magic_mode_off(int idx);
 
+void epc_enable_dll();
+void epc_disable_dll();
+void epc_coarse_dll_steps(int steps);
+void epc_fine_dll_steps(int steps);
+
+uint8_t epc_reg_read(uint8_t addr);
+
+
 int epc_i2c_is_busy();
+void block_epc_i2c(int err_idx);
+
 void dcmi_start_dma(void *data, int size);
 int poll_capt_with_timeout();
 int poll_capt_with_timeout_complete();
@@ -61,3 +71,4 @@ int32_t epc_read_temperature(int idx);
 #define N_SENSORS 1
 extern const uint8_t sensors_in_use[MAX_N_SENSORS];
 
+void rgb_update(int bright, uint8_t r, uint8_t g, uint8_t b);

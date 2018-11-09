@@ -157,13 +157,16 @@ void run_cycle()
 
 	*/
 
+	// 150us at 20 MHz
+	// 120us at 10 MHz
+	// 100us at 5 MHz
 
 	INIT_TOF_TS();
 	dcmi_crop_wide();
 	epc_greyscale(); while(epc_i2c_is_busy());
 	epc_dis_leds(); while(epc_i2c_is_busy());
-	epc_clk_div(1); while(epc_i2c_is_busy());
-	epc_intlen(MULT_20M, 2*400); while(epc_i2c_is_busy());
+	epc_clk_div(4); while(epc_i2c_is_busy());
+	epc_intlen(MULT_5M, 1.66667*100.0); while(epc_i2c_is_busy());
 	epc_temperature_magic_mode(idx);
 	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 	epc_trig();
@@ -254,15 +257,15 @@ void run_cycle()
 		tx_fifo_push();
 	}
 
-	static int test_cnt = 0;
+//	static int test_cnt = 0;
 
-	DBG_PR_VAR_U16(test_cnt);
-	tof_calibrator_ambient_lvl(test_cnt);
+//	DBG_PR_VAR_U16(test_cnt);
+//	tof_calibrator_ambient_lvl(test_cnt);
 
-	test_cnt++;
-	if(test_cnt >= 16) test_cnt = 0;
+//	test_cnt++;
+//	if(test_cnt >= 16) test_cnt = 0;
 
-	for(int i=0; i<200; i++)
+	for(int i=0; i<40; i++)
 	{
 		check_rx();
 		delay_ms(10);

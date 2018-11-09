@@ -539,6 +539,7 @@ void tof_remove_midliers(uint16_t* out, uint16_t* in)
 	}
 }
 
+void process_bw(uint8_t *out, epc_img_t *in)  __attribute__((section(".text_itcm")));
 void process_bw(uint8_t *out, epc_img_t *in)
 {
 	for(int i=0; i<TOF_XS*TOF_YS; i++)
@@ -549,12 +550,21 @@ void process_bw(uint8_t *out, epc_img_t *in)
 	}
 }
 
-void process_dcs(uint8_t *out, epc_img_t *in)
+void process_dcs(int16_t *out, epc_img_t *in)  __attribute__((section(".text_itcm")));
+void process_dcs(int16_t *out, epc_img_t *in)
 {
 	for(int i=0; i<TOF_XS*TOF_YS; i++)
 	{
-		uint16_t lum = ((in->img[i]&0b0011111111111100)>>2);
-		out[i] = lum>>4;
+		out[i] = ((in->img[i]&0b0011111111111100)>>2)-2048;
+	}
+}
+
+void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in)  __attribute__((section(".text_itcm")));
+void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in)
+{
+	for(int i=0; i<TOF_XS_NARROW*TOF_YS_NARROW; i++)
+	{
+		out[i] = ((in->img[i]&0b0011111111111100)>>2)-2048;
 	}
 }
 
