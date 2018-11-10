@@ -610,6 +610,28 @@ void epc_fine_dll_steps(int steps)
 	epc_i2c_write(i2c_addr, epc_wrbuf, 3);
 }
 
+void epc_pll_steps(int steps)
+{
+	epc_wrbuf[0] = 0x8b;
+	epc_wrbuf[1] = steps;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
+void epc_start_read_eeprom(uint8_t addr)
+{
+	epc_wrbuf[0] = 0x11;
+	epc_wrbuf[1] = addr;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
+uint8_t epc_read_eeprom_byte()
+{
+	uint8_t val = epc_reg_read(0x12);
+	block_epc_i2c(1);
+	delay_us(50);
+	return val;
+}
+
 
 static const uint8_t curr_settings[5] = {0b01000 /*5 mA*/, 0b01000 /*5 mA*/, 0b00100 /*10mA*/, 0b10000 /*17.5mA*/, 0b01100 /*30mA*/};
 void rgb_update(int bright, uint8_t r, uint8_t g, uint8_t b)

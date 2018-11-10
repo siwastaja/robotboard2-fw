@@ -52,9 +52,12 @@ void epc_enable_dll();
 void epc_disable_dll();
 void epc_coarse_dll_steps(int steps);
 void epc_fine_dll_steps(int steps);
+void epc_pll_steps(int steps);
 
 uint8_t epc_reg_read(uint8_t addr);
 
+void epc_start_read_eeprom(uint8_t addr);
+uint8_t epc_read_eeprom_byte();
 
 int epc_i2c_is_busy();
 void block_epc_i2c(int err_idx);
