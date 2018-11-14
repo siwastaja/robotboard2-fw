@@ -229,7 +229,7 @@ void shutdown_handler()
 {
 	__disable_irq();
 	charger_safety_shutdown();
-	epc_safety_shutdown();
+	epc_shutdown(); // blocks for 100ms
 	while(1);
 }
 

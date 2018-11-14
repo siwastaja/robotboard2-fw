@@ -25,6 +25,7 @@
 #include "own_std.h"
 #include "audio.h"
 #include "backup_ram.h"
+#include "tof_ctrl.h"
 
 #define FLASH_OFFSET 0x08000000
 
@@ -551,7 +552,10 @@ void run_flasher()
 	RCC->APB2RSTR = 0;
 	__DSB();
 
-	delay_ms(200); // At this time, master may still be sending some crap while flushing buffers. Hard-reset the SPI once more after this:
+	// Wait for 200ms
+	delay_ms(100); 
+	epc_shutdown(); // blocks for another 100ms
+	// At this time, master may still be sending some crap while flushing buffers. Hard-reset the SPI once more after this:
 
 	RCC->APB2RSTR = 1UL<<12;
 	__DSB();

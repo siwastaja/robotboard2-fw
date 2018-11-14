@@ -25,6 +25,7 @@
 
 
 void epc_safety_shutdown();
+void epc_shutdown();
 void tof_ctrl_init();
 
 
@@ -70,8 +71,7 @@ void dcmi_crop_narrow();
 void dcmi_crop_wide();
 int32_t epc_read_temperature(int idx);
 
-#define MAX_N_SENSORS 10
-#define N_SENSORS 1
-extern const uint8_t sensors_in_use[MAX_N_SENSORS];
+#define N_SENSORS 10
+extern const uint8_t sensors_in_use[N_SENSORS];
 
 void rgb_update(int bright, uint8_t r, uint8_t g, uint8_t b);

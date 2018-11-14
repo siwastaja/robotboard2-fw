@@ -20,8 +20,6 @@
 #include "run.h"
 #include "own_std.h"
 
-#include "tof_calibrator.h"
-
 
 static char printbuf[128];
 
@@ -55,6 +53,12 @@ uint32_t timestamp_initial;
 static int lowbat_die_cnt = 0;
 void run_cycle()
 {
+	static int tof_idx = 0;
+	tof_idx++;
+	if(!sensors_in_use[tof_idx])
+		return;
+
+
 	int gen_data = 1;
 	if(is_tx_overrun())
 	{
@@ -96,8 +100,6 @@ void run_cycle()
 	}
 
 
-	int idx = sensors_in_use[0];
-
 
 	/*
 	Integration lengths:
@@ -122,7 +124,7 @@ void run_cycle()
 #define MULT_4M   2
 #define MULT_3M3  2
 
-	tof_mux_select(idx);
+	tof_mux_select(tof_idx);
 
 
 	/*
@@ -161,22 +163,32 @@ void run_cycle()
 	// 120us at 10 MHz
 	// 100us at 5 MHz
 
+	rgb_update(4, 255, 0, 0);
+	delay_ms(100);
+	rgb_update(4, 0, 255, 0);
+	delay_ms(100);
+	rgb_update(4, 0, 0, 255);
+	delay_ms(100);
+	rgb_update(4, 255, 255, 255);
+	delay_ms(100);
+	rgb_update(0, 0, 0, 0);
+
 	INIT_TOF_TS();
 	dcmi_crop_wide();
 	epc_greyscale(); while(epc_i2c_is_busy());
 	epc_dis_leds(); while(epc_i2c_is_busy());
-	epc_clk_div(4); while(epc_i2c_is_busy());
-	epc_intlen(MULT_5M, 1.66667*100.0); while(epc_i2c_is_busy());
-	epc_temperature_magic_mode(idx);
+	epc_clk_div(1); while(epc_i2c_is_busy());
+	epc_intlen(MULT_20M, 2000); while(epc_i2c_is_busy());
+	epc_temperature_magic_mode(tof_idx);
 	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 	epc_trig();
 	TOF_TS(0);
 	if(poll_capt_with_timeout()) soft_err();
 	TOF_TS(1);
 
-	int32_t temperature = epc_read_temperature(idx);
+	int32_t temperature = epc_read_temperature(tof_idx);
 
-	epc_temperature_magic_mode_off(idx);
+	epc_temperature_magic_mode_off(tof_idx);
 
 	epc_4dcs(); while(epc_i2c_is_busy());
 	epc_ena_wide_leds(); dcmi_crop_wide(); while(epc_i2c_is_busy());
@@ -221,7 +233,7 @@ void run_cycle()
 
 	if(gen_data && tof_raw_dist)
 	{
-		tof_raw_dist->sensor_idx = idx;
+		tof_raw_dist->sensor_idx = tof_idx;
 		memcpy(tof_raw_dist->dist, dist, sizeof tof_raw_dist->dist);
 		memcpy(tof_raw_dist->dist_narrow, dist_narrow, sizeof tof_raw_dist->dist_narrow);
 		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
@@ -230,14 +242,14 @@ void run_cycle()
 
 	if(gen_data && tof_raw_ampl8)
 	{
-		tof_raw_ampl8->sensor_idx = idx;
+		tof_raw_ampl8->sensor_idx = tof_idx;
 		memcpy(tof_raw_ampl8->ampl, ampl, sizeof tof_raw_ampl8->ampl);
 		memcpy(tof_raw_ampl8->ampl_narrow, ampl_narrow, sizeof tof_raw_ampl8->ampl_narrow);
 	}
 
 	if(gen_data && tof_raw_ambient8)
 	{
-		tof_raw_ambient8->sensor_idx = idx;
+		tof_raw_ambient8->sensor_idx = tof_idx;
 		memcpy(tof_raw_ambient8->ambient, ambient, sizeof tof_raw_ambient8->ambient);
 		tof_raw_ambient8->temperature = temperature;
 	}
@@ -265,7 +277,7 @@ void run_cycle()
 //	test_cnt++;
 //	if(test_cnt >= 16) test_cnt = 0;
 
-	for(int i=0; i<40; i++)
+	for(int i=0; i<20; i++)
 	{
 		check_rx();
 		delay_ms(10);

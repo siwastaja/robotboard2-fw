@@ -44,7 +44,8 @@ static char printbuf[128];
 	This makes everything simple.
 */
 
-const uint8_t sensors_in_use[MAX_N_SENSORS] = {0, 0};
+// 1 or 0                                  0 1 2 3 4   5 6 7 8 9
+const uint8_t sensors_in_use[N_SENSORS] = {1,0,0,0,0,  0,0,0,0,0};
 
 #define WR_DMA DMA1
 #define WR_DMA_STREAM DMA1_Stream2
@@ -64,8 +65,8 @@ static const uint8_t i2c_addr = 0b0100000;
 static const uint8_t rgb_addr = 0b1101000;
 
 // Temperature sensor readout procedure is weird, and requires storing and restoring some undocumented internal registers to the chip:
-static uint8_t epc_tempsens_regx[MAX_N_SENSORS], epc_tempsens_regy[MAX_N_SENSORS];
-static float epc_tempsens_factory_offset[MAX_N_SENSORS]; // in some intermediate format, as specified in datasheet parameter "z"
+static uint8_t epc_tempsens_regx[N_SENSORS], epc_tempsens_regy[N_SENSORS];
+static float epc_tempsens_factory_offset[N_SENSORS]; // in some intermediate format, as specified in datasheet parameter "z"
 
 volatile uint8_t epc_wrbuf[16] __attribute__((aligned(4)));
 volatile uint8_t epc_rdbuf[16] __attribute__((aligned(4)));
@@ -93,6 +94,21 @@ void epc_safety_shutdown()
 //	PLUS3V3_OFF();
 }
 
+
+void epc_shutdown() __attribute__((section(".text_itcm")));
+void epc_shutdown()
+{
+	// It's most important to bring down the analog supplies in the correct order, and do this quickly.
+	// When it's done, it's an optional plus to turn 3V3 off.
+	RSTN_LOW();
+	MINUS10V_OFF();
+	PLUS10V_OFF();
+	tof_mux_all_off();
+	LEDWIDE_OFF();
+	LEDNARROW_OFF();
+	delay_ms(100);
+	PLUS3V3_OFF();
+}
 
 
 
@@ -890,10 +906,8 @@ void init_sensors()
 {
 	PLUS3V3_ON();
 
-
 	delay_ms(300);
 	PLUS10V_ON();
-
 
 	delay_ms(100);
 	MINUS10V_ON();
@@ -921,13 +935,16 @@ void init_sensors()
 	*/
 //	uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
-	for(int i = 0; i < N_SENSORS; i++)
+	int last_valid_idx = 0; // any camera that exists and works
+	for(int idx = 0; idx < N_SENSORS; idx++)
 	{
-		int idx = sensors_in_use[i];
-		if(idx < 0 || idx >= MAX_N_SENSORS)
-		{
-			error(71);
-		}
+		if(!sensors_in_use[idx])
+			continue;
+
+		DBG_PR_VAR_U16(idx);
+
+		last_valid_idx = idx;
+
 		tof_mux_select(idx);
 		init_err_cnt = idx;
 		delay_us(100);
@@ -1044,7 +1061,7 @@ void init_sensors()
 		}
 
 
-	
+		uart_print_string_blocking("single sensor init success\r\n");
 	}
 
 
@@ -1053,16 +1070,23 @@ void init_sensors()
 	dcmi_init();
 
 	// Take a dummy frame, which will eventually output the end-of-frame sync marker, to get the DCMI sync marker parser in the right state
-	// Any camera works for this, let's use the first.
+	// Any camera works for this
 
-	tof_mux_select(sensors_in_use[0]);
+	DBG_PR_VAR_U16(last_valid_idx);
+
+	tof_mux_select(last_valid_idx);
+	delay_us(100);
+
 	{
+//		epc_intlen(1, 1); block_epc_i2c(0);
 		extern epc_img_t mono_comp;
 		dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 		epc_trig();
 		delay_ms(100);
 	}
+
 	tof_mux_all_off();
+	uart_print_string_blocking("sensors init success\r\n");
 
 }
 
