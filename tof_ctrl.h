@@ -34,6 +34,7 @@ void epc_clk_div(int div);
 void epc_dis_leds();
 void epc_ena_wide_leds();
 void epc_ena_narrow_leds();
+void epc_ena_wide_and_narrow_leds();
 void epc_greyscale(); // OK to do while acquiring: shadow registered: applied to next trigger.
 void epc_2dcs(); // OK to do while acquiring: shadow registered: applied to next trigger.
 void epc_4dcs(); // OK to do while acquiring: shadow registered: applied to next trigger.

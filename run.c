@@ -55,8 +55,12 @@ void run_cycle()
 {
 	static int tof_idx = 0;
 	tof_idx++;
+	if(tof_idx >= N_SENSORS)
+		tof_idx = 0;
 	if(!sensors_in_use[tof_idx])
 		return;
+
+	//tof_idx = 9;
 
 
 	int gen_data = 1;
@@ -163,6 +167,7 @@ void run_cycle()
 	// 120us at 10 MHz
 	// 100us at 5 MHz
 
+
 	rgb_update(4, 255, 0, 0);
 	delay_ms(100);
 	rgb_update(4, 0, 255, 0);
@@ -178,7 +183,13 @@ void run_cycle()
 	epc_greyscale(); while(epc_i2c_is_busy());
 	epc_dis_leds(); while(epc_i2c_is_busy());
 	epc_clk_div(1); while(epc_i2c_is_busy());
-	epc_intlen(MULT_20M, 2000); while(epc_i2c_is_busy());
+//	if(tof_idx==7)
+		epc_intlen(MULT_20M, 2*20);
+//	else
+//		epc_intlen(MULT_20M, 2*1250);
+
+	while(epc_i2c_is_busy());
+
 	epc_temperature_magic_mode(tof_idx);
 	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 	epc_trig();
@@ -223,9 +234,9 @@ void run_cycle()
 	static uint8_t  ampl_narrow[TOF_XS_NARROW*TOF_YS_NARROW];
 	static uint16_t dist_narrow[TOF_XS_NARROW*TOF_YS_NARROW];
 
-	tof_calc_dist_ampl(ampl, dist, &dcsa, 4000, 2); // 5.0 ms
+	tof_calc_dist_ampl(ampl, dist, &dcsa, 4000, 1); // 5.0 ms
 	TOF_TS(8);
-	tof_calc_dist_ampl_narrow(ampl_narrow, dist_narrow, &dcsa_narrow, 4600, 2); // 1.0 ms
+	tof_calc_dist_ampl_narrow(ampl_narrow, dist_narrow, &dcsa_narrow, 4600, 1); // 1.0 ms
 	TOF_TS(9);
 	process_bw(ambient, &mono_comp); // 0.7ms
 	TOF_TS(10);
@@ -277,7 +288,7 @@ void run_cycle()
 //	test_cnt++;
 //	if(test_cnt >= 16) test_cnt = 0;
 
-	for(int i=0; i<20; i++)
+	for(int i=0; i<80; i++)
 	{
 		check_rx();
 		delay_ms(10);

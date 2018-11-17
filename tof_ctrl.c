@@ -45,7 +45,14 @@ static char printbuf[128];
 */
 
 // 1 or 0                                  0 1 2 3 4   5 6 7 8 9
-const uint8_t sensors_in_use[N_SENSORS] = {1,0,0,0,0,  0,0,0,0,0};
+const uint8_t sensors_in_use[N_SENSORS] = 
+#ifdef CALIBRATOR
+// 0 1 2 3 4   5 6 7 8 9
+  {1,0,0,0,0,  0,0,0,0,0};
+#else
+// 0 1 2 3 4   5 6 7 8 9
+  {0,0,0,0,0,  0,0,0,1,0};
+#endif
 
 #define WR_DMA DMA1
 #define WR_DMA_STREAM DMA1_Stream2
@@ -429,6 +436,14 @@ void epc_ena_narrow_leds()
 	epc_wrbuf[1] = 0b11001100; // "LED" output on
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 }
+
+void epc_ena_wide_and_narrow_leds()
+{
+	epc_wrbuf[0] = 0x90;
+	epc_wrbuf[1] = 0b11101100;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
 
 void epc_greyscale() // OK to do while acquiring: shadow registered: applied to next trigger.
 {
@@ -906,13 +921,13 @@ void init_sensors()
 {
 	PLUS3V3_ON();
 
-	delay_ms(300);
+	delay_ms(50);
 	PLUS10V_ON();
 
-	delay_ms(100);
+	delay_ms(50);
 	MINUS10V_ON();
 
-	delay_ms(100);
+	delay_ms(50);
 	RSTN_HIGH();
 
 
@@ -920,7 +935,7 @@ void init_sensors()
 	LEDNARROW_ON();
 
 	uart_print_string_blocking("Power init done\r\n");
-	delay_ms(100);
+	delay_ms(50);
 
 //	delay_ms(4000);
 
@@ -941,13 +956,27 @@ void init_sensors()
 		if(!sensors_in_use[idx])
 			continue;
 
-		DBG_PR_VAR_U16(idx);
+		//DBG_PR_VAR_U16(idx);
 
 		last_valid_idx = idx;
 
 		tof_mux_select(idx);
 		init_err_cnt = idx;
 		delay_us(100);
+
+		rgb_update(4, 255, 0, 0);
+		delay_ms(100);
+		rgb_update(4, 0, 255, 0);
+		delay_ms(100);
+		rgb_update(4, 0, 0, 255);
+		delay_ms(100);
+		rgb_update(4, 255, 255, 255);
+		delay_ms(100);
+		rgb_update(0, 0, 0, 0);
+		delay_ms(100);
+
+	//	while(1);
+
 
 //		uart_print_string_blocking("I2C SR = "); o_btoa16_fixed(I2C1->ISR&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
@@ -1061,28 +1090,29 @@ void init_sensors()
 		}
 
 
-		uart_print_string_blocking("single sensor init success\r\n");
+//		uart_print_string_blocking("single sensor init success\r\n");
 	}
 
 
 	delay_ms(100);
+
+
 
 	dcmi_init();
 
 	// Take a dummy frame, which will eventually output the end-of-frame sync marker, to get the DCMI sync marker parser in the right state
 	// Any camera works for this
 
-	DBG_PR_VAR_U16(last_valid_idx);
-
 	tof_mux_select(last_valid_idx);
-	delay_us(100);
+//	tof_mux_select(0);
+	delay_us(10);
 
 	{
-//		epc_intlen(1, 1); block_epc_i2c(0);
+		epc_intlen(1, 1); block_epc_i2c(0);
 		extern epc_img_t mono_comp;
 		dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 		epc_trig();
-		delay_ms(100);
+		delay_ms(10);
 	}
 
 	tof_mux_all_off();
