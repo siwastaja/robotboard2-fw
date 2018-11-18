@@ -53,13 +53,6 @@ uint32_t timestamp_initial;
 static int lowbat_die_cnt = 0;
 void run_cycle()
 {
-	static int tof_idx = 0;
-	tof_idx++;
-	if(tof_idx >= N_SENSORS)
-		tof_idx = 0;
-	if(!sensors_in_use[tof_idx])
-		return;
-
 	//tof_idx = 9;
 
 
@@ -103,6 +96,12 @@ void run_cycle()
 		pwr_status->phb_charging_current_ma = charger_get_latest_cur_phb();
 	}
 
+	static int tof_idx = 0;
+	tof_idx++;
+	if(tof_idx >= N_SENSORS)
+		tof_idx = 0;
+	if(!sensors_in_use[tof_idx])
+		goto SKIP_TOF;
 
 
 	/*
@@ -183,10 +182,8 @@ void run_cycle()
 	epc_greyscale(); while(epc_i2c_is_busy());
 	epc_dis_leds(); while(epc_i2c_is_busy());
 	epc_clk_div(1); while(epc_i2c_is_busy());
-//	if(tof_idx==7)
-		epc_intlen(MULT_20M, 2*20);
-//	else
-//		epc_intlen(MULT_20M, 2*1250);
+
+	epc_intlen(MULT_20M, 2*20);
 
 	while(epc_i2c_is_busy());
 
@@ -273,6 +270,7 @@ void run_cycle()
 		tof_diagnostics->temperature = temperature;
 	}
 
+	SKIP_TOF:;
 
 	if(gen_data)
 	{

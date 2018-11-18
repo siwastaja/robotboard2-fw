@@ -38,8 +38,12 @@ void epc_safety_shutdown();
 void pwrswitch_safety_shutdown();
 void bldc_safety_shutdown();
 
-#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); bldc_safety_shutdown(); epc_safety_shutdown(); pwrswitch_safety_shutdown();}while(0)
-
+#ifdef CALIBRATOR
+	extern void tofcal_ambient_lvl(int);
+	#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); bldc_safety_shutdown(); epc_safety_shutdown(); pwrswitch_safety_shutdown(); tofcal_ambient_lvl(0);}while(0)
+#else
+	#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); bldc_safety_shutdown(); epc_safety_shutdown(); pwrswitch_safety_shutdown();}while(0)
+#endif
 
 
 #define DBG_PR_VAR_U32_HEX(n_) do{uart_print_string_blocking(#n_ " = "); o_utoa32_hex((n_), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");}while(0)

@@ -78,3 +78,8 @@ e:
 
 s:
 	screen /dev/ttyUSB0 460800
+
+clean:
+	rm *.o
+	rm ../robotboard2-fw-calibrator/*.o
+

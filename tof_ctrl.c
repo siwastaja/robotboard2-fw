@@ -51,7 +51,7 @@ const uint8_t sensors_in_use[N_SENSORS] =
   {1,0,0,0,0,  0,0,0,0,0};
 #else
 // 0 1 2 3 4   5 6 7 8 9
-  {0,0,0,0,0,  0,0,0,1,0};
+  {0,0,0,0,0,  0,0,0,0,0};
 #endif
 
 #define WR_DMA DMA1
