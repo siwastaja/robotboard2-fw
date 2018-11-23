@@ -8,6 +8,102 @@
 #include "tof_table.h"
 #include "misc.h"
 
+// Transferred from flash by DMA. Can share the same memory, used alternately
+// For once, I'm using union for what is was originally meant in the C standard!! :).
+union
+{
+	uint16_t wid[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
+	uint16_t nar[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
+} shadow_luts;
+
+/*
+	lookup_dist_<wid/nar>_4dcs:
+	Gives the complete precalculated distance which includes full non-linearity and offset calibration.
+	Inputs: g = pixel group index, dcs3-dcs1, and dcs2-dcs0.
+	
+
+	Separate function needed for wide/narrow lookup, they need to look at a different types of tables because
+	N_PIXGROUP is different.
+*/
+
+static inline uint16_t lookup_dist_wid_4dcs(int g, int16_t d31, int16_t d20) __attribute__((always_inline));
+static inline uint16_t lookup_dist_wid_4dcs(int g, int16_t d31, int16_t d20)
+{
+	int s;
+	int i;
+	if(d31 >= 0)
+	{
+		if(d20 >= 0)
+		{
+			if(d31 > d20) {s=5; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=4; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+		}
+		else
+		{
+			d20 *= -1;
+			if(d31 > d20) {s=6; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=7; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+		}		
+	}
+	else
+	{
+		d31 *= -1;
+		if(d20 >= 0)
+		{
+			if(d31 > d20) {s=2; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=3; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+		}
+		else
+		{
+			d20 *= -1;
+			if(d31 > d20) {s=1; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=0; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+		}		
+
+	}
+
+	return shadow_luts.wid[g][s][i];
+}
+
+static inline uint16_t lookup_dist_nar_4dcs(int g, int16_t d31, int16_t d20) __attribute__((always_inline));
+static inline uint16_t lookup_dist_nar_4dcs(int g, int16_t d31, int16_t d20)
+{
+	int s;
+	int i;
+	if(d31 >= 0)
+	{
+		if(d20 >= 0)
+		{
+			if(d31 > d20) {s=5; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=4; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+		}
+		else
+		{
+			d20 *= -1;
+			if(d31 > d20) {s=6; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=7; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+		}		
+	}
+	else
+	{
+		d31 *= -1;
+		if(d20 >= 0)
+		{
+			if(d31 > d20) {s=2; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=3; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+		}
+		else
+		{
+			d20 *= -1;
+			if(d31 > d20) {s=1; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=0; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+		}		
+
+	}
+
+	return shadow_luts.nar[g][s][i];
+}
+
 
 void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 {

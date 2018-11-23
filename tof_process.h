@@ -86,108 +86,62 @@ void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in);
 
 
 
-
-
-#define LINEARITY_NGROUPS 256  // Max 256 to hold the index in 8 bits
-#define LINEARITY_NSTEPS 64
-
-#define AMBLIGHT_NGROUPS 16    // Max 16 to hold the index in 4 bits
-#define AMBLIGHT_NSTEPS 32
-
-#define TEMPERATURE_NSTEPS 3
-
 /*
 	TOF calibration data is the dominating source of flash storage - if we followed the Espros'
 	recommendations for storing the calibration data, we would run out of flash with just a few sensors.
 
 	To store 10 sensors, we need to implement some trickery to reduce redundant informaton. Generic data compression
-	would be inefficient, but realizing that most of the error in any type of error source is mostly common mode
-	error for all pixels, with only minor differences between the pixels. 
-
-	Separating the errors to global and per-pixel
-	errors causes a slight runtime calculation penalty, but not necessarily much, since we now need to read less RAM
-	during the processing. Also, with a smaller calibration structure, it fits completely inside fast RAM.
-	Using SIMD instructions, processing will be efficient even when extra operations are needed to combine global
-	and per-pixel calibration.
-
-	It also seems that the errors fall into an uneven distribution: a group of pixels perform close to each other,
-	then another group of pixels perform again similarly. This is because some error sources cause clear repeating patterns
-	(such as even/odd lines performing differently), and some error sources cause spatially slowly-changing patterns
-	(such as the spatial distance from the midpoint of the sensor causing different amount of distortion). Additionally,
-	there will be clear outlier pixels, which are almost "dead" pixel but perform well enough to be accepted, but with
-	non-typical calibration. It is expected the number of such pixels are low enough so that they'll fall within their
-	own groups (one group per such a pixel).
-
-	This means, instead of storing full calibration for every 9600 pixels, we can model a smaller subset, and round
-	every pixel to fit the nearest group.
-
+	would be inefficient,
 	From 16 flash sectors, 12 can be dedicated to TOF calibration data, leaving enough margin for all code, and 
 	for other modules (e.g., IMU calibration tables, audio data).
 
-	Thus, 153.6*1024 bytes is available per sensor. When divided for two different modulation frequencies, 76.8*1024
-	bytes is left. This fits nicely in core-coupled 128*1024 DTCM RAM, if necessary, or in SRAM1, or in SRAM2.
-
-
+	But, to make it simpler, we use 1 sector per sensor.
 	
 */
 
+
+#define WID_N_PIXGROUPS 12
+#define NAR_N_PIXGROUPS 8
+
+#define TOF_TBL_SEG_LEN 96
+
 typedef struct __attribute__((packed))
 {
+	/*
+		Full distance LUTs for two frequencies (20MHz and 10MHz).
+		16 pixel groups
+		8 segments of the compensated atan2 function (atan2(a,b) + correction), so that a>0, b>0, b>a, hence 8 segments with swapped polarities / order
+		The table reads the distance in mm directly.
+
+		lut_group_id (4 bit per pixel) tells which group the pixel belongs to.
+	
+	*/
+	uint8_t  wid_lut_group_ids[2][TOF_XS*TOF_YS/2];
+	uint16_t wid_luts[2][WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
+
+	uint8_t  nar_lut_group_ids[2][TOF_XS*TOF_YS/2];
+	uint16_t nar_luts[2][NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
 
 	/*
-		Per-pixel index that tells us in which ambient light correction group the pixel belongs to.
-		4 bits per pixel: max 16 groups. (Ambient light correction is less critical, and the proposed
-		solutions elsewhere never bother to do any per-pixel calibration, so 16 groups will be much
-		better than the established baseline of single correction, anyway.)
+		6.66MHz and 5MHz are 2dcs aqcuisitions and compensated for offset only - they are imprecise anyway, and just need to be fast, and see far.
 
-		For each group of pixels, for each level of ambient light, there is a correction for both DCS2-DCS0 ([0]), and
-		DCS3-DCS1 ([1]).
-
-		Linear interpolation between the two steps is recommended but may not be necessary.
-
-		Unit: Espros ADC LSB (corrections are applied to DCS3-DCS1, and DCS2-DCS0 raw values before distance
-		calculation)
+		4 bits, unit: 32mm.
+		Base offset is reduced by (15/2)*32mm from what it actually is, so no need
+		to sign extend anything, just sum the 4-bit value shifted by 5
 	*/
-	uint8_t  perpix_amblight_group_idx[TOF_XS*TOF_YS/2];                 // 4800 bytes
-	int16_t  pergroup_amblight[AMBLIGHT_NGROUPS][AMBLIGHT_NSTEPS][2];    // 2048 bytes
+	int16_t  wid_base_offsets_2dcs[2];
+	uint8_t  wid_offsets_2dcs[2][TOF_XS*TOF_YS/2]; // 4 bits, unit 32mm
 
-
-	/*
-		Base offset error for the complete sensor. This error combines total offset error from both modulation (LED)
-		and demodulation (pixel) paths, so that per-pixel corrections fit in smaller range. Unit: 2mm.
-	*/
-	int16_t  global_offset;                             // 2 bytes
-
-
-	/*
-		Base offset error for each pixel. This error combines total offset error from both modulation (LED)
-		and demodulation (pixel) paths, separately for each pixel. To be summed with global_offset. Unit: 2mm.
-	*/
-	int8_t  perpix_offsets[TOF_XS*TOF_YS];              // 9600 bytes
+	int16_t nar_base_offsets_2dcs[2];
+	uint8_t  nar_offsets_2dcs[2][TOF_XS_NARROW*TOF_YS_NARROW/2]; // 4 bits, unit 32mm
 
 
 	/*
-		Per-pixel index that tells us in which linearity correction group the pixel belongs to.
+		Ambient light correction
 	*/
-	uint8_t  perpix_linearity_group_idx[TOF_XS*TOF_YS]; // 9600 bytes
 
-
-	/*
-		Distance nonlinearity correction table, combining all linearity and gain errors in calculated distance,
-		regardless of their original source.
-
-		Since we don't have memory to store linearity table for all TOF_XS*TOF_YS pixels separately, similarly behaving
-		pixels are grouped and pointed to by perpix_linearity_group_idx[].
-
-		Each linearity table is indexed by the value, which is already corrected for global_offset and perpix_offset,
-		and runs from 0 mm to unambiguity range. This range is compressed to indexes from 0 to TOF_CALIB_LINEARITY_NSTEPS.
-		Linear interpolation between the two steps is strongly recommended.
-
-		Unit: 2mm
-
-	*/
-	int8_t   pergroup_linearity[LINEARITY_NGROUPS][LINEARITY_NSTEPS];    // 16384 bytes
-
+	uint8_t amb_corr31[4][TOF_XS*TOF_YS/2];
+	uint8_t amb_corr20[4][TOF_XS*TOF_YS/2];
 
 	/*
 		Temperature correction table.
@@ -200,23 +154,11 @@ typedef struct __attribute__((packed))
 		close enough. It's OK, but we can do better.
 
 		Fixed point math will be used:
-
-		dist_corrected = dist - (global_temp_coeff (int32) + perpix_temp_coeff[pixel] (uint4)) * (actual_temp - calibration_temp)
-
-		Because the temperature correction may be slightly nonlinear, the coefficient is not exactly a constant.
-
-		This is why several steps with different constants are used. Interpolate linearly between the constants.
 	*/
 
 	// Calibration temperature
-	int16_t temp_coeffs_measured_at[TEMPERATURE_NSTEPS];
-
-
-	int32_t global_temp_coeff[TEMPERATURE_NSTEPS];    // 12 bytes
-
-	uint8_t perpix_temp_coeff[TEMPERATURE_NSTEPS][TOF_XS*TOF_YS/2]; // 14400 bytes
-
-	
+	int16_t ref_temp; // in 0.1 degC
+	uint8_t perpix_temp_coeff[TOF_XS*TOF_YS/2]; // 4800 bytes
 } tof_chip_calib_t;
 
 

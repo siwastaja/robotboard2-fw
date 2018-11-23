@@ -611,6 +611,11 @@ void parse_rx_packet()
 			break;
 		}
 
+		for(int i=0; i<p_cmdheader->paylen; i++)
+		{
+			o_utoa8_hex(p_data[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+		}
+
 		switch(p_cmdheader->msgid)
 		{
 			case CMD_SUBSCRIBE:
