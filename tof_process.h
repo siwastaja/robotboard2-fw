@@ -40,7 +40,6 @@ typedef struct __attribute__((packed))
 
 typedef struct __attribute__((packed))
 {
-//	uint16_t start_pad[2];
 	uint16_t img[TOF_XS_NARROW*TOF_YS_NARROW];
 } epc_img_narrow_t;
 
@@ -88,15 +87,16 @@ void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in);
 
 /*
 	TOF calibration data is the dominating source of flash storage - if we followed the Espros'
-	recommendations for storing the calibration data, we would run out of flash with just a few sensors.
+	recommendations for storing the calibration data, we would run out of flash with just one sensor.
 
 	To store 10 sensors, we need to implement some trickery to reduce redundant informaton. Generic data compression
 	would be inefficient,
 	From 16 flash sectors, 12 can be dedicated to TOF calibration data, leaving enough margin for all code, and 
 	for other modules (e.g., IMU calibration tables, audio data).
-
-	But, to make it simpler, we use 1 sector per sensor.
 	
+
+
+	All 4-bit fields follow little endianness: the first pixel index is stored in &0x0f, the second in &0xf0.
 */
 
 
@@ -107,6 +107,12 @@ void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in);
 
 typedef struct __attribute__((packed))
 {
+	uint32_t magic;
+	uint32_t chip_id;
+	uint32_t calib_timestamp;
+	uint32_t calib_info;
+	uint32_t reserved;
+
 	/*
 		Full distance LUTs for two frequencies (20MHz and 10MHz).
 		16 pixel groups
@@ -119,7 +125,7 @@ typedef struct __attribute__((packed))
 	uint8_t  wid_lut_group_ids[2][TOF_XS*TOF_YS/2];
 	uint16_t wid_luts[2][WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
 
-	uint8_t  nar_lut_group_ids[2][TOF_XS*TOF_YS/2];
+	uint8_t  nar_lut_group_ids[2][TOF_XS_NARROW*TOF_YS_NARROW/2];
 	uint16_t nar_luts[2][NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
 
 	/*
@@ -127,38 +133,47 @@ typedef struct __attribute__((packed))
 
 		4 bits, unit: 32mm.
 		Base offset is reduced by (15/2)*32mm from what it actually is, so no need
-		to sign extend anything, just sum the 4-bit value shifted by 5
+		to sign extend anything, just sum the 4-bit value <<5
 	*/
-	int16_t  wid_base_offsets_2dcs[2];
+
+	int16_t  wid_base_offset_2dcs[2];
 	uint8_t  wid_offsets_2dcs[2][TOF_XS*TOF_YS/2]; // 4 bits, unit 32mm
 
-	int16_t nar_base_offsets_2dcs[2];
+	int16_t nar_base_offset_2dcs[2];
 	uint8_t  nar_offsets_2dcs[2][TOF_XS_NARROW*TOF_YS_NARROW/2]; // 4 bits, unit 32mm
 
 
 	/*
-		Ambient light correction
+		Ambient light correction.
+
+		The B/W pixel intensity is multiplied by this value, and the result is subtracted from
+		both raw (dcs3-dcs1), and raw (dcs2-dcs0), before calculating distance.
+
+		It would be optimum to have separate correction coeffs (dcs31 and dcs20), but they are close
+		enough.
+
+		Resolution is 4 bits:  0~0.0 .. 15~0.9375 (16~1.0)
+
+		B/W image is taken with a fixed integration time specifically designed for this use only.
+
+		dcs31_fix = (dcs3-dcs1) - (bw*corr)>>4
+		dcs20_fix = (dcs2-dcs0) - (bw*corr)>>4
 	*/
 
-	uint8_t amb_corr31[4][TOF_XS*TOF_YS/2];
-	uint8_t amb_corr20[4][TOF_XS*TOF_YS/2];
+	uint8_t amb_corr[4][TOF_XS*TOF_YS/2];
 
 	/*
 		Temperature correction table.
-
-		Temperature causes distance shift due to changed electron mobility in silicon. The drift happens
-		in modulation logic, FET drivers, and LEDs (common to all pixels), and in demodulation logic and
-		pixel demodulators (partially differing for each pixel).
-
-		Industry baseline is to compensate all pixels with a single temperature coefficient - pixels are
-		close enough. It's OK, but we can do better.
-
-		Fixed point math will be used:
+		To do. Let's see if we need any! The fine dll scheme works really well, and needs no
+		processing. We may add some per-pixel thingies for finetuning.
 	*/
 
 	// Calibration temperature
 	int16_t ref_temp; // in 0.1 degC
-	uint8_t perpix_temp_coeff[TOF_XS*TOF_YS/2]; // 4800 bytes
+	int16_t zerofine_temp; // in 0.1 degC
+	int32_t fine_steps_per_temp[4]; // Required fine-DLL shift is ((zerofine_temp-latest_temp)*fine_steps_per_temp[freq])>>8
+
+
 } tof_chip_calib_t;
 
 
