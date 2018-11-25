@@ -92,12 +92,14 @@ void run_cycle()
 		pwr_status->phb_charging_current_ma = charger_get_latest_cur_phb();
 	}
 
-	static int sidx = 0;
+/*	static int sidx = 0;
 	sidx++;
 	if(sidx >= N_SENSORS)
 		sidx = 0;
 	if(!sensors_in_use[sidx])
-		return;
+		return;*/
+
+	static int sidx=6;
 //		goto SKIP_TOF;
 
 
