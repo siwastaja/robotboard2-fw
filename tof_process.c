@@ -15,8 +15,11 @@
 #define FLASH_SENSOR0  (FLASH_OFFSET + (0*8+2)*128*1024)  // bank1 sector2
 #define FLASH_SENSOR5  (FLASH_OFFSET + (1*8+2)*128*1024)  // bank2 sector2
 
+#if 0
+
 
 static char printbuf[128];
+
 
 // Sensors 0..4 fill flash bank1 sector2..sector7 completely
 // Sensors 5..9 fill flash bank2 sector2..sector7 completely
@@ -112,7 +115,7 @@ static inline uint16_t lookup_dist(int beam, int g, int16_t d31, int16_t d20)
 		return shadow_luts.hif.nar_luts[g][s][i];
 }
 
-
+#endif
 
 void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 {
@@ -130,7 +133,7 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 
 //#define FAST_APPROX_AMPLITUDE
 //#define DO_AMB_CORR
-
+#if 0
 void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw) __attribute__((section(".text_itcm")));
 void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw)
 {
@@ -193,7 +196,7 @@ void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4
 		dist_out[i] = dist;
 	}
 }
-
+#endif
 
 /*
 Process four DCS images, with offset_mm in millimeters. With clk_div=1, does the calculation at fled=20MHz (unamb range = 7.5m). Larger clk_div

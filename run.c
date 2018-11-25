@@ -99,7 +99,7 @@ void run_cycle()
 	if(!sensors_in_use[sidx])
 		return;*/
 
-	static int sidx=6;
+	static int sidx=0;
 //		goto SKIP_TOF;
 
 
@@ -117,7 +117,7 @@ void run_cycle()
 	dcmi_crop_wide();
 	epc_greyscale(); block_epc_i2c(4);
 	epc_dis_leds(); block_epc_i2c(4);
-	epc_clk_div(1); block_epc_i2c(4);
+	epc_clk_div(2); block_epc_i2c(4);
 	epc_intlen(intlen_mults[1], INTUS(COMP_AMBIENT_INTLEN_US)); block_epc_i2c(4);
 	epc_temperature_magic_mode(sidx);
 	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
@@ -183,8 +183,8 @@ void run_cycle()
 
 	TOF_TS(2);
 
-	DBG_PR_VAR_U32_HEX(tof_calibs[sidx]->magic);
-	DBG_PR_VAR_U32_HEX(tof_calibs[sidx]->chip_id);
+//	DBG_PR_VAR_U32_HEX(tof_calibs[sidx]->magic);
+//	DBG_PR_VAR_U32_HEX(tof_calibs[sidx]->chip_id);
 
 //	copy_cal_to_shadow(sidx, 0);
 
@@ -223,7 +223,6 @@ void run_cycle()
 		memcpy(tof_raw_dist->dist_narrow, old_dist_narrow, sizeof tof_raw_dist->dist_narrow);
 		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
 		tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
-
 	}
 
 	if(gen_data && tof_raw_ampl8)
