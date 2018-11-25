@@ -6,6 +6,7 @@
 #include "tof_ctrl.h"
 #include "tof_process.h" // for epc_img_t for taking the dummy image
 
+#include "audio.h"
 // Including the proprietary sensor firmware for EPC635, (c) Espros Photonics Corporation,
 // not available for public distribution. Pulu Robotics has a permission to redistribute this
 // small binary to our own customers. Please contant us for more information.
@@ -51,7 +52,7 @@ const uint8_t sensors_in_use[N_SENSORS] =
   {1,0,0,0,0,  0,0,0,0,0};
 #else
 // 0 1 2 3 4   5 6 7 8 9
-  {1,0,0,0,0,  0,0,0,0,0};
+  {0,1,1,1,1,  1,1,1,1,1};
 #endif
 
 #define WR_DMA DMA1
@@ -921,15 +922,81 @@ void cool_effect()
 
 void init_sensors()
 {
-	PLUS3V3_ON();
+	for(int i=0; i<200; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(19);
+		PLUS3V3_ON();
+		delay_us(1);
+	}
+
+	for(int i=0; i<200; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(18);
+		PLUS3V3_ON();
+		delay_us(2);
+	}
+
+	for(int i=0; i<200; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(17);
+		PLUS3V3_ON();
+		delay_us(3);
+	}
+
+	for(int i=0; i<200; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(18);
+		PLUS3V3_ON();
+		delay_us(4);
+	}
+
+	for(int i=0; i<200; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(14);
+		PLUS3V3_ON();
+		delay_us(6);
+	}
+
+	for(int i=0; i<200; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(12);
+		PLUS3V3_ON();
+		delay_us(8);
+	}
+
+	for(int i=0; i<200; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(8);
+		PLUS3V3_ON();
+		delay_us(12);
+	}
+
+	for(int i=0; i<200; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(4);
+		PLUS3V3_ON();
+		delay_us(16);
+	}
+
 
 	delay_ms(50);
+
 	PLUS10V_ON();
 
 	delay_ms(50);
+
 	MINUS10V_ON();
 
 	delay_ms(50);
+
 	RSTN_HIGH();
 
 
@@ -966,16 +1033,9 @@ void init_sensors()
 		init_err_cnt = idx;
 		delay_us(100);
 
-		rgb_update(1, 255, 0, 0);
-		delay_ms(100);
-		rgb_update(1, 0, 255, 0);
-		delay_ms(100);
-		rgb_update(1, 0, 0, 255);
-		delay_ms(100);
-		rgb_update(1, 255, 255, 255);
-		delay_ms(100);
+		rgb_update(4, 255, 255, 255);
+		delay_ms(10);
 		rgb_update(0, 0, 0, 0);
-		delay_ms(100);
 
 	//	while(1);
 
@@ -1099,7 +1159,7 @@ void init_sensors()
 	}
 
 
-	delay_ms(100);
+	delay_ms(50);
 
 
 

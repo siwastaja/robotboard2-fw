@@ -87,7 +87,8 @@ void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in);
 
 
 void copy_cal_to_shadow(int sid, int f);
-void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw);
+void compensated_tof_calc_dist_ampl(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw);
+void compensated_tof_calc_dist_ampl_narrow(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg);
 
 /*
 	TOF calibration data is the dominating source of flash storage - if we followed the Espros'

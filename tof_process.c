@@ -130,14 +130,15 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 
 
 #define FAST_APPROX_AMPLITUDE
-#define DO_AMB_CORR
+//#define DO_AMB_CORR
 
 //#define DBGPR
 //#define PIX (30*160+80)
 
-void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
-void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg)
+void compensated_tof_calc_dist_ampl(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
+void compensated_tof_calc_dist_ampl(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg)
 {
+	uint32_t avg_ampl = 0;
 	for(int i=0; i < TOF_XS*TOF_YS; i++)
 	{
 		uint16_t dist;
@@ -233,8 +234,121 @@ void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4
 		}
 		ampl_out[i] = ampl;
 		dist_out[i] = dist;
+		avg_ampl += ampl;
 	}
+
+	if(avg_ampl_out != NULL)
+		*avg_ampl_out = avg_ampl/(TOF_XS*TOF_YS);
 }
+
+
+void compensated_tof_calc_dist_ampl_narrow(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
+void compensated_tof_calc_dist_ampl_narrow(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg)
+{
+	uint32_t avg_ampl = 0;
+
+	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
+	{
+		uint16_t dist;
+		int ampl;
+
+		int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs2 = ((in->dcs[2].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs3 = ((in->dcs[3].img[i]&0b0011111111111100)>>2)-2048;
+
+		#ifdef DBGPR
+			if(i == PIX)
+			{
+				DBG_PR_VAR_I16(dcs0);
+				DBG_PR_VAR_I16(dcs1);
+				DBG_PR_VAR_I16(dcs2);
+				DBG_PR_VAR_I16(dcs3);
+			}
+		#endif
+
+		if(dcs0 < -2047 || dcs0 > 2046 || dcs1 < -2047 || dcs1 > 2046 || dcs2 < -2047 || dcs2 > 2046 || dcs3 < -2047 || dcs3 > 2046)
+		{
+			ampl = 255;
+			dist = 0;
+		}
+		else
+		{
+			int16_t dcs31 = dcs3-dcs1;
+			int16_t dcs20 = dcs2-dcs0;
+
+			#ifdef DBGPR
+				if(i == PIX)
+				{
+					DBG_PR_VAR_I16(dcs31);
+					DBG_PR_VAR_I16(dcs20);
+				}
+			#endif
+			#ifdef DO_AMB_CORR
+				int16_t bw = ((bwimg->img[i]&0b0011111111111100)>>2)-2048;
+				if(bw<0) bw=0;
+				int corr_factor;
+				if(!(i&1)) // even
+					corr_factor = shadow_luts.hif.amb_corr[i/2] & 0x0f;
+				else
+					corr_factor = shadow_luts.hif.amb_corr[i/2]>>4;
+				int16_t comp = (bw*corr_factor)>>4;
+
+				#ifdef DBGPR
+						if(i == PIX)
+						{
+							DBG_PR_VAR_I16(bw);
+							DBG_PR_VAR_I16(corr_factor);
+							DBG_PR_VAR_I16(comp);
+						}
+				#endif
+
+				dcs31 -= comp;
+				dcs20 -= comp;
+			#endif
+
+
+			#ifdef FAST_APPROX_AMPLITUDE
+				ampl = (abso(dcs20)+abso(dcs31))/30; if(ampl > 255) ampl = 255;
+			#else
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/23;
+			#endif
+
+			if(ampl<3)
+			{
+				dist = 65534;
+			}
+			else
+			{
+				int pixgroup;
+				if(!(i&1)) // even
+					pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2] & 0x0f;
+				else
+					pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2]>>4;
+
+				dist = lookup_dist(1, pixgroup, dcs31, dcs20);
+
+				#ifdef DBGPR
+
+					if(i == PIX)
+					{
+						DBG_PR_VAR_I16(pixgroup);
+						DBG_PR_VAR_U16(dist);
+					}
+
+				#endif
+
+			}
+		}
+		ampl_out[i] = ampl;
+		dist_out[i] = dist;
+		avg_ampl += ampl;
+	}
+
+	if(avg_ampl_out != NULL)
+		*avg_ampl_out = avg_ampl/(TOF_XS*TOF_YS);
+}
+
 
 /*
 Process four DCS images, with offset_mm in millimeters. With clk_div=1, does the calculation at fled=20MHz (unamb range = 7.5m). Larger clk_div

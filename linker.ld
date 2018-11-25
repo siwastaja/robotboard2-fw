@@ -81,16 +81,6 @@ SECTIONS
 
     . = ALIGN(8);
 
-    .bss : /* Uninitialized data - catch-all for anything not specifically designated elsewhere*/
-    {
-        _BSS_BEGIN = .;
-        *(.bss)
-        *(COMMON)        
-        _BSS_END = .;
-    } >ram_axi 
-
-    . = ALIGN(8);
-
     _DTCM_DATA_I_BEGIN = LOADADDR(.dtcm_data);
 
     .dtcm_data : /* Initialized data in fast DTCM (core-coupled only) memory */
@@ -103,13 +93,6 @@ SECTIONS
 
     . = ALIGN(8);
 
-    .dtcm_bss :
-    {
-        _DTCM_BSS_BEGIN = .;
-        *(.dtcm_bss)
-        *(.dtcm_bss.*)
-        _DTCM_BSS_END = .;
-    } >ram_dtcm
 
 
 
@@ -134,13 +117,6 @@ SECTIONS
 
     . = ALIGN(8);
 
-    .sram1_bss :
-    {
-        _SRAM1_BSS_BEGIN = .;
-        *(.sram1_bss)
-        *(.sram1_bss.*)
-        _SRAM1_BSS_END = .;
-    } >ram_sram12
 
 
 
@@ -187,18 +163,6 @@ SECTIONS
         _SRAM3_DATA_END = .;
     } >ram_sram3 AT>rom_b1s0
 
-    . = ALIGN(8);
-
-    .sram3_bss :
-    {
-        _SRAM3_BSS_BEGIN = .;
-        *(.sram3_bss)
-        *(.sram3_bss.*)
-        _SRAM3_BSS_END = .;
-    } >ram_sram3
-
-
-
 
 
     . = ALIGN(8);
@@ -213,17 +177,6 @@ SECTIONS
         _SRAM4_DATA_END = .;
     } >ram_sram4 AT>rom_b1s0
 
-    . = ALIGN(8);
-
-    .sram4_bss :
-    {
-        _SRAM4_BSS_BEGIN = .;
-        *(.sram4_bss)
-        *(.sram4_bss.*)
-        _SRAM4_BSS_END = .;
-    } >ram_sram4
-
-
 
 
     . = ALIGN(8);
@@ -237,17 +190,6 @@ SECTIONS
         *(.ram_backup_data.*)        
         _RAM_BACKUP_DATA_END = .;
     } >ram_backup AT>rom_b1s0
-
-    . = ALIGN(8);
-
-    .ram_backup_bss :
-    {
-        _RAM_BACKUP_BSS_BEGIN = .;
-        *(.ram_backup_bss)
-        *(.ram_backup_bss.*)
-        _RAM_BACKUP_BSS_END = .;
-    } >ram_backup
-
 
 
 
@@ -264,6 +206,72 @@ SECTIONS
     } >stack
 
     . = ALIGN(8);
+
+
+
+    .sram1_bss :
+    {
+        _SRAM1_BSS_BEGIN = .;
+        *(.sram1_bss)
+        *(.sram1_bss.*)
+        _SRAM1_BSS_END = .;
+    } >ram_sram12
+
+    . = ALIGN(8);
+
+    .bss : /* Uninitialized data - catch-all for anything not specifically designated elsewhere*/
+    {
+        _BSS_BEGIN = .;
+        *(.bss)
+        *(COMMON)        
+        _BSS_END = .;
+    } >ram_axi 
+
+    . = ALIGN(8);
+
+    .dtcm_bss :
+    {
+        _DTCM_BSS_BEGIN = .;
+        *(.dtcm_bss)
+        *(.dtcm_bss.*)
+        _DTCM_BSS_END = .;
+    } >ram_dtcm
+
+
+    . = ALIGN(8);
+
+    .sram3_bss :
+    {
+        _SRAM3_BSS_BEGIN = .;
+        *(.sram3_bss)
+        *(.sram3_bss.*)
+        _SRAM3_BSS_END = .;
+    } >ram_sram3
+
+
+
+    . = ALIGN(8);
+
+    .sram4_bss :
+    {
+        _SRAM4_BSS_BEGIN = .;
+        *(.sram4_bss)
+        *(.sram4_bss.*)
+        _SRAM4_BSS_END = .;
+    } >ram_sram4
+
+
+    . = ALIGN(8);
+
+    .ram_backup_bss :
+    {
+        _RAM_BACKUP_BSS_BEGIN = .;
+        *(.ram_backup_bss)
+        *(.ram_backup_bss.*)
+        _RAM_BACKUP_BSS_END = .;
+    } >ram_backup
+
+
 
 /*
     _SETTINGS_I_BEGIN = LOADADDR(.settings);
