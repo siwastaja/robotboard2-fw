@@ -113,10 +113,10 @@ void run_cycle()
 
 	// Acquire compensation B/W with fixed intlen - temperature at the same time
 	dcmi_crop_wide();
+	epc_greyscale(); block_epc_i2c(4);
 	epc_dis_leds(); block_epc_i2c(4);
 	epc_clk_div(1); block_epc_i2c(4);
 	epc_intlen(intlen_mults[1], INTUS(COMP_AMBIENT_INTLEN_US)); block_epc_i2c(4);
-	epc_greyscale(); block_epc_i2c(4);
 	epc_temperature_magic_mode(sidx);
 	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 	epc_trig();
@@ -126,17 +126,21 @@ void run_cycle()
 	int16_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
 
+/*
 	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp)*tof_calibs[sidx]->fine_steps_per_temp[0])>>8;
 	if(fine_steps < 0) fine_steps = 0;
 	else if(fine_steps > 799) fine_steps = 799;
 	DBG_PR_VAR_U32(fine_steps);
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
+*/
+
 	// Acquire the wide image
 
-	epc_clk_div(0); block_epc_i2c(4);
-	epc_intlen(intlen_mults[1], INTUS(300)); block_epc_i2c(4);
 	epc_4dcs(); block_epc_i2c(4);
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
+
+//	epc_clk_div(1); block_epc_i2c(4);
+	epc_intlen(intlen_mults[1], INTUS(300)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
@@ -151,7 +155,7 @@ void run_cycle()
 	// Acquire the narrow image
 
 	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(500)); block_epc_i2c(4);
+//	epc_intlen(intlen_mults[0], INTUS(500)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
 	epc_trig();
@@ -164,15 +168,15 @@ void run_cycle()
 
 
 	static uint8_t  old_ampl[TOF_XS*TOF_YS];
-	static uint8_t  new_ampl[TOF_XS*TOF_YS];
+//	static uint8_t  new_ampl[TOF_XS*TOF_YS];
 //	static uint8_t  ambient[TOF_XS*TOF_YS];
 	static uint16_t old_dist[TOF_XS*TOF_YS];
-	static uint16_t new_dist[TOF_XS*TOF_YS];
+//	static uint16_t new_dist[TOF_XS*TOF_YS];
 
 	static uint8_t  old_ampl_narrow[TOF_XS_NARROW*TOF_YS_NARROW];
 	static uint16_t old_dist_narrow[TOF_XS_NARROW*TOF_YS_NARROW];
-	static uint8_t  new_ampl_narrow[TOF_XS_NARROW*TOF_YS_NARROW];
-	static uint16_t new_dist_narrow[TOF_XS_NARROW*TOF_YS_NARROW];
+//	static uint8_t  new_ampl_narrow[TOF_XS_NARROW*TOF_YS_NARROW];
+//	static uint16_t new_dist_narrow[TOF_XS_NARROW*TOF_YS_NARROW];
 
 
 	TOF_TS(2);
@@ -185,15 +189,16 @@ void run_cycle()
 	TOF_TS(3);
 //	compensated_tof_calc_dist_ampl(new_ampl, new_dist, &dcsa, &mono_comp);
 	TOF_TS(4);
-	tof_calc_dist_ampl(old_ampl, old_dist, &dcsa, 4000, 1); // 5.0 ms
+	tof_calc_dist_ampl(old_ampl, old_dist, &dcsa, 4000, 2); // 5.0 ms
 	TOF_TS(5);
-	tof_calc_dist_ampl_narrow(old_ampl_narrow, old_dist_narrow, &dcsa_narrow, 4600, 1); // 1.0 ms
+	tof_calc_dist_ampl_narrow(old_ampl_narrow, old_dist_narrow, &dcsa_narrow, 4600, 2); // 1.0 ms
 
 
 	static int hommel;
 	hommel++;
 	if(gen_data && tof_raw_dist)
 	{
+/*
 		if(hommel&1)
 		{
 			tof_raw_dist->sensor_idx = sidx+1;
@@ -210,14 +215,20 @@ void run_cycle()
 			tof_raw_dist->wide_stray_estimate_adc = wide_stray;
 			tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
 		}
+*/
+		tof_raw_dist->sensor_idx = sidx;
+		memcpy(tof_raw_dist->dist, old_dist, sizeof tof_raw_dist->dist);
+		memcpy(tof_raw_dist->dist_narrow, old_dist_narrow, sizeof tof_raw_dist->dist_narrow);
+		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
+		tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
 
 	}
 
 	if(gen_data && tof_raw_ampl8)
 	{
 		tof_raw_ampl8->sensor_idx = sidx;
-		memcpy(tof_raw_ampl8->ampl, new_ampl, sizeof tof_raw_ampl8->ampl);
-		memcpy(tof_raw_ampl8->ampl_narrow, new_ampl_narrow, sizeof tof_raw_ampl8->ampl_narrow);
+//		memcpy(tof_raw_ampl8->ampl, new_ampl, sizeof tof_raw_ampl8->ampl);
+//		memcpy(tof_raw_ampl8->ampl_narrow, new_ampl_narrow, sizeof tof_raw_ampl8->ampl_narrow);
 	}
 
 	if(gen_data && tof_raw_ambient8)

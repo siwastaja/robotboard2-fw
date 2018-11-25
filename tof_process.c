@@ -128,7 +128,7 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 }
 
 
-#define FAST_APPROX_AMPLITUDE
+//#define FAST_APPROX_AMPLITUDE
 //#define DO_AMB_CORR
 
 void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw) __attribute__((section(".text_itcm")));
