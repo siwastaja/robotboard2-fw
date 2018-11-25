@@ -411,18 +411,10 @@ void epc_trig()
 
 // WARNING: this parameter changed from earlier (pulutof1) codebase.
 // 0 (not 1) is now 20MHz.
-/*
 void epc_clk_div(int div)
 {
 	epc_wrbuf[0] = 0x85;
 	epc_wrbuf[1] = div;
-	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
-}
-*/
-void epc_clk_div(int div)
-{
-	epc_wrbuf[0] = 0x85;
-	epc_wrbuf[1] = div-1;
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 }
 
@@ -1099,8 +1091,9 @@ void init_sensors()
 			block_epc_i2c(0);
 		}
 
-//		epc_enable_dll(); block_epc_i2c(0);
-//		epc_coarse_dll_steps(0); block_epc_i2c(0);
+		epc_enable_dll(); block_epc_i2c(0);
+		epc_coarse_dll_steps(0); block_epc_i2c(0);
+		epc_pll_steps(0); block_epc_i2c(4); // THIS ISN'T ZERO BY DEFAULT!!
 
 //		uart_print_string_blocking("single sensor init success\r\n");
 	}

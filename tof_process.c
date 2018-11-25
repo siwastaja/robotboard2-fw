@@ -15,7 +15,6 @@
 #define FLASH_SENSOR0  (FLASH_OFFSET + (0*8+2)*128*1024)  // bank1 sector2
 #define FLASH_SENSOR5  (FLASH_OFFSET + (1*8+2)*128*1024)  // bank2 sector2
 
-#if 0
 
 
 static char printbuf[128];
@@ -115,7 +114,6 @@ static inline uint16_t lookup_dist(int beam, int g, int16_t d31, int16_t d20)
 		return shadow_luts.hif.nar_luts[g][s][i];
 }
 
-#endif
 
 void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 {
@@ -131,11 +129,14 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 }
 
 
-//#define FAST_APPROX_AMPLITUDE
-//#define DO_AMB_CORR
-#if 0
-void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw) __attribute__((section(".text_itcm")));
-void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw)
+#define FAST_APPROX_AMPLITUDE
+#define DO_AMB_CORR
+
+//#define DBGPR
+//#define PIX (30*160+80)
+
+void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
+void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg)
 {
 	for(int i=0; i < TOF_XS*TOF_YS; i++)
 	{
@@ -147,6 +148,16 @@ void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4
 		int16_t dcs2 = ((in->dcs[2].img[i]&0b0011111111111100)>>2)-2048;
 		int16_t dcs3 = ((in->dcs[3].img[i]&0b0011111111111100)>>2)-2048;
 
+		#ifdef DBGPR
+			if(i == PIX)
+			{
+				DBG_PR_VAR_I16(dcs0);
+				DBG_PR_VAR_I16(dcs1);
+				DBG_PR_VAR_I16(dcs2);
+				DBG_PR_VAR_I16(dcs3);
+			}
+		#endif
+
 		if(dcs0 < -2047 || dcs0 > 2046 || dcs1 < -2047 || dcs1 > 2046 || dcs2 < -2047 || dcs2 > 2046 || dcs3 < -2047 || dcs3 > 2046)
 		{
 			ampl = 255;
@@ -157,17 +168,34 @@ void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4
 			int16_t dcs31 = dcs3-dcs1;
 			int16_t dcs20 = dcs2-dcs0;
 
+			#ifdef DBGPR
+				if(i == PIX)
+				{
+					DBG_PR_VAR_I16(dcs31);
+					DBG_PR_VAR_I16(dcs20);
+				}
+			#endif
 			#ifdef DO_AMB_CORR
-			int16_t bw = ((bw->img[i]&0b0011111111111100)>>2)-2048;
-			if(bw<0) bw=0;
-			int corr_factor;
-			if(!(i&1)) // even
-				corr_factor = shadow_luts.hif.amb_corr[i/2] & 0x0f;
-			else
-				corr_factor = shadow_luts.hif.amb_corr[i/2]>>4;
-			int16_t comp = (bw*corr_factor)>>4;
-			dcs31 -= comp;
-			dcs20 -= comp;
+				int16_t bw = ((bwimg->img[i]&0b0011111111111100)>>2)-2048;
+				if(bw<0) bw=0;
+				int corr_factor;
+				if(!(i&1)) // even
+					corr_factor = shadow_luts.hif.amb_corr[i/2] & 0x0f;
+				else
+					corr_factor = shadow_luts.hif.amb_corr[i/2]>>4;
+				int16_t comp = (bw*corr_factor)>>4;
+
+				#ifdef DBGPR
+						if(i == PIX)
+						{
+							DBG_PR_VAR_I16(bw);
+							DBG_PR_VAR_I16(corr_factor);
+							DBG_PR_VAR_I16(comp);
+						}
+				#endif
+
+				dcs31 -= comp;
+				dcs20 -= comp;
 			#endif
 
 
@@ -190,13 +218,23 @@ void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4
 					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
 
 				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+
+				#ifdef DBGPR
+
+					if(i == PIX)
+					{
+						DBG_PR_VAR_I16(pixgroup);
+						DBG_PR_VAR_U16(dist);
+					}
+
+				#endif
+
 			}
 		}
 		ampl_out[i] = ampl;
 		dist_out[i] = dist;
 	}
 }
-#endif
 
 /*
 Process four DCS images, with offset_mm in millimeters. With clk_div=1, does the calculation at fled=20MHz (unamb range = 7.5m). Larger clk_div
