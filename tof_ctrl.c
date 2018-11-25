@@ -51,7 +51,7 @@ const uint8_t sensors_in_use[N_SENSORS] =
   {1,0,0,0,0,  0,0,0,0,0};
 #else
 // 0 1 2 3 4   5 6 7 8 9
-  {0,0,0,0,0,  0,0,0,0,0};
+  {0,0,0,0,0,  0,1,0,0,0};
 #endif
 
 #define WR_DMA DMA1
@@ -409,10 +409,12 @@ void epc_trig()
 }
 
 
+// WARNING: this parameter changed from earlier (pulutof1) codebase.
+// 0 (not 1) is now 20MHz.
 void epc_clk_div(int div)
 {
 	epc_wrbuf[0] = 0x85;
-	epc_wrbuf[1] = div-1;
+	epc_wrbuf[1] = div;
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 }
 
@@ -964,13 +966,13 @@ void init_sensors()
 		init_err_cnt = idx;
 		delay_us(100);
 
-		rgb_update(4, 255, 0, 0);
+		rgb_update(1, 255, 0, 0);
 		delay_ms(100);
-		rgb_update(4, 0, 255, 0);
+		rgb_update(1, 0, 255, 0);
 		delay_ms(100);
-		rgb_update(4, 0, 0, 255);
+		rgb_update(1, 0, 0, 255);
 		delay_ms(100);
-		rgb_update(4, 255, 255, 255);
+		rgb_update(1, 255, 255, 255);
 		delay_ms(100);
 		rgb_update(0, 0, 0, 0);
 		delay_ms(100);
@@ -1089,6 +1091,8 @@ void init_sensors()
 			block_epc_i2c(0);
 		}
 
+//		epc_enable_dll(); block_epc_i2c(0);
+//		epc_coarse_dll_steps(0); block_epc_i2c(0);
 
 //		uart_print_string_blocking("single sensor init success\r\n");
 	}

@@ -27,8 +27,6 @@
 #include "backup_ram.h"
 #include "tof_ctrl.h"
 
-#define FLASH_OFFSET 0x08000000
-
 #define SECTOR_LEN (128*1024)
 #if (SECTOR_LEN%32 != 0)
 #error "SECTOR_LEN must be multiple of 32 (256 bits is the smallest writable block with standard means, with valid ECC)"

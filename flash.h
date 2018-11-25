@@ -22,6 +22,9 @@
 #ifndef _FLASHER_H
 #define _FLASHER_H
 
+#define FLASH_OFFSET 0x08000000
+
+
 void run_flasher();
 
 extern void refresh_settings(); // in stm32init.c

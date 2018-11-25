@@ -32,6 +32,8 @@
 #define TOF_NARROW_Y_START (8)
 #define TOF_NARROW_X_START (64)
 
+#include "tof_ctrl.h" // for N_SENSORS
+
 typedef struct __attribute__((packed))
 {
 	uint16_t start_pad[2];
@@ -84,6 +86,8 @@ void process_dcs(int16_t *out, epc_img_t *in);
 void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in);
 
 
+void copy_cal_to_shadow(int sid, int f);
+void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw);
 
 /*
 	TOF calibration data is the dominating source of flash storage - if we followed the Espros'
@@ -105,14 +109,11 @@ void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in);
 
 #define TOF_TBL_SEG_LEN 96
 
+#define COMP_AMBIENT_INTLEN_US 100 // it's important to follow this in both calibration and runtime
+
+// Bigger calibration dataset for important, accurate ranges
 typedef struct __attribute__((packed))
 {
-	uint32_t magic;
-	uint32_t chip_id;
-	uint32_t calib_timestamp;
-	uint32_t calib_info;
-	uint32_t reserved;
-
 	/*
 		Full distance LUTs for two frequencies (20MHz and 10MHz).
 		16 pixel groups
@@ -122,25 +123,11 @@ typedef struct __attribute__((packed))
 		lut_group_id (4 bit per pixel) tells which group the pixel belongs to.
 	
 	*/
-	uint8_t  wid_lut_group_ids[2][TOF_XS*TOF_YS/2];
-	uint16_t wid_luts[2][WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
+	uint8_t  wid_lut_group_ids[TOF_XS*TOF_YS/2];
+	uint16_t wid_luts[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
 
-	uint8_t  nar_lut_group_ids[2][TOF_XS_NARROW*TOF_YS_NARROW/2];
-	uint16_t nar_luts[2][NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
-
-	/*
-		6.66MHz and 5MHz are 2dcs aqcuisitions and compensated for offset only - they are imprecise anyway, and just need to be fast, and see far.
-
-		4 bits, unit: 32mm.
-		Base offset is reduced by (15/2)*32mm from what it actually is, so no need
-		to sign extend anything, just sum the 4-bit value <<5
-	*/
-
-	int16_t  wid_base_offset_2dcs[2];
-	uint8_t  wid_offsets_2dcs[2][TOF_XS*TOF_YS/2]; // 4 bits, unit 32mm
-
-	int16_t nar_base_offset_2dcs[2];
-	uint8_t  nar_offsets_2dcs[2][TOF_XS_NARROW*TOF_YS_NARROW/2]; // 4 bits, unit 32mm
+	uint8_t  nar_lut_group_ids[TOF_XS_NARROW*TOF_YS_NARROW/2];
+	uint16_t nar_luts[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
 
 
 	/*
@@ -160,12 +147,48 @@ typedef struct __attribute__((packed))
 		dcs20_fix = (dcs2-dcs0) - (bw*corr)>>4
 	*/
 
-	uint8_t amb_corr[4][TOF_XS*TOF_YS/2];
+	uint8_t amb_corr[TOF_XS*TOF_YS/2];
+} chipcal_hifreq_t;
+
+// Smaller calibration dataset for secondary, far-seeing ranges (that use 2dcs)
+typedef struct __attribute__((packed))
+{
+	/*
+		6.66MHz and 5MHz are 2dcs aqcuisitions and compensated for offset only - they are imprecise anyway, and just need to be fast, and see far.
+
+		4 bits, unit: 32mm.
+		Base offset is reduced by (15/2)*32mm from what it actually is, so no need
+		to sign extend anything, just sum the 4-bit value <<5
+	*/
+
+	int16_t  wid_base_offset_2dcs;
+	uint8_t  wid_offsets_2dcs[TOF_XS*TOF_YS/2]; // 4 bits, unit 32mm
+
+	int16_t nar_base_offset_2dcs;
+	uint8_t  nar_offsets_2dcs[TOF_XS_NARROW*TOF_YS_NARROW/2]; // 4 bits, unit 32mm
+
+	// Ambient correction works the same way as in hifreq_t
+	uint8_t amb_corr[TOF_XS*TOF_YS/2];
+
+} chipcal_lofreq_t;
+
+
+typedef struct __attribute__((packed))
+{
+	uint32_t magic;
+	uint32_t chip_id;
+	uint32_t calib_timestamp;
+	uint32_t calib_info;
+	uint32_t reserved;
+
+	chipcal_hifreq_t hif[2];
+	chipcal_lofreq_t lof[2];
 
 	/*
-		Temperature correction table.
+		No temperature correction table at this time.
 		To do. Let's see if we need any! The fine dll scheme works really well, and needs no
-		processing. We may add some per-pixel thingies for finetuning.
+		processing. We may add some per-pixel thingies for finetuning later, to support extra-accuracy
+		sensors individually characterized for temperature shifts during calibration.
 	*/
 
 	// Calibration temperature
@@ -173,22 +196,19 @@ typedef struct __attribute__((packed))
 	int16_t zerofine_temp; // in 0.1 degC
 	int32_t fine_steps_per_temp[4]; // Required fine-DLL shift is ((zerofine_temp-latest_temp)*fine_steps_per_temp[freq])>>8
 
+	/*
+		Optical calibration for a sensor.
 
-} tof_chip_calib_t;
+		Calibration is fixed for a single rotation of the sensor. For different rotations, the data itself needs to be rotated.
+		This way, a lot of runtime calculation is saved. The obvious limitation is that the sensors cannot be installed in
+		rotating arms, etc. Rotating a sensor requires calibration data update (which can be made a quick and simple operation,
+		but still comparable to firmware update.)
 
+		If really needed, this can be worked around later by writing a runtime conversion on the calib data. It's not impossible
+		to make it fast enough.
 
-/*
-	Optical calibration for a sensor.
+	*/
 
-	Calibration is fixed for a single rotation of the sensor. For different rotations, the data itself needs to be rotated.
-	This way, a lot of runtime calculation is saved. The obvious limitation is that the sensors cannot be installed in
-	rotating arms, etc. Rotating a sensor requires calibration data update (which can be made a quick and simple operation,
-	but still comparable to firmware update.)
-
-*/
-
-typedef struct __attribute__((packed))
-{
 	/*
 		Angles the pixels point at.
 
@@ -205,8 +225,8 @@ typedef struct __attribute__((packed))
 		for it right now - with 16-bit range, the resolution is about 0.005 degrees.
 	*/
 
-	int16_t perpix_ver_angs[TOF_XS*TOF_YS];
-	int16_t perpix_hor_angs[TOF_XS*TOF_YS];
+	int16_t perpix_ver_angs[TOF_XS*TOF_YS/4];
+	int16_t perpix_hor_angs[TOF_XS*TOF_YS/4];
 
 	/*
 		TODO:
@@ -217,14 +237,9 @@ typedef struct __attribute__((packed))
 	*/
 
 
-} tof_optical_calib_t;
-
-
-typedef struct __attribute__((packed))
-{
-	tof_chip_calib_t    chip_calib_at_freq[2];
-	tof_optical_calib_t optical_calib;
 } tof_calib_t;
 
+#define TOFCAL_SIZE 157284
+extern const tof_calib_t * const tof_calibs[N_SENSORS];
 
 

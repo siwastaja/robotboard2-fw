@@ -76,3 +76,7 @@ int32_t epc_read_temperature(int idx);
 extern const uint8_t sensors_in_use[N_SENSORS];
 
 void rgb_update(int bright, uint8_t r, uint8_t g, uint8_t b);
+
+
+#define INTUS(x_) (((x_)*10)/6)
+

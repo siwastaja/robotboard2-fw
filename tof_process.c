@@ -8,26 +8,70 @@
 #include "tof_table.h"
 #include "misc.h"
 
+#include "own_std.h"
+
+#include "flash.h" // for offset address
+
+#define FLASH_SENSOR0  (FLASH_OFFSET + (0*8+2)*128*1024)  // bank1 sector2
+#define FLASH_SENSOR5  (FLASH_OFFSET + (1*8+2)*128*1024)  // bank2 sector2
+
+
+static char printbuf[128];
+
+// Sensors 0..4 fill flash bank1 sector2..sector7 completely
+// Sensors 5..9 fill flash bank2 sector2..sector7 completely
+const tof_calib_t * const tof_calibs[N_SENSORS] =
+{
+	(tof_calib_t*)(FLASH_SENSOR0 + 0*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR0 + 1*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR0 + 2*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR0 + 3*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR0 + 4*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR5 + 0*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR5 + 1*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR5 + 2*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR5 + 3*TOFCAL_SIZE),
+	(tof_calib_t*)(FLASH_SENSOR5 + 4*TOFCAL_SIZE)
+};
+
 // Transferred from flash by DMA. Can share the same memory, used alternately
 // For once, I'm using union for what is was originally meant in the C standard!! :).
 union
 {
-	uint16_t wid[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
-	uint16_t nar[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
-} shadow_luts;
+	chipcal_hifreq_t hif;
+	chipcal_lofreq_t lof;
+} shadow_luts __attribute__((section(".dtcm_bss")));
+
+// To be replaced with DMA
+void copy_cal_to_shadow(int sid, int f)
+{
+	if(f<0 || f>3) error(123);
+	if(f<2)
+	{
+//		DBG_PR_VAR_U32_HEX((uint32_t)&tof_calibs[sid]->hif[f]);
+//		DBG_PR_VAR_U32_HEX((uint32_t)&shadow_luts.hif);
+//		DBG_PR_VAR_U32((uint32_t)sizeof tof_calibs[0]->hif[0]);
+		memcpy(&shadow_luts.hif, &tof_calibs[sid]->hif[f], sizeof shadow_luts.hif);
+	}
+	else
+	{
+		memcpy(&shadow_luts.lof, &tof_calibs[sid]->lof[f-2], sizeof shadow_luts.lof);
+	}
+}
 
 /*
-	lookup_dist_<wid/nar>_4dcs:
+	lookup_dist:
 	Gives the complete precalculated distance which includes full non-linearity and offset calibration.
 	Inputs: g = pixel group index, dcs3-dcs1, and dcs2-dcs0.
 	
 
-	Separate function needed for wide/narrow lookup, they need to look at a different types of tables because
-	N_PIXGROUP is different.
+	beam must be compile-time constant to optimize out. This "if" thing is needed for wide/narrow lookup, they need to look at
+	a different types of tables because N_PIXGROUP is different.
 */
 
-static inline uint16_t lookup_dist_wid_4dcs(int g, int16_t d31, int16_t d20) __attribute__((always_inline));
-static inline uint16_t lookup_dist_wid_4dcs(int g, int16_t d31, int16_t d20)
+// beam must be compile-time constants to optimize out
+static inline uint16_t lookup_dist(int beam, int g, int16_t d31, int16_t d20) __attribute__((always_inline));
+static inline uint16_t lookup_dist(int beam, int g, int16_t d31, int16_t d20)
 {
 	int s;
 	int i;
@@ -62,47 +106,12 @@ static inline uint16_t lookup_dist_wid_4dcs(int g, int16_t d31, int16_t d20)
 
 	}
 
-	return shadow_luts.wid[g][s][i];
-}
-
-static inline uint16_t lookup_dist_nar_4dcs(int g, int16_t d31, int16_t d20) __attribute__((always_inline));
-static inline uint16_t lookup_dist_nar_4dcs(int g, int16_t d31, int16_t d20)
-{
-	int s;
-	int i;
-	if(d31 >= 0)
-	{
-		if(d20 >= 0)
-		{
-			if(d31 > d20) {s=5; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
-			else          {s=4; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
-		}
-		else
-		{
-			d20 *= -1;
-			if(d31 > d20) {s=6; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
-			else          {s=7; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
-		}		
-	}
+	if(beam == 0)
+		return shadow_luts.hif.wid_luts[g][s][i];
 	else
-	{
-		d31 *= -1;
-		if(d20 >= 0)
-		{
-			if(d31 > d20) {s=2; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
-			else          {s=3; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
-		}
-		else
-		{
-			d20 *= -1;
-			if(d31 > d20) {s=1; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
-			else          {s=0; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
-		}		
-
-	}
-
-	return shadow_luts.nar[g][s][i];
+		return shadow_luts.hif.nar_luts[g][s][i];
 }
+
 
 
 void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
@@ -115,6 +124,73 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 		else
 			out = long_in[i]>>1;
 		ampl_out[i] = out;
+	}
+}
+
+
+#define FAST_APPROX_AMPLITUDE
+//#define DO_AMB_CORR
+
+void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw) __attribute__((section(".text_itcm")));
+void compensated_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bw)
+{
+	for(int i=0; i < TOF_XS*TOF_YS; i++)
+	{
+		uint16_t dist;
+		int ampl;
+
+		int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs2 = ((in->dcs[2].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs3 = ((in->dcs[3].img[i]&0b0011111111111100)>>2)-2048;
+
+		if(dcs0 < -2047 || dcs0 > 2046 || dcs1 < -2047 || dcs1 > 2046 || dcs2 < -2047 || dcs2 > 2046 || dcs3 < -2047 || dcs3 > 2046)
+		{
+			ampl = 255;
+			dist = 0;
+		}
+		else
+		{
+			int16_t dcs31 = dcs3-dcs1;
+			int16_t dcs20 = dcs2-dcs0;
+
+			#ifdef DO_AMB_CORR
+			int16_t bw = ((bw->img[i]&0b0011111111111100)>>2)-2048;
+			if(bw<0) bw=0;
+			int corr_factor;
+			if(!(i&1)) // even
+				corr_factor = shadow_luts.hif.amb_corr[i/2] & 0x0f;
+			else
+				corr_factor = shadow_luts.hif.amb_corr[i/2]>>4;
+			int16_t comp = (bw*corr_factor)>>4;
+			dcs31 -= comp;
+			dcs20 -= comp;
+			#endif
+
+
+			#ifdef FAST_APPROX_AMPLITUDE
+				ampl = (abso(dcs20)+abso(dcs31))/30; if(ampl > 255) ampl = 255;
+			#else
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/23;
+			#endif
+
+			if(ampl<3)
+			{
+				dist = 65534;
+			}
+			else
+			{
+				int pixgroup;
+				if(!(i&1)) // even
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
+				else
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
+
+				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+			}
+		}
+		ampl_out[i] = ampl;
+		dist_out[i] = dist;
 	}
 }
 
