@@ -18,8 +18,8 @@
 #define MC1_DIS_GATE() LO(GPIOI,4)
 
 // Read hall sensor signals HALLC,HALLB,HALLA and concatenate to a 3-bit value, to index a table
-#define MC0_HALL_CBA() ( (GPIOD->IDR & (0b11<<14))>>14) | (GPIOG->IDR & (1<<2)) )
-#define MC1_HALL_CBA() ( (GPIOE->IDR & (0b11<<5))>>5) | ((GPIOP->IDR & (1<<8))>>6) )
+#define MC0_HALL_CBA() ( ((GPIOD->IDR & (0b11<<14))>>14) | (GPIOG->IDR & (1<<2)) )
+#define MC1_HALL_CBA() ( ((GPIOE->IDR & (0b11<<5))>>5)   | ((GPIOI->IDR & (1<<8))>>6) )
 
 #define DLED_ON() {}
 
@@ -30,6 +30,7 @@ int timing_shift = 5000*65536; // hall sensors are not exactly where you could t
 
 volatile int precise_curr_lim; // if exceeded, the duty cycle multiplier is kept (not increased like normally)
 volatile int higher_curr_lim;  // if exceeded, the duty cycle multiplier is lowered
+volatile int highest_curr_lim;
 
 /*
 	three adjacent hall io pins (active low) form a 3-bit number which can be used to index hall_loc table,
@@ -46,10 +47,23 @@ const int hall_loc[8] =
  2, // 110
  -1  // 111  ERROR
 };
-
+/*
+{
+ -1, // 000  ERROR
+ 1, // 001
+ 3, // 010
+ 2, // 011
+ 5, // 100
+ 0, // 101  Middle hall active - we'll call this zero position
+ 4, // 110
+ -1  // 111  ERROR
+};
+*/
 #define PH120SHIFT (1431655765UL)  // 120 deg shift between the phases in the 32-bit range.
 #define PH90SHIFT (1073741824UL)   // 90 deg shift between the phases in the 32-bit range.
+#define PH60SHIFT (715827882UL) 
 #define PH45SHIFT (PH90SHIFT/2)
+#define PH30SHIFT (357913941UL) 
 
 const int base_hall_aims[6] =
 {
@@ -91,24 +105,6 @@ const int sine[256] =
 };
 
 
-/*
-	set_curr_lim sets the ADC based normal current limit, and also the protection limit.
-	The protection limit is set considerably higher so that it should never be hit if the ADC-based
-	works as it should.
-*/
-
-// 1024 equals 3V3; after gain=40, it's 82.5mV; with 1mOhm, it's 82.5A.
-// i.e., 81mA per unit.
-// 1024 equals 3V3; after gain=40, it's 82.5mV; with 1.5mOhm, it's 55.0A.
-// i.e., 55mA per unit.
-
-/*
-#ifdef PCB1A
-#define CUR_LIM_DIV 81
-#endif
-#ifdef PCB1B
-#define CUR_LIM_DIV 55
-#endif
 
 void set_curr_lim(int ma)
 {
@@ -119,33 +115,40 @@ void set_curr_lim(int ma)
 
 	prev_val = ma;
 
-	if(ma < 0 || ma > 25000)
-		ma = 0;
+	if(ma < 0 || ma > 20000)
+		error(124);
 
-	int lim = (7*ma)/(8*CUR_LIM_DIV);
-	int hilim = (6*lim)/5;
-	__disable_irq();
+	int lim = (7*ma)/8+200;
+	int hilim = (6*lim)/5+500;
+	int highestlim = (3*lim)/2+2000;
+
+	if(lim > 30000) lim = 30000;
+	if(hilim > 30000) hilim = 30000;
+	if(highestlim > 30000) highestlim = 30000;
+
+	DIS_IRQ();
 	precise_curr_lim = lim;
 	higher_curr_lim = hilim;
-	__enable_irq();
-
-	// Protection limit set at 1.25x soft limit + 2A constant extra.
-	set_prot_lim(((ma*5)>>2)+2000);
+	highest_curr_lim = highestlim;
+	ENA_IRQ();
 }
-*/
 
-static volatile uint8_t pid_i_max = 30;
-static volatile uint8_t pid_feedfwd = 30;
-static volatile uint8_t pid_p = 80;
-static volatile uint8_t pid_i = 50;
-static volatile uint8_t pid_d = 50;
 
+static volatile uint32_t pid_i_max = 1000;
+static volatile uint8_t pid_ff = 0;
+static volatile uint8_t pid_p = 0;
+static volatile uint8_t pid_i = 0;
+static volatile uint8_t pid_d = 0;
+
+
+volatile int32_t currlim_mult_flt;
+volatile int32_t curr_info_ma[2];
 #define TRACE_LEN 8
 int trace_at = 0;
 volatile int ib_trace[TRACE_LEN], ic_trace[TRACE_LEN];
 
 #define ADC_MID 8192
-#define ADC_CURR_SAFETY_LIMIT 7000
+#define ADC_CURR_SAFETY_LIMIT 7500
 
 #if ADC_CURR_SAFETY_LIMIT > (ADC_MID-2)
 #error Recheck ADC_CURR_SAFETY_LIMIT
@@ -156,12 +159,58 @@ volatile int ib_trace[TRACE_LEN], ic_trace[TRACE_LEN];
 // --> multiplier = 4.0283
 #define MULT_ADC_TO_MA  4
 
-int32_t bldc_pos[2];
+#define MAX_MULT (200*256)
+#define MIN_MULT (-200*256)
+#define MIN_MULT_OFFSET 8 // no point in outputting extremely low amplitudes
+#define CURRLIM_RATE1  200
+#define CURRLIM_RATE2    2
+
+#define ERR_SAT 20
+
+#define FF_SHIFT 0
+#define P_SHIFT 0
+#define I_SHIFT 3
+#define D_SHIFT 0
+#define IMAX_SHIFT 0
+
+volatile int32_t pos_set[2];
+volatile int32_t bldc_pos[2];
+volatile int32_t ok_cnt[2];
+
+volatile int dbg_mult;
+volatile int32_t pid_int_info;
+
+volatile int run[2] = {0};
+volatile int go = 0;
+void bldc_1khz()
+{
+	static int cnt=0;
+	cnt++;
+	if(cnt > 200)
+	{
+		cnt = 0;
+		if(go == 1)
+		{
+			pos_set[0]++;
+			pos_set[1]++;
+		}
+		else if(go == 2)
+		{
+			pos_set[0]--;
+			pos_set[1]--;
+		}
+
+	}
+
+}
+
+volatile int wanna_stop[2] = {0};
+
+#define STOP_LEN 10000
 
 void bldc0_inthandler() __attribute__((section(".text_itcm")));
 void bldc0_inthandler()
 {
-	LED_ON();
 	TIM1->SR = 0; // Clear interrupt flags
 	__DSB();
 
@@ -174,114 +223,32 @@ void bldc0_inthandler()
 		error(16);
 	}
 
-	ib_trace[trace_at] = ib;
-	ic_trace[trace_at] = ic;
-	trace_at++;
-	if(trace_at >= TRACE_LEN)
-		trace_at=0;
-
-
-#if 0
-
-
-
-
-
+//	ib_trace[trace_at] = ib;
+//	ic_trace[trace_at] = ic;
+//	trace_at++;
+//	if(trace_at >= TRACE_LEN)
+//		trace_at=0;
 
 
 	static int reverse = 0;
-	static int prev_reverse = 1;
 	static int mult = 0;
 	static int currlim_mult = 255;
-	static int32_t cnt = 0;
-	static int expected_next_hall_pos;
+	static uint32_t cnt = 0;
 	static int expected_fwd_hall_pos;  // for step counting only
 	static int expected_back_hall_pos; // for step counting only
-	static int32_t expected_next_hall_cnt;
-	static int cnt_at_prev_hall_valid = 0;
-	static int cnt_at_prev_hall;
+	static uint32_t cnt_at_prev_hall;
 	static int prev_hall_pos;
-	static int resync = 5;
-	static int prev_ferr = 0;
-	static int f = 0;
-	static int loc;
-	static int pid_f_set;
+	static int pid_set;
 	static int64_t pid_integral = 0;
+
+	static int pid_prev_err = 0;
+
+	static int stop_reverse = 0;
+	static int stop_state = 0;
+	static int stop_initial_hall_pos = 0;
 
 	int hall_pos = hall_loc[MC0_HALL_CBA()];
 	if(hall_pos == -1) hall_pos = prev_hall_pos;
-
-	if(pid_f_set < 0 ) reverse = 1; else reverse = 0;
-	if(reverse != prev_reverse)
-	{
-		resync = 2;
-		f = 0;
-		pid_integral = 0;
-	}
-	prev_reverse = reverse;
-
-/*
-	Note: this code did sine interpolation earlier on. Now the relevant parts are commented out so it does
-	a simple 6-step: it's working more robustly at low speeds.
-*/
-
-	if(resync)
-	{
-		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
-		cnt_at_prev_hall_valid = 0;
-		expected_next_hall_cnt = cnt+22000;
-		f = 0;
-	}
-	else if(cnt_at_prev_hall_valid && hall_pos == prev_hall_pos) // We haven't advanced a step yet, do sine interpolation
-	{
-		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
-		// Interpolation freezes if the hall sync is not received on time.
-		if((cnt - expected_next_hall_cnt) < 0) // this comparison works with counter wrapping around.
-		{
-			// Sine interpolation hasn't advanced to the next hall sync point, run it
-//			if(reverse)
-//				loc -= f;
-//			else
-//				loc += f;
-		}
-		else // We are overdue: recalculate the freq.
-		{
-			f = (PH120SHIFT)  /  ((cnt-cnt_at_prev_hall));
-		}
-
-		// TODO: prev_error feedforward to frequency generation.
-	}
-	else if(hall_pos == expected_next_hall_pos) 
-	{
-		// We have advanced one step in the right dirction - we can synchronize the sine phase, 
-		// and calculate a valid frequency from the delta time.
-		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
-
-		if(cnt_at_prev_hall_valid)
-		{
-//			f = (reverse?(-PH120SHIFT):(PH120SHIFT))  /  ((cnt-cnt_at_prev_hall));
-			f = (PH120SHIFT)  /  ((cnt-cnt_at_prev_hall));
-			expected_next_hall_cnt = cnt+(cnt-cnt_at_prev_hall);
-		}
-		else
-		{
-			f = 0;
-			expected_next_hall_cnt = cnt+22000; // at smallest possible freq, we'll wait for 0.5 sec for the next hall pulse.
-		}
-
-		cnt_at_prev_hall_valid = 1;
-		cnt_at_prev_hall = cnt;
-	}
-	else // We are lost - synchronize the phase to the current hall status
-	{
-		//lost_count++;
-		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
-		cnt_at_prev_hall_valid = 0;
-		expected_next_hall_cnt = cnt+22000;
-		f = 0;
-	}
-
-	if(resync) resync--;
 
 	if(hall_pos == expected_fwd_hall_pos)
 	{
@@ -294,75 +261,112 @@ void bldc0_inthandler()
 
 	prev_hall_pos = hall_pos;
 
-	expected_next_hall_pos = hall_pos;
-	if(!reverse) { expected_next_hall_pos++; if(expected_next_hall_pos > 5) expected_next_hall_pos = 0; }
-	else         { expected_next_hall_pos--; if(expected_next_hall_pos < 0) expected_next_hall_pos = 5; }
-
 	expected_fwd_hall_pos  = hall_pos+1; if(expected_fwd_hall_pos > 5) expected_fwd_hall_pos = 0;
 	expected_back_hall_pos = hall_pos-1; if(expected_back_hall_pos < 0) expected_back_hall_pos = 5;
+
+
+	int err = pos_set[0] - bldc_pos[0];
+
+	if(err < 0 ) reverse = 1; else reverse = 0;
+
+	static int32_t prev_pos_set;
+	if(run[0]==0 || prev_pos_set != pos_set[0])
+	{
+		pid_integral = 0;
+	}
+	prev_pos_set = pos_set[0];
+
+	if(err == 1 && stop_state == 0 && run[0] && wanna_stop[0])
+	{
+		stop_state = STOP_LEN;
+		stop_initial_hall_pos = hall_pos;
+		stop_reverse = 0;
+	}
+	else if(err == -1 && stop_state == 0 && run[0] && wanna_stop[0])
+	{
+		stop_state = STOP_LEN;
+		stop_initial_hall_pos = hall_pos;
+		stop_reverse = 1;
+	}
+
+
+	int loc;
+	int sin_mult;
+
+	if(stop_state == 0) // normal op
+	{
+		if(run[0] == 0)
+			sin_mult = 0;
+		else
+		{
+			if(!(cnt & 63))
+			{
+				if(err > ERR_SAT) err = ERR_SAT;
+				else if(err < -ERR_SAT) err = -ERR_SAT;
+
+				int derr = (err - pid_prev_err);
+				pid_prev_err = err;
+
+				pid_integral += err;
+
+				int64_t pid_i_max_extended = (int64_t)pid_i_max<<IMAX_SHIFT;
+				int64_t pid_i_min_extended = -1*pid_i_max_extended;
+				if(pid_integral > pid_i_max_extended) pid_integral = pid_i_max_extended;
+				else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
+
+				mult = (((int64_t)pid_ff*(int64_t)pid_set)>>FF_SHIFT) /* feedforward */
+					+ (((int64_t)pid_p*16*(int64_t)err)>>P_SHIFT) /* P */
+					+ (((int64_t)pid_i*(int64_t)pid_integral)>>I_SHIFT)  /* I */
+					+ (((int64_t)pid_d*16*(int64_t)derr)>>D_SHIFT); /* D */
+
+				dbg_mult = mult;
+
+				pid_int_info = pid_integral>>IMAX_SHIFT;
+
+			}
+
+
+			if(mult > MAX_MULT) mult = MAX_MULT;
+			else if(mult < MIN_MULT) mult = MIN_MULT;
+
+			sin_mult = mult>>8;
+
+			if(reverse) sin_mult *= -1;	
+
+			if(sin_mult < 0) sin_mult = 0;
+
+			if(sin_mult != 0)
+				sin_mult += MIN_MULT_OFFSET;
+
+		}
+		loc = base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT));
+
+	}
+	else
+	{
+		int32_t phshift = PH90SHIFT/STOP_LEN * (STOP_LEN-stop_state);
+		loc = base_hall_aims[stop_initial_hall_pos] + timing_shift + (stop_reverse?(-1*phshift):(phshift));
+		sin_mult = 90;
+		if(--stop_state == 0)
+			run[0] = 0;
+
+		if(err < -1 || err > 1)
+		{
+			sin_mult = 0;
+			stop_state = 0;
+		}
+	}
+
 
 	int idxa = (((uint32_t)loc)&0xff000000)>>24;
 	int idxb = (((uint32_t)loc+PH120SHIFT)&0xff000000)>>24;
 	int idxc = (((uint32_t)loc+2*PH120SHIFT)&0xff000000)>>24;
 
-	// Ramp the setpoint.
-	int next_pid_f_set = (speed_setpoint[0]*100);
-
-	if(next_pid_f_set > pid_f_set) pid_f_set+=256;
-	else if(next_pid_f_set < pid_f_set) pid_f_set-=256;
-	if((next_pid_f_set - pid_f_set) > -256 && (next_pid_f_set - pid_f_set) < 256) next_pid_f_set = pid_f_set;
-
-	int pid_f_meas = f>>3;
-	if(reverse) pid_f_meas *= -1;
-
-	int ferr;
-
-	ferr = pid_f_set - pid_f_meas;
-
-	measured_speed[0] = pid_f_meas>>8;
-
-	// Run the speed PID loop - not on every ISR cycle
-	if(!(cnt & 15))
-	{
-		int dferr = (ferr - prev_ferr);
-		prev_ferr = ferr;
-
-		pid_integral += ferr;
-
-		int64_t pid_i_max_extended = (int64_t)pid_i_max<<25;
-		int64_t pid_i_min_extended = -1*pid_i_max_extended;
-		if(pid_integral > pid_i_max_extended) pid_integral = pid_i_max_extended;
-		else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
-
-		mult = (((int64_t)pid_feedfwd*(int64_t)pid_f_set)>>10) /* feedforward */
-			+ (((int64_t)pid_p*(int64_t)ferr)>>9) /* P */
-			+ (((int64_t)pid_i*(int64_t)pid_integral)>>21)  /* I */
-			+ (((int64_t)pid_d*(int64_t)dferr)>>14); /* D */
-
-	}
-
-	
-	#define MAX_MULT (200*256)
-	#define MIN_MULT (-200*256)
-
-	if(mult > MAX_MULT) mult = MAX_MULT;
-	else if(mult < MIN_MULT) mult = MIN_MULT;
-
-	int sin_mult = mult>>8;
-
-	if(reverse) sin_mult *= -1;	
-
-	if(sin_mult < 0) sin_mult = 0;
-
-#define MIN_MULT_OFFSET 8 // no point in outputting extremely low amplitudes
-	if(sin_mult != 0)
-		sin_mult += MIN_MULT_OFFSET;
-
 
 	uint8_t m = (sin_mult * currlim_mult)>>8; // 254 max
-	TIM1->CCR1 = (PWM_MID) + ((m*sine[idxa])>>11); // sine: -32768..32767, times 254 max: multiplication result ranges +/- 4064
+	TIM1->CCR1 = (PWM_MID) + ((m*sine[idxc])>>11); // sine: -32768..32767, times 254 max: multiplication result ranges +/- 4064
 	TIM1->CCR2 = (PWM_MID) + ((m*sine[idxb])>>11);
-	TIM1->CCR3 = (PWM_MID) + ((m*sine[idxc])>>11);
+	TIM1->CCR3 = (PWM_MID) + ((m*sine[idxa])>>11);
 
 	cnt++;
 
@@ -380,21 +384,17 @@ void bldc0_inthandler()
 
 	int32_t current_ma = current*MULT_ADC_TO_MA;
 	int32_t filtered_current_ma = (current_flt>>8)*MULT_ADC_TO_MA;
-//	spi_tx_data.current = current_ma;
+	curr_info_ma[0] = filtered_current_ma;
 
-
-	if(OVERCURR()) // hard overcurrent, protection has acted, quickly ramp down the multiplier to avoid hitting it again
+	if(current_ma > highest_curr_lim)
 	{
-//		spi_tx_data.num_hard_limits++;
-		LED_ON(); led_short = 0;
-		currlim_mult-=40;
+		currlim_mult -= CURRLIM_RATE1;
 	}
-	else if(current > higher_curr_lim)
+	else if(current_ma > higher_curr_lim)
 	{
-		LED_ON(); led_short = 1;
-		currlim_mult-=2;
+		currlim_mult-= CURRLIM_RATE2;
 	}
-	else if(current_flt > precise_curr_lim)
+	else if(filtered_current_ma > precise_curr_lim)
 	{
 		// keep the currlim_mult
 	}
@@ -402,251 +402,171 @@ void bldc0_inthandler()
 		currlim_mult++;
 
 	if(currlim_mult < 5) currlim_mult = 5;
-
-	static int32_t currlim_mult_flt = 0;
-
-	currlim_mult_flt = ((currlim_mult<<8) + 63*currlim_mult_flt)>>6;
-
-//	spi_tx_data.cur_limit_mul = currlim_mult_flt>>8;
-
-
-
-
-
-#endif
-
-
-
-
-
-
-
-
-
-	LED_OFF();
 }
 
-void bldc_safety_shutdown() __attribute__((section(".text_itcm")));
-void bldc_safety_shutdown()
+void bldc1_inthandler() __attribute__((section(".text_itcm")));
+void bldc1_inthandler()
 {
-	MC0_DIS_GATE();
-	MC1_DIS_GATE();
+	TIM8->SR = 0; // Clear interrupt flags
+	__DSB();
 
-}
+	int ib = ADC_MID-adc1.s.mc1_imeasb;
+	int ic = ADC_MID-adc1.s.mc1_imeasc;
 
-
-void bldc_test()
-{
-//	MC0_EN_GATE();
-//	MC1_EN_GATE();
-	init_cpu_profiler();
-
-//	TIM1->CCR3 = PWM_MID+400;
-
-	while(1)
+	if(ib < -ADC_CURR_SAFETY_LIMIT || ib > ADC_CURR_SAFETY_LIMIT || ic < -ADC_CURR_SAFETY_LIMIT || ic > ADC_CURR_SAFETY_LIMIT)
 	{
-		profile_cpu_blocking_20ms();
-		for(int i=0; i<TRACE_LEN; i++)
-		{
-			DBG_PR_VAR_I16(ib_trace[i]);
-			DBG_PR_VAR_I16(ic_trace[i]);
-		}
-		uart_print_string_blocking("\r\n");
-	
-		delay_ms(80);
+		MC1_DIS_GATE();
+		error(16);
 	}
-}
 
-#if 0
-void tim1_inthandler()
-{
+//	ib_trace[trace_at] = ib;
+//	ic_trace[trace_at] = ic;
+//	trace_at++;
+//	if(trace_at >= TRACE_LEN)
+//		trace_at=0;
+
+
 	static int reverse = 0;
-	static int prev_reverse = 1;
 	static int mult = 0;
 	static int currlim_mult = 255;
-	static int32_t cnt = 0;
-	static int expected_next_hall_pos;
+	static uint32_t cnt = 0;
 	static int expected_fwd_hall_pos;  // for step counting only
 	static int expected_back_hall_pos; // for step counting only
-	static int32_t expected_next_hall_cnt;
-	static int cnt_at_prev_hall_valid = 0;
-	static int cnt_at_prev_hall;
+	static uint32_t cnt_at_prev_hall;
 	static int prev_hall_pos;
-	static int resync = 5;
-	static int16_t pos_info;
-	static int prev_ferr = 0;
-	static int f = 0;
-	static int loc;
-	static int pid_f_set;
+	static int pid_set;
 	static int64_t pid_integral = 0;
 
-	DLED_ON();
-	TIM1->SR = 0; // Clear interrupt flags
+	static int pid_prev_err = 0;
+	static int stop_reverse = 0;
+	static int stop_state = 0;
+	static int stop_initial_hall_pos = 0;
 
-	int hall_pos = hall_loc[HALL_ABC()];
+	int hall_pos = hall_loc[MC1_HALL_CBA()];
 	if(hall_pos == -1) hall_pos = prev_hall_pos;
-
-	if(pid_f_set < 0 ) reverse = 1; else reverse = 0;
-	if(reverse != prev_reverse)
-	{
-		resync = 2;
-		f = 0;
-		pid_integral = 0;
-	}
-	prev_reverse = reverse;
-
-/*
-	Note: this code did sine interpolation earlier on. Now the relevant parts are commented out so it does
-	a simple 6-step: it's working more robustly at low speeds.
-*/
-
-	if(resync)
-	{
-		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
-		cnt_at_prev_hall_valid = 0;
-		expected_next_hall_cnt = cnt+22000;
-		f = 0;
-	}
-	else if(cnt_at_prev_hall_valid && hall_pos == prev_hall_pos) // We haven't advanced a step yet, do sine interpolation
-	{
-		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
-		// Interpolation freezes if the hall sync is not received on time.
-		if((cnt - expected_next_hall_cnt) < 0) // this comparison works with counter wrapping around.
-		{
-			// Sine interpolation hasn't advanced to the next hall sync point, run it
-//			if(reverse)
-//				loc -= f;
-//			else
-//				loc += f;
-		}
-		else // We are overdue: recalculate the freq.
-		{
-			f = (PH120SHIFT)  /  ((cnt-cnt_at_prev_hall));
-		}
-
-		// TODO: prev_error feedforward to frequency generation.
-	}
-	else if(hall_pos == expected_next_hall_pos) 
-	{
-		// We have advanced one step in the right dirction - we can synchronize the sine phase, 
-		// and calculate a valid frequency from the delta time.
-		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
-
-		if(cnt_at_prev_hall_valid)
-		{
-//			f = (reverse?(-PH120SHIFT):(PH120SHIFT))  /  ((cnt-cnt_at_prev_hall));
-			f = (PH120SHIFT)  /  ((cnt-cnt_at_prev_hall));
-			expected_next_hall_cnt = cnt+(cnt-cnt_at_prev_hall);
-		}
-		else
-		{
-			f = 0;
-			expected_next_hall_cnt = cnt+22000; // at smallest possible freq, we'll wait for 0.5 sec for the next hall pulse.
-		}
-
-		cnt_at_prev_hall_valid = 1;
-		cnt_at_prev_hall = cnt;
-	}
-	else // We are lost - synchronize the phase to the current hall status
-	{
-		//lost_count++;
-		loc = (base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT)));
-		cnt_at_prev_hall_valid = 0;
-		expected_next_hall_cnt = cnt+22000;
-		f = 0;
-	}
-
-	if(resync) resync--;
 
 	if(hall_pos == expected_fwd_hall_pos)
 	{
-		pos_info++;
-//		spi_tx_data.pos = pos_info;
+		bldc_pos[1]++;
 	}
 	else if(hall_pos == expected_back_hall_pos)
 	{
-		pos_info--;
-//		spi_tx_data.pos = pos_info;
+		bldc_pos[1]--;
 	}
-
 
 	prev_hall_pos = hall_pos;
 
-	expected_next_hall_pos = hall_pos;
-	if(!reverse) { expected_next_hall_pos++; if(expected_next_hall_pos > 5) expected_next_hall_pos = 0; }
-	else         { expected_next_hall_pos--; if(expected_next_hall_pos < 0) expected_next_hall_pos = 5; }
-
 	expected_fwd_hall_pos  = hall_pos+1; if(expected_fwd_hall_pos > 5) expected_fwd_hall_pos = 0;
 	expected_back_hall_pos = hall_pos-1; if(expected_back_hall_pos < 0) expected_back_hall_pos = 5;
+
+
+	int err = pos_set[1] - bldc_pos[1];
+
+	if(err < 0 ) reverse = 1; else reverse = 0;
+
+	static int32_t prev_pos_set;
+	if(run[1]==0 || prev_pos_set != pos_set[1])
+	{
+		pid_integral = 0;
+	}
+	prev_pos_set = pos_set[1];
+
+	if(err == 1 && stop_state == 0 && run[1] && wanna_stop[1])
+	{
+		stop_state = STOP_LEN;
+		stop_initial_hall_pos = hall_pos;
+		stop_reverse = 0;
+	}
+	else if(err == -1 && stop_state == 0 && run[1] && wanna_stop[1])
+	{
+		stop_state = STOP_LEN;
+		stop_initial_hall_pos = hall_pos;
+		stop_reverse = 1;
+	}
+
+
+	int loc;
+	int sin_mult;
+
+	if(stop_state == 0) // normal op
+	{
+		if(run[1] == 0)
+			sin_mult = 0;
+		else
+		{
+			if(!(cnt & 63))
+			{
+				if(err > ERR_SAT) err = ERR_SAT;
+				else if(err < -ERR_SAT) err = -ERR_SAT;
+
+				int derr = (err - pid_prev_err);
+				pid_prev_err = err;
+
+				pid_integral += err;
+
+				int64_t pid_i_max_extended = (int64_t)pid_i_max<<IMAX_SHIFT;
+				int64_t pid_i_min_extended = -1*pid_i_max_extended;
+				if(pid_integral > pid_i_max_extended) pid_integral = pid_i_max_extended;
+				else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
+
+				mult = (((int64_t)pid_ff*(int64_t)pid_set)>>FF_SHIFT) /* feedforward */
+					+ (((int64_t)pid_p*16*(int64_t)err)>>P_SHIFT) /* P */
+					+ (((int64_t)pid_i*(int64_t)pid_integral)>>I_SHIFT)  /* I */
+					+ (((int64_t)pid_d*16*(int64_t)derr)>>D_SHIFT); /* D */
+
+				dbg_mult = mult;
+
+				pid_int_info = pid_integral>>IMAX_SHIFT;
+
+			}
+
+
+			if(mult > MAX_MULT) mult = MAX_MULT;
+			else if(mult < MIN_MULT) mult = MIN_MULT;
+
+			sin_mult = mult>>8;
+
+			if(reverse) sin_mult *= -1;	
+
+			if(sin_mult < 0) sin_mult = 0;
+
+			if(sin_mult != 0)
+				sin_mult += MIN_MULT_OFFSET;
+
+		}
+		loc = base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT));
+
+	}
+	else
+	{
+		int32_t phshift = PH90SHIFT/STOP_LEN * (STOP_LEN-stop_state);
+		loc = base_hall_aims[stop_initial_hall_pos] + timing_shift + (stop_reverse?(-1*phshift):(phshift));
+		sin_mult = 90;
+		if(--stop_state == 0)
+			run[1] = 0;
+
+		if(err < -1 || err > 1)
+		{
+			sin_mult = 0;
+			stop_state = 0;
+		}
+	}
+
 
 	int idxa = (((uint32_t)loc)&0xff000000)>>24;
 	int idxb = (((uint32_t)loc+PH120SHIFT)&0xff000000)>>24;
 	int idxc = (((uint32_t)loc+2*PH120SHIFT)&0xff000000)>>24;
 
-	// Ramp the setpoint.
-	int next_pid_f_set = (spi_rx_data.speed*100);
-
-	if(next_pid_f_set > pid_f_set) pid_f_set+=256;
-	else if(next_pid_f_set < pid_f_set) pid_f_set-=256;
-	if((next_pid_f_set - pid_f_set) > -256 && (next_pid_f_set - pid_f_set) < 256) next_pid_f_set = pid_f_set;
-
-	int pid_f_meas = f>>3;
-	if(reverse) pid_f_meas *= -1;
-
-	int ferr;
-
-	ferr = pid_f_set - pid_f_meas;
-
-//	spi_tx_data.speed = pid_f_meas>>8;
-
-	// Run the speed PID loop - not on every ISR cycle
-	if(!(cnt & 15))
-	{
-		int dferr = (ferr - prev_ferr);
-		prev_ferr = ferr;
-
-		pid_integral += ferr;
-
-		int64_t pid_i_max_extended = (int64_t)pid_i_max<<25;
-		int64_t pid_i_min_extended = -1*pid_i_max_extended;
-		if(pid_integral > pid_i_max_extended) pid_integral = pid_i_max_extended;
-		else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
-
-		mult = (((int64_t)pid_feedfwd*(int64_t)pid_f_set)>>10) /* feedforward */
-			+ (((int64_t)pid_p*(int64_t)ferr)>>9) /* P */
-			+ (((int64_t)pid_i*(int64_t)pid_integral)>>21)  /* I */
-			+ (((int64_t)pid_d*(int64_t)dferr)>>14); /* D */
-
-	}
-
-	
-	#define MAX_MULT (200*256)
-	#define MIN_MULT (-200*256)
-
-	if(mult > MAX_MULT) mult = MAX_MULT;
-	else if(mult < MIN_MULT) mult = MIN_MULT;
-
-	int sin_mult = mult>>8;
-
-	if(reverse) sin_mult *= -1;	
-
-	if(sin_mult < 0) sin_mult = 0;
-
-#define MIN_MULT_OFFSET 8 // no point in outputting extremely low amplitudes
-	if(sin_mult != 0)
-		sin_mult += MIN_MULT_OFFSET;
-
 
 	uint8_t m = (sin_mult * currlim_mult)>>8; // 254 max
-	TIM1->CCR1 = (PWM_MID) + ((m*sine[idxa])>>14); // 4 to 1019. 
-	TIM1->CCR2 = (PWM_MID) + ((m*sine[idxb])>>14);
-	TIM1->CCR3 = (PWM_MID) + ((m*sine[idxc])>>14);
+	TIM8->CCR1 = (PWM_MID) + ((m*sine[idxc])>>11); // sine: -32768..32767, times 254 max: multiplication result ranges +/- 4064
+	TIM8->CCR2 = (PWM_MID) + ((m*sine[idxb])>>11);
+	TIM8->CCR3 = (PWM_MID) + ((m*sine[idxa])>>11);
 
 	cnt++;
 
-	int current_b = latest_adc[0].cur_b-dccal_b;
-	int current_c = latest_adc[0].cur_c-dccal_c;
-
+	int current_b = ib;
+	int current_c = ic;
 	if(current_b < 0) current_b *= -1;
 	if(current_c < 0) current_c *= -1;
 
@@ -657,23 +577,19 @@ void tim1_inthandler()
 
 	current_flt = ((current<<8) + 63*current_flt)>>6;
 
-	int32_t current_ma = (current_flt>>8)*CUR_LIM_DIV;
-	if(current_ma > 32767) current_ma = 32767; else if(current_ma < -32768) current_ma = -32768;
-//	spi_tx_data.current = current_ma;
+	int32_t current_ma = current*MULT_ADC_TO_MA;
+	int32_t filtered_current_ma = (current_flt>>8)*MULT_ADC_TO_MA;
+	curr_info_ma[1] = filtered_current_ma;
 
-
-	if(OVERCURR()) // hard overcurrent, protection has acted, quickly ramp down the multiplier to avoid hitting it again
+	if(current_ma > highest_curr_lim)
 	{
-//		spi_tx_data.num_hard_limits++;
-		LED_ON(); led_short = 0;
-		currlim_mult-=40;
+		currlim_mult -= CURRLIM_RATE1;
 	}
-	else if(current > higher_curr_lim)
+	else if(current_ma > higher_curr_lim)
 	{
-		LED_ON(); led_short = 1;
-		currlim_mult-=2;
+		currlim_mult-= CURRLIM_RATE2;
 	}
-	else if(current_flt > precise_curr_lim)
+	else if(filtered_current_ma > precise_curr_lim)
 	{
 		// keep the currlim_mult
 	}
@@ -681,17 +597,207 @@ void tim1_inthandler()
 		currlim_mult++;
 
 	if(currlim_mult < 5) currlim_mult = 5;
-
-	static int32_t currlim_mult_flt = 0;
-
-	currlim_mult_flt = ((currlim_mult<<8) + 63*currlim_mult_flt)>>6;
-
-//	spi_tx_data.cur_limit_mul = currlim_mult_flt>>8;
-
-
-	DLED_OFF();
 }
-#endif
+
+void bldc_safety_shutdown() __attribute__((section(".text_itcm")));
+void bldc_safety_shutdown()
+{
+	MC0_DIS_GATE();
+	MC1_DIS_GATE();
+
+}
+
+void dorun()
+{
+	run[0] = 1;
+	run[1] = 1;
+}
+
+void nonrun()
+{
+	run[0] = 0;
+	run[1] = 0;
+}
+
+void bldc_test()
+{
+//	MC0_EN_GATE();
+//	MC1_EN_GATE();
+	init_cpu_profiler();
+
+//	TIM1->CCR3 = PWM_MID+400;
+
+
+	set_curr_lim(20000);
+
+	while(1)
+	{
+		//profile_cpu_blocking_20ms();
+
+//		for(int i=0; i<TRACE_LEN; i++)
+//		{
+//			DBG_PR_VAR_I16(ib_trace[i]);
+//			DBG_PR_VAR_I16(ic_trace[i]);
+//		}
+
+//		int hall0 = hall_loc[MC0_HALL_CBA()];
+//		int hall1 = hall_loc[MC1_HALL_CBA()];
+
+//		DBG_PR_VAR_I16(hall0);
+//		DBG_PR_VAR_I16(hall1);
+		DBG_PR_VAR_I32(run[0]);
+		DBG_PR_VAR_I32(run[1]);
+		DBG_PR_VAR_I32(pos_set[0]);
+		DBG_PR_VAR_I32(bldc_pos[0]);
+		DBG_PR_VAR_I32(pos_set[1]);
+		DBG_PR_VAR_I32(bldc_pos[1]);
+
+
+		DBG_PR_VAR_I32(currlim_mult_flt>>8);
+		DBG_PR_VAR_I32(curr_info_ma[0]);
+		DBG_PR_VAR_I32(curr_info_ma[1]);
+		DBG_PR_VAR_I32(dbg_mult);
+//		DBG_PR_VAR_I32(timing_shift>>16);
+
+		DBG_PR_VAR_I32(pid_i_max);
+		DBG_PR_VAR_I32(pid_int_info);
+
+		DBG_PR_VAR_I32(pid_ff);
+		DBG_PR_VAR_I32(pid_p);
+		DBG_PR_VAR_I32(pid_i);
+		DBG_PR_VAR_I32(pid_d);
+
+		uart_print_string_blocking("\r\n");
+	
+		for(int i=0; i<20; i++)
+		{
+			uint8_t cmd = uart_input();
+
+			if(cmd == 'o')
+				MC0_EN_GATE();
+			else if(cmd == 'p')
+				MC0_DIS_GATE();
+			else if(cmd == 'O')
+				MC1_EN_GATE();
+			else if(cmd == 'P')
+				MC1_DIS_GATE();
+			else if(cmd == '1')
+			{
+				dorun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0]-=1;
+				pos_set[1]-=1;
+			}
+			else if(cmd == '2')
+			{
+				dorun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0]+=1;
+				pos_set[1]+=1;
+			}
+			else if(cmd == '!')
+			{
+				dorun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0]-=2;
+				pos_set[1]-=2;
+			}
+			else if(cmd == '\"')
+			{
+				dorun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0]+=2;
+				pos_set[1]+=2;
+			}
+			else if(cmd == '8')
+			{
+				dorun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0]+=1;
+				pos_set[1]-=1;
+			}
+			else if(cmd == '9')
+			{
+				dorun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0]-=1;
+				pos_set[1]+=1;
+			}
+			else if(cmd == '(')
+			{
+				dorun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0]+=2;
+				pos_set[1]-=2;
+			}
+			else if(cmd == ')')
+			{
+				dorun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0]-=2;
+				pos_set[1]+=2;
+			}
+			else if(cmd == '0')
+			{
+				nonrun();
+				ok_cnt[0] = 0;
+				ok_cnt[1] = 0;
+				pos_set[0] = bldc_pos[0];
+				pos_set[1] = bldc_pos[1];
+			}
+			else if(cmd == 'G')
+			{
+				go = 1;	dorun(); wanna_stop[0] = 0; wanna_stop[1] = 0;
+			}
+			else if(cmd == 'g')
+			{
+				go = 0; wanna_stop[0] = 1; wanna_stop[1] = 1;
+			}
+			else if(cmd == 'H')
+			{
+				go = 2;	dorun(); wanna_stop[0] = 0; wanna_stop[1] = 0;
+			}
+			else if(cmd == 'h')
+			{
+				go = 0; wanna_stop[0] = 1; wanna_stop[1] = 1;
+			}
+
+			else if(cmd == 'k')
+				timing_shift -= 50<<16;
+			else if(cmd == 'l')
+				timing_shift += 50<<16;
+			else if(cmd == 'a')
+				pid_p += 5;
+			else if(cmd == 'z')
+				pid_p -= 5;
+			else if(cmd == 's')
+				pid_i += 5;
+			else if(cmd == 'x')
+				pid_i -= 5;
+			else if(cmd == 'd')
+				pid_d += 5;
+			else if(cmd == 'c')
+				pid_d -= 5;
+			else if(cmd == 'f')
+				pid_ff += 5;
+			else if(cmd == 'v')
+				pid_ff -= 5;
+
+			delay_ms(5);
+
+		}		
+
+	}
+}
+
 
 /*
 
@@ -752,6 +858,15 @@ void init_bldc()
 	IO_TO_GPO(GPIOG,8);
 	IO_TO_GPO(GPIOI,4);
 
+	// Hall pins:
+	IO_TO_GPI(GPIOE,5);
+	IO_TO_GPI(GPIOE,6);
+	IO_TO_GPI(GPIOI,8);
+
+	IO_TO_GPI(GPIOD,14);
+	IO_TO_GPI(GPIOD,15);
+	IO_TO_GPI(GPIOG,2);
+
 	RCC->APB2ENR |= 0b11; // TIM8, TIM1
 	__DSB();
 
@@ -804,6 +919,8 @@ void init_bldc()
 	TIM8->CCR1 = PWM_MID;
 	TIM8->CCR2 = PWM_MID;
 	TIM8->CCR3 = PWM_MID;
+	TIM8->CCR4 = PWM_MAX-400; // Interrupt trigger 2us after ADC trigger
+
 	TIM8->BDTR = 1UL<<15 /*Main output enable*/ | 1UL /*21ns deadtime*/;
 	TIM8->EGR |= 1; // Generate Reinit+update
 //	TIM8->DIER = 1UL /*Update interrupt enable*/;
@@ -829,6 +946,11 @@ void init_bldc()
 	IO_ALTFUNC(GPIOI,7,  3);
 
 	TIM1->DIER = 1UL<<4 /*Compare 4 interrupt*/;
+	NVIC_SetPriority(TIM1_CC_IRQn, INTPRIO_BLDC);
 	NVIC_EnableIRQ(TIM1_CC_IRQn);
+
+	TIM8->DIER = 1UL<<4 /*Compare 4 interrupt*/;
+	NVIC_SetPriority(TIM8_CC_IRQn, INTPRIO_BLDC);
+	NVIC_EnableIRQ(TIM8_CC_IRQn);
 
 }
