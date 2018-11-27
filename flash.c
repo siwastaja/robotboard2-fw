@@ -477,8 +477,9 @@ void flasher()
 void run_flasher()
 {
 	// Maximize the TIM5 ISR priority so it will pre-empt our current context, which is the SPI interrupt where
-	// run_flasher() was called from.
+	// run_flasher() was called from (normally something fairly high; or when in error context, 1).
 	NVIC_SetPriority(TIM5_IRQn, 0);
+
 	extern int main_power_enabled;
 	main_power_enabled = 2;
 	SET_TIMEBASE_VECTOR_TO_KEEPON();

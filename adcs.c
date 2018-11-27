@@ -406,14 +406,11 @@ void init_adcs()
 
 	ADC1->IER = 1UL<<4 /*overrun*/ | AWD1IE | AWD2IE;
 
-	NVIC_SetPriority(ADC1_DMA_STREAM_IRQ, 1);
+	NVIC_SetPriority(ADC1_DMA_STREAM_IRQ, INTPRIO_ADC12);
 	NVIC_EnableIRQ(ADC1_DMA_STREAM_IRQ);
 
-	NVIC_SetPriority(ADC_IRQn, 1);
+	NVIC_SetPriority(ADC_IRQn, INTPRIO_ADC12);
 	NVIC_EnableIRQ(ADC_IRQn);
-
-//	NVIC_SetPriority(ADC2_DMA_STREAM_IRQ, 1);
-//	NVIC_EnableIRQ(ADC2_DMA_STREAM_IRQ);
 
 	
 
@@ -457,9 +454,9 @@ void init_adcs()
 
 	ADC3->IER = 1UL<<4 /*overrun*/;
 
-	NVIC_SetPriority(ADC3_IRQn, 1);
+	NVIC_SetPriority(ADC3_IRQn, INTPRIO_ADC3);
 	NVIC_EnableIRQ(ADC3_IRQn);
-	NVIC_SetPriority(ADC3_DMA_STREAM_IRQ, 1);
+	NVIC_SetPriority(ADC3_DMA_STREAM_IRQ, INTPRIO_ADC3);
 	NVIC_EnableIRQ(ADC3_DMA_STREAM_IRQ);
 
 

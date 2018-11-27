@@ -105,15 +105,15 @@ typedef struct
 static const sensor_mount_t sensor_mounts[N_SENSORS] =
 {          //      mountmode    x     y       hor ang           ver ang      height    
  /*0:                */ { 0,     0,     0, DEGTORAD(       0), DEGTORAD(  2),   0 },
- /*1:                */ { 1,   160,   140, DEGTORAD(      23), DEGTORAD(  2), 320 },
- /*2:                */ { 2,  -200,   230, DEGTORAD(   90-23), DEGTORAD(  2), 320 },
- /*3:                */ { 1,  -410,   230, DEGTORAD(      90), DEGTORAD(  2), 320 },
- /*4:                */ { 2,  -490,   140, DEGTORAD(  180-23), DEGTORAD(  2), 320 },
+ /*1:                */ { 2,   160,   140, DEGTORAD(      23), DEGTORAD(  2), 320 },
+ /*2:                */ { 1,  -200,   230, DEGTORAD(   90-23), DEGTORAD(  2), 320 },
+ /*3:                */ { 2,  -410,   230, DEGTORAD(      90), DEGTORAD(  2), 320 },
+ /*4:                */ { 1,  -490,   140, DEGTORAD(  180-23), DEGTORAD(  2), 320 },
  /*5:                */ { 2,  -490,     0, DEGTORAD(    180 ), DEGTORAD(  2), 320 },
- /*6:                */ { 1,  -490,  -140, DEGTORAD(  180+23), DEGTORAD(  2), 320 },
- /*7:                */ { 2,  -410,  -230, DEGTORAD(   270  ), DEGTORAD(  2), 320 },
- /*8:                */ { 1,  -200,  -230, DEGTORAD(  270+23), DEGTORAD(  2), 320 },
- /*9:                */ { 2,   160,  -140, DEGTORAD(  360-23), DEGTORAD(  2), 320 }
+ /*6:                */ { 2,  -490,  -140, DEGTORAD(  180+23), DEGTORAD(  2), 320 },
+ /*7:                */ { 1,  -410,  -230, DEGTORAD(   270  ), DEGTORAD(  2), 320 },
+ /*8:                */ { 2,  -200,  -230, DEGTORAD(  270+23), DEGTORAD(  2), 320 },
+ /*9:                */ { 1,   160,  -140, DEGTORAD(  360-23), DEGTORAD(  2), 320 }
 };
 
 
@@ -309,9 +309,10 @@ void run_cycle()
 	// pre
 	// 40	200
 	//  0	4000
-	int inttime_us = 4000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
-	if(sidx==1)
-		DBG_PR_VAR_I32(inttime_us);
+//	int inttime_us = 4000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
+	int inttime_us = 400;
+//	if(sidx==1)
+//		DBG_PR_VAR_I32(inttime_us);
 
 	epc_intlen(intlen_mults[0], INTUS(inttime_us)); block_epc_i2c(4);
 	epc_4dcs(); block_epc_i2c(4);
@@ -378,7 +379,7 @@ void run_cycle()
 
 	if(gen_data)
 	{
-		uart_print_string_blocking("\r\nPush!\r\n"); 
+//		uart_print_string_blocking("\r\nPush!\r\n"); 
 		tx_fifo_push();
 	}
 

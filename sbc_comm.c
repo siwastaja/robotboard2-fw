@@ -957,7 +957,7 @@ void init_sbc_comm()
 	// again very quickly to make a new transaction, we have the DMA up and running for that before the super small 4-byte
 	// FIFO in the SPI is exhausted.
 	// Both RASPI (EXTI10) and ODROID (EXTI15) happen to coincide to the same multiplexed EXTI interrupt group (15,14,13,12,11,10).
-	NVIC_SetPriority(EXTI15_10_IRQn, 2);
+	NVIC_SetPriority(EXTI15_10_IRQn, INTPRIO_SBC_COMM);
 	NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 }

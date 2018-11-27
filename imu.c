@@ -1652,11 +1652,11 @@ void init_imu()
 		AGM01_TX_DMAMUX();
 		AGM01_RX_DMAMUX();
 
-		NVIC_SetPriority(AGM01_TX_DMA_STREAM_IRQ, 1);
+		NVIC_SetPriority(AGM01_TX_DMA_STREAM_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM01_TX_DMA_STREAM_IRQ);
-		NVIC_SetPriority(AGM01_RX_DMA_STREAM_IRQ, 1);
+		NVIC_SetPriority(AGM01_RX_DMA_STREAM_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM01_RX_DMA_STREAM_IRQ);
-		NVIC_SetPriority(AGM01_SPI_IRQ, 1);
+		NVIC_SetPriority(AGM01_SPI_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM01_SPI_IRQ);
 
 	#endif
@@ -1697,11 +1697,11 @@ void init_imu()
 		AGM23_TX_DMAMUX();
 		AGM23_RX_DMAMUX();
 
-		NVIC_SetPriority(AGM23_TX_DMA_STREAM_IRQ, 1);
+		NVIC_SetPriority(AGM23_TX_DMA_STREAM_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM23_TX_DMA_STREAM_IRQ);
-		NVIC_SetPriority(AGM23_RX_DMA_STREAM_IRQ, 1);
+		NVIC_SetPriority(AGM23_RX_DMA_STREAM_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM23_RX_DMA_STREAM_IRQ);
-		NVIC_SetPriority(AGM23_SPI_IRQ, 1);
+		NVIC_SetPriority(AGM23_SPI_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM23_SPI_IRQ);
 
 
@@ -1747,11 +1747,11 @@ void init_imu()
 		AGM45_TX_DMAMUX();
 		AGM45_RX_DMAMUX();
 
-		NVIC_SetPriority(AGM45_TX_DMA_STREAM_IRQ, 1);
+		NVIC_SetPriority(AGM45_TX_DMA_STREAM_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM45_TX_DMA_STREAM_IRQ);
-		NVIC_SetPriority(AGM45_RX_DMA_STREAM_IRQ, 1);
+		NVIC_SetPriority(AGM45_RX_DMA_STREAM_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM45_RX_DMA_STREAM_IRQ);
-		NVIC_SetPriority(AGM45_SPI_IRQ, 1);
+		NVIC_SetPriority(AGM45_SPI_IRQ, INTPRIO_IMU_DMA);
 		NVIC_EnableIRQ(AGM45_SPI_IRQ);
 
 
@@ -1805,7 +1805,7 @@ void init_imu()
 	// Do not add delay here: init of the a&g flush the FIFOs, and we want to have the interrupt running right away
 	// (within about 2-3 ms) so that excess data does not accumulate.
 	// ISR considers excess data items in FIFOs as an error condition.
-	NVIC_SetPriority(TIM3_IRQn, 5);
+	NVIC_SetPriority(TIM3_IRQn, INTPRIO_IMU_TIMER);
 	NVIC_EnableIRQ(TIM3_IRQn);
 
 }

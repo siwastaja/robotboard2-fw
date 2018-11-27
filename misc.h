@@ -10,9 +10,6 @@ void delay_us(uint32_t i) __attribute__((section(".text_itcm")));
 void delay_tenth_us(uint32_t i) __attribute__((section(".text_itcm")));
 void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
 
-// Priority 0 is the highest quick-safety-shutdown level which won't be disabled for atomic operations.
-#define DIS_IRQ() do{__DSB(); __set_BASEPRI(1UL << (8 - __NVIC_PRIO_BITS)); __DSB();}while(0)
-#define ENA_IRQ() do{__DSB(); __set_BASEPRI(0UL); __DSB();}while(0)
 
 #define LED_ON()  do{HI(GPIOC, 13);}while(0)
 #define LED_OFF() do{LO(GPIOC, 13);}while(0)
@@ -59,4 +56,34 @@ void profile_cpu_blocking_20ms();
 
 #define sq(x) ((x)*(x))
 #define abso(x) ((x<0)?(-x):(x))
+
+
+
+
+// INTERRUPT PRIORITIES while running normally
+// Shutdown (safety or otherwise) may reorder these. The requirement is that all electrical systems are shut in safe state
+// (for example, gate drive signals down), and there is no way back to normal operation from such shutdown.
+
+// Priorities 0,1,2 are the highest quick-safety-shutdown level which won't be disabled for atomic operations.
+#define DIS_IRQ() do{__DSB(); __set_BASEPRI(3UL << (8 - __NVIC_PRIO_BITS)); __DSB();}while(0)
+#define ENA_IRQ() do{__DSB(); __set_BASEPRI(0UL); __DSB();}while(0)
+
+// These are never masked off. ISRs must not communicate using non-atomic things, since these cannot be disabled even temporarily:
+#define INTPRIO_PVD          0    // 3V3 dropping. Basically a quick shutdown handler. No recovery possible.
+#define INTPRIO_ADC12        2    // Must be the highest in operating (non-shutdown) system, super critical for charger!
+#define INTPRIO_ADC3         2
+
+// These may be masked off for atomic operations:
+#define INTPRIO_BLDC         3
+#define INTPRIO_SBC_COMM     4
+#define INTPRIO_IMU_DMA      5
+#define INTPRIO_IMU_TIMER    6
+#define INTPRIO_TOF_I2C      7
+
+// By having the timebase handler with the least priority, this means if any ISR in the system gets stuck, the timebase handler never gets
+// called, the power switch is not replenished and power is cut really quickly. A great watchdog. Note: in shutdown (error or safety), the priority
+// is changed so that power is kept on, to wait for the flasher command. Same is true for the SBC priority.
+#define INTPRIO_TIMEBASE     14
+
+
 

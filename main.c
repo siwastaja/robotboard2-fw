@@ -136,7 +136,9 @@ void error(int code)
 	__disable_irq();
 	SAFETY_SHUTDOWN();
 
-	NVIC_SetPriority(TIM5_IRQn, 0);
+	NVIC_SetPriority(TIM5_IRQn, 0); // to keep the power on
+	NVIC_SetPriority(EXTI15_10_IRQn, 1); // for detecting flasher magic code
+
 	SET_TIMEBASE_VECTOR_TO_KEEPON();
 
 	// Disable all interrupts, except the charge pump, and for reflashing, the SPI nCS handler
@@ -157,7 +159,6 @@ void error(int code)
 	uart_print_string_blocking("\r\nERROR "); o_itoa32(code, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 //	dump_scb();
 //	dump_stack();
-//	__enable_irq();
 
 	if(code < 1)
 	{
@@ -191,7 +192,7 @@ void error(int code)
 		}
 
 		delay_ms(1200);
-		volume=100;
+		volume=70;
 	}
 }
 
@@ -475,9 +476,6 @@ void main()
 		Priority 0 is the highest quick-safety-shutdown level which won't be disabled for atomic operations.
 	*/
 
-//	NVIC_SetPriority(PVD_IRQn, 0b0000);
-//	NVIC_EnableIRQ(PVD_IRQn);
-
 
 	PWR->CR1 |= 0b110UL<<5 /*Power Voltage Detector level: 2.85V*/ | 1UL<<4 /*PVD on*/;
 
@@ -487,7 +485,7 @@ void main()
 	EXTI->FTSR1 |= 1UL<<16; // Also get the falling edge interrupt
 	EXTI_D1->IMR1 |= 1UL<<16; // Enable CPU interrupt
 
-	NVIC_SetPriority(PVD_IRQn, 0);
+	NVIC_SetPriority(PVD_IRQn, INTPRIO_PVD);
 	NVIC_EnableIRQ(PVD_IRQn);
 
 	beep_blocking(100, 250, 1000);
@@ -528,9 +526,10 @@ void main()
 
 	delay_ms(10);
 
+	init_cpu_profiler();
 
-//	extern void bldc_test();
-//	bldc_test();
+	extern void bldc_test();
+	bldc_test();
 	tof_ctrl_init();
 //	sbc_comm_test();
 //	dump_scb();
@@ -553,8 +552,6 @@ void main()
 	#ifdef CALIBRATOR
 		init_tofcal_ambient();
 	#endif
-
-	init_cpu_profiler();
 
 	while(1)
 	{

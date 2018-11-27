@@ -325,9 +325,9 @@ void epc_i2c_init()
 
 	I2C1->CR1 |= 1UL; // Enable
 
-	NVIC_SetPriority(I2C1_EV_IRQn, 5);
+	NVIC_SetPriority(I2C1_EV_IRQn, INTPRIO_TOF_I2C);
 	NVIC_EnableIRQ(I2C1_EV_IRQn);
-	NVIC_SetPriority(RD_DMA_STREAM_IRQ, 5);
+	NVIC_SetPriority(RD_DMA_STREAM_IRQ, INTPRIO_TOF_I2C);
 	NVIC_EnableIRQ(RD_DMA_STREAM_IRQ);
 }
 
@@ -372,9 +372,6 @@ void dcmi_init()
 	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/ | 0UL<<4 /* Transfer complete interrupt: OFF!*/;
 
 	// NDTR is not set yet because it varies. Stream is not enabled yet.
-
-//	NVIC_SetPriority(DCMI_DMA_STREAM_IRQ, 10);
-//	NVIC_EnableIRQ(DCMI_DMA_STREAM_IRQ);
 
 	DCMI->CR |= 1UL<<0; // Start CAPTURE
 }

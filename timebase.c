@@ -63,6 +63,11 @@ void timebase_inthandler()
 
 		pwrswitch_1khz();
 	}
+	else if(cnt ==8)
+	{
+		extern void bldc_1khz();
+		bldc_1khz();
+	}
 	else if(cnt == 9)
 	{
 		charger_1khz();
@@ -110,7 +115,7 @@ void init_timebase()
 	TIM5->ARR = 20000-1; // 200MHz -> 10 kHz
 	TIM5->CR1 |= 1UL; // Enable
 
-	NVIC_SetPriority(TIM5_IRQn, 10);
+	NVIC_SetPriority(TIM5_IRQn, INTPRIO_TIMEBASE);
 	NVIC_EnableIRQ(TIM5_IRQn);
 }
 
