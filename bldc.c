@@ -5,6 +5,8 @@
 #include "misc.h"
 #include "adcs.h"
 
+#include "bldc.h"
+
 #define PWM_MAX 8192
 #define PWM_MID (PWM_MAX/2)
 #define MIN_FREQ 1*65536
@@ -134,11 +136,10 @@ void set_curr_lim(int ma)
 }
 
 
-static volatile uint32_t pid_i_max = 1000;
-static volatile uint8_t pid_ff = 0;
-static volatile uint8_t pid_p = 0;
-static volatile uint8_t pid_i = 0;
-static volatile uint8_t pid_d = 0;
+static uint32_t pid_i_max = 1000;
+static int32_t pid_p = 70;
+static int32_t pid_i = 70;
+static int32_t pid_d = 0;
 
 
 volatile int32_t currlim_mult_flt;
@@ -167,46 +168,26 @@ volatile int ib_trace[TRACE_LEN], ic_trace[TRACE_LEN];
 
 #define ERR_SAT 20
 
-#define FF_SHIFT 0
 #define P_SHIFT 0
 #define I_SHIFT 3
 #define D_SHIFT 0
-#define IMAX_SHIFT 0
 
-volatile int32_t pos_set[2];
-volatile int32_t bldc_pos[2];
-volatile int32_t ok_cnt[2];
+uint32_t bldc_pos_set[2];
+uint32_t bldc_pos[2];
 
 volatile int dbg_mult;
 volatile int32_t pid_int_info;
 
-volatile int run[2] = {0};
-volatile int go = 0;
+int run[2] = {0};
+int wanna_stop[2] = {0};
+
 void bldc_1khz()
 {
-	static int cnt=0;
-	cnt++;
-	if(cnt > 200)
-	{
-		cnt = 0;
-		if(go == 1)
-		{
-			pos_set[0]++;
-			pos_set[1]++;
-		}
-		else if(go == 2)
-		{
-			pos_set[0]--;
-			pos_set[1]--;
-		}
-
-	}
-
 }
 
-volatile int wanna_stop[2] = {0};
 
-#define STOP_LEN 10000
+#define STOP_LEN 6000 // approx half a second.
+#define STOP_THRESHOLD (SUBSTEPS*3/2)
 
 void bldc0_inthandler() __attribute__((section(".text_itcm")));
 void bldc0_inthandler()
@@ -252,11 +233,11 @@ void bldc0_inthandler()
 
 	if(hall_pos == expected_fwd_hall_pos)
 	{
-		bldc_pos[0]++;
+		bldc_pos[0]+=SUBSTEPS;
 	}
 	else if(hall_pos == expected_back_hall_pos)
 	{
-		bldc_pos[0]--;
+		bldc_pos[0]-=SUBSTEPS;
 	}
 
 	prev_hall_pos = hall_pos;
@@ -265,28 +246,23 @@ void bldc0_inthandler()
 	expected_back_hall_pos = hall_pos-1; if(expected_back_hall_pos < 0) expected_back_hall_pos = 5;
 
 
-	int err = pos_set[0] - bldc_pos[0];
+	int32_t err = bldc_pos_set[0] - bldc_pos[0];
 
 	if(err < 0 ) reverse = 1; else reverse = 0;
 
-	static int32_t prev_pos_set;
-	if(run[0]==0 || prev_pos_set != pos_set[0])
+	static uint32_t prev_bldc_pos_set;
+	if(run[0]==0 || prev_bldc_pos_set != bldc_pos_set[0])
 	{
 		pid_integral = 0;
 	}
-	prev_pos_set = pos_set[0];
+	prev_bldc_pos_set = bldc_pos_set[0];
 
-	if(err == 1 && stop_state == 0 && run[0] && wanna_stop[0])
+	if(stop_state == 0 && run[0] && wanna_stop[0] && err > -STOP_THRESHOLD && err < STOP_THRESHOLD)
 	{
-		stop_state = STOP_LEN;
+		stop_state = abso(err)*STOP_LEN/STOP_THRESHOLD;
+		if(stop_state < 1000) stop_state = 1000;
 		stop_initial_hall_pos = hall_pos;
-		stop_reverse = 0;
-	}
-	else if(err == -1 && stop_state == 0 && run[0] && wanna_stop[0])
-	{
-		stop_state = STOP_LEN;
-		stop_initial_hall_pos = hall_pos;
-		stop_reverse = 1;
+		stop_reverse = reverse;
 	}
 
 
@@ -309,19 +285,19 @@ void bldc0_inthandler()
 
 				pid_integral += err;
 
-				int64_t pid_i_max_extended = (int64_t)pid_i_max<<IMAX_SHIFT;
+				int64_t pid_i_max_extended = (int64_t)pid_i_max;
 				int64_t pid_i_min_extended = -1*pid_i_max_extended;
 				if(pid_integral > pid_i_max_extended) pid_integral = pid_i_max_extended;
 				else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
 
-				mult = (((int64_t)pid_ff*(int64_t)pid_set)>>FF_SHIFT) /* feedforward */
-					+ (((int64_t)pid_p*16*(int64_t)err)>>P_SHIFT) /* P */
+				mult = 
+					  (((int64_t)pid_p*16*(int64_t)err)>>P_SHIFT) /* P */
 					+ (((int64_t)pid_i*(int64_t)pid_integral)>>I_SHIFT)  /* I */
 					+ (((int64_t)pid_d*16*(int64_t)derr)>>D_SHIFT); /* D */
 
 				dbg_mult = mult;
 
-				pid_int_info = pid_integral>>IMAX_SHIFT;
+				pid_int_info = pid_integral;
 
 			}
 
@@ -346,7 +322,7 @@ void bldc0_inthandler()
 	{
 		int32_t phshift = PH90SHIFT/STOP_LEN * (STOP_LEN-stop_state);
 		loc = base_hall_aims[stop_initial_hall_pos] + timing_shift + (stop_reverse?(-1*phshift):(phshift));
-		sin_mult = 90;
+		sin_mult = 80;
 		if(--stop_state == 0)
 			run[0] = 0;
 
@@ -447,11 +423,11 @@ void bldc1_inthandler()
 
 	if(hall_pos == expected_fwd_hall_pos)
 	{
-		bldc_pos[1]++;
+		bldc_pos[1]+=SUBSTEPS;
 	}
 	else if(hall_pos == expected_back_hall_pos)
 	{
-		bldc_pos[1]--;
+		bldc_pos[1]-=SUBSTEPS;
 	}
 
 	prev_hall_pos = hall_pos;
@@ -460,28 +436,23 @@ void bldc1_inthandler()
 	expected_back_hall_pos = hall_pos-1; if(expected_back_hall_pos < 0) expected_back_hall_pos = 5;
 
 
-	int err = pos_set[1] - bldc_pos[1];
+	int32_t err = bldc_pos_set[1] - bldc_pos[1];
 
 	if(err < 0 ) reverse = 1; else reverse = 0;
 
-	static int32_t prev_pos_set;
-	if(run[1]==0 || prev_pos_set != pos_set[1])
+	static uint32_t prev_bldc_pos_set;
+	if(run[1]==0 || prev_bldc_pos_set != bldc_pos_set[1])
 	{
 		pid_integral = 0;
 	}
-	prev_pos_set = pos_set[1];
+	prev_bldc_pos_set = bldc_pos_set[1];
 
-	if(err == 1 && stop_state == 0 && run[1] && wanna_stop[1])
+	if(stop_state == 0 && run[1] && wanna_stop[1] && err > -STOP_THRESHOLD && err < STOP_THRESHOLD)
 	{
-		stop_state = STOP_LEN;
+		stop_state = abso(err)*STOP_LEN/STOP_THRESHOLD;
+		if(stop_state < 1000) stop_state = 1000;
 		stop_initial_hall_pos = hall_pos;
-		stop_reverse = 0;
-	}
-	else if(err == -1 && stop_state == 0 && run[1] && wanna_stop[1])
-	{
-		stop_state = STOP_LEN;
-		stop_initial_hall_pos = hall_pos;
-		stop_reverse = 1;
+		stop_reverse = reverse;
 	}
 
 
@@ -504,19 +475,19 @@ void bldc1_inthandler()
 
 				pid_integral += err;
 
-				int64_t pid_i_max_extended = (int64_t)pid_i_max<<IMAX_SHIFT;
+				int64_t pid_i_max_extended = (int64_t)pid_i_max;
 				int64_t pid_i_min_extended = -1*pid_i_max_extended;
 				if(pid_integral > pid_i_max_extended) pid_integral = pid_i_max_extended;
 				else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
 
-				mult = (((int64_t)pid_ff*(int64_t)pid_set)>>FF_SHIFT) /* feedforward */
-					+ (((int64_t)pid_p*16*(int64_t)err)>>P_SHIFT) /* P */
+				mult =
+					  (((int64_t)pid_p*16*(int64_t)err)>>P_SHIFT) /* P */
 					+ (((int64_t)pid_i*(int64_t)pid_integral)>>I_SHIFT)  /* I */
 					+ (((int64_t)pid_d*16*(int64_t)derr)>>D_SHIFT); /* D */
 
 				dbg_mult = mult;
 
-				pid_int_info = pid_integral>>IMAX_SHIFT;
+				pid_int_info = pid_integral;
 
 			}
 
@@ -619,6 +590,78 @@ void nonrun()
 	run[1] = 0;
 }
 
+void dontstop()
+{
+	wanna_stop[0] = 0;
+	wanna_stop[1] = 0;
+}
+
+void motor_run(int m) __attribute__((section(".text_itcm")));
+void motor_run(int m)
+{
+	if(m < 0 || m > 1) error(120);
+
+	if(m==0)
+		MC0_EN_GATE();
+	else
+		MC1_EN_GATE();
+
+	run[m] = 1;
+	wanna_stop[m] = 0;
+}
+
+void motor_let_stop(int m) __attribute__((section(".text_itcm")));
+void motor_let_stop(int m)
+{
+	if(m < 0 || m > 1) error(121);
+	wanna_stop[m] = 1;
+}
+
+void motor_stop_now(int m) __attribute__((section(".text_itcm")));
+void motor_stop_now(int m)
+{
+	if(m < 0 || m > 1) error(122);
+	run[m] = 0;
+	bldc_pos_set[m] = bldc_pos[m];
+}
+
+void motor_torque_lim(int m, int percent) __attribute__((section(".text_itcm")));
+void motor_torque_lim(int m, int percent)
+{
+	if(m < 0 || m > 1 || percent<0 || percent>100) error(122);
+
+	int curr = percent*25000/100;
+	int pp = 40 + percent*40/100;
+	int pi = 50 + percent*30/100;
+
+	pid_p = pp;
+	pid_i = pi;
+
+	set_curr_lim(curr);
+}
+
+void motor_release(int m) __attribute__((section(".text_itcm")));
+void motor_release(int m)
+{
+	if(m < 0 || m > 1) error(123);
+
+	if(m==0)
+		MC0_EN_GATE();
+	else
+		MC1_EN_GATE();
+
+	run[m] = 0;
+	bldc_pos_set[m] = bldc_pos[m];
+}
+
+int get_motor_torque(int m) __attribute__((section(".text_itcm")));
+int get_motor_torque(int m)
+{
+	if(m < 0 || m > 1) error(124);
+	return (curr_info_ma[m]*100)/25000;
+}
+
+#if 0
 void bldc_test()
 {
 //	MC0_EN_GATE();
@@ -647,9 +690,9 @@ void bldc_test()
 //		DBG_PR_VAR_I16(hall1);
 		DBG_PR_VAR_I32(run[0]);
 		DBG_PR_VAR_I32(run[1]);
-		DBG_PR_VAR_I32(pos_set[0]);
+		DBG_PR_VAR_I32(bldc_pos_set[0]);
 		DBG_PR_VAR_I32(bldc_pos[0]);
-		DBG_PR_VAR_I32(pos_set[1]);
+		DBG_PR_VAR_I32(bldc_pos_set[1]);
 		DBG_PR_VAR_I32(bldc_pos[1]);
 
 
@@ -684,74 +727,86 @@ void bldc_test()
 			else if(cmd == '1')
 			{
 				dorun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				pos_set[0]-=1;
-				pos_set[1]-=1;
+				dontstop();
+				bldc_pos_set[0]-=1;
+				bldc_pos_set[1]-=1;
 			}
 			else if(cmd == '2')
 			{
 				dorun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				pos_set[0]+=1;
-				pos_set[1]+=1;
+				dontstop();
+				bldc_pos_set[0]+=1;
+				bldc_pos_set[1]+=1;
 			}
 			else if(cmd == '!')
 			{
 				dorun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				pos_set[0]-=2;
-				pos_set[1]-=2;
+				dontstop();
+				bldc_pos_set[0]-=3;
+				bldc_pos_set[1]-=3;
 			}
 			else if(cmd == '\"')
 			{
 				dorun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				pos_set[0]+=2;
-				pos_set[1]+=2;
+				dontstop();
+				bldc_pos_set[0]+=3;
+				bldc_pos_set[1]+=3;
 			}
 			else if(cmd == '8')
 			{
 				dorun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				pos_set[0]+=1;
-				pos_set[1]-=1;
+				dontstop();
+				bldc_pos_set[0]+=1;
+				bldc_pos_set[1]-=1;
 			}
 			else if(cmd == '9')
 			{
 				dorun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				pos_set[0]-=1;
-				pos_set[1]+=1;
+				dontstop();
+				bldc_pos_set[0]-=1;
+				bldc_pos_set[1]+=1;
+			}
+			else if(cmd == 'r')
+			{
+				gospeed = 400;
+			}
+			else if(cmd == 't')
+			{
+				gospeed = 200;
+			}
+			else if(cmd == 'y')
+			{
+				gospeed = 100;
+			}
+			else if(cmd == 'u')
+			{
+				gospeed = 50;
+			}
+			else if(cmd == 'i')
+			{
+				gospeed = 25;
 			}
 			else if(cmd == '(')
 			{
 				dorun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				pos_set[0]+=2;
-				pos_set[1]-=2;
+				dontstop();
+				bldc_pos_set[0]+=3;
+				bldc_pos_set[1]-=3;
 			}
 			else if(cmd == ')')
 			{
 				dorun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				pos_set[0]-=2;
-				pos_set[1]+=2;
+				dontstop();
+				bldc_pos_set[0]-=3;
+				bldc_pos_set[1]+=3;
 			}
 			else if(cmd == '0')
 			{
 				nonrun();
 				ok_cnt[0] = 0;
 				ok_cnt[1] = 0;
-				pos_set[0] = bldc_pos[0];
-				pos_set[1] = bldc_pos[1];
+				bldc_pos_set[0] = bldc_pos[0];
+				bldc_pos_set[1] = bldc_pos[1];
 			}
 			else if(cmd == 'G')
 			{
@@ -797,7 +852,7 @@ void bldc_test()
 
 	}
 }
-
+#endif
 
 /*
 
