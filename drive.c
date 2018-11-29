@@ -45,17 +45,12 @@ void new_target(hires_pos_t pos)
 	target_pos = pos;
 }
 
+int new_direction;
 void cmd_go_to(s2b_move_abs_t* m)
 {
 	target_pos.x = (int64_t)m->x<<16;
 	target_pos.y = (int64_t)m->y<<16;
-
-	int64_t dx = cur_pos.x - target_pos.x;
-	int64_t dy = cur_pos.y - target_pos.y;
-
-	uint32_t new_ang = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2*M_PI));
-
-	target_pos.ang = new_ang;
+	new_direction = 1;
 }
 
 void drive_handler()
@@ -147,6 +142,7 @@ void drive_handler()
 		}
 	}
 
+#define WHEEL_DIAM_MM 790LL
 
 	uint32_t mpos[2];
 	mpos[0] = bldc_pos[0];
@@ -170,8 +166,8 @@ void drive_handler()
 
 	if(deltapos[0] < -1000 || deltapos[0] > 1000 || deltapos[1] < -1000 || deltapos[1] > 1000) error(132);
 
-	deltapos[0] *= (790<<16)/(90*256);
-	deltapos[1] *= -1*(790<<16)/(90*256);
+	deltapos[0] *= (WHEEL_DIAM_MM<<16)/(90*256);
+	deltapos[1] *= -1*(WHEEL_DIAM_MM<<16)/(90*256);
 
 	int32_t fwd = (deltapos[0] + deltapos[1])>>1;
 
@@ -187,11 +183,23 @@ void drive_handler()
 	}
 
 
-	int32_t ang_err = cur_pos.ang - target_pos.ang;
 
 	int64_t dx = cur_pos.x - target_pos.x;
 	int64_t dy = cur_pos.y - target_pos.y;
-	int32_t lin_err = sqrt(sq((double)dx) + sq((double)dy));
+
+	static uint32_t ang_to_target;
+
+	int64_t lin_err = sqrt(sq((double)dx) + sq((double)dy));
+
+	if(lin_err > 100LL*65536LL || new_direction)
+		ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2*M_PI));
+	new_direction = 0;
+
+	int32_t ang_err = cur_pos.ang - ang_to_target;
+
+
+	// Over 100 meters is an error.
+	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(133);
 
 	static int run, prev_run;
 
@@ -200,7 +208,7 @@ void drive_handler()
 	double max_ang_speed = 20.0; // steps per cycle
 
 	static double lin_speed;
-	double max_lin_speed_by_lin_err = 0.05*(lin_err>>16); // 400mm error -> speed unit 20
+	double max_lin_speed_by_lin_err = 0.05*(double)(lin_err>>16); // 400mm error -> speed unit 20
 	double max_lin_speed = 20.0;
 
 
@@ -224,23 +232,24 @@ void drive_handler()
 	uint32_t target_mpos[2];
 
 
-	// Calculate target position solely on angular error (no linear motion)
-	if(ang_err < -10*ANG_1_DEG || ang_err > 10*ANG_1_DEG)
+	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG)
 	{
+		// Calculate target position solely on angular error (no linear motion)
 		target_mpos[0] = mpos[0] + 100*(ang_err/ANG_1_DEG);
 		target_mpos[1] = mpos[1] + 100*(ang_err/ANG_1_DEG);
 	}
 	else
 	{
-
+		// Calc targ pos solely on lin error
+		target_mpos[0] = mpos[0] + lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
+		target_mpos[1] = mpos[1] - lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
 	}
 
-
-	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG)
+	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG || lin_err > 50LL*65536LL)
 	{
 		run = 1;
 	}
-	else if(ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG)
+	else if(ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG && lin_err < 20LL*65536LL)
 	{
 		run = 0;
 	}
@@ -251,16 +260,16 @@ void drive_handler()
 //		bldc_pos_set[1] += dir*(int)speed;
 
 		// We know the target wheel positions, but limit the rate of change
-		for(int m=0; m<2; m++)
-		{
-			int ang_speed_i = (int)ang_speed;
-			int change = target_mpos[m] - mpos[m];
-			if(change > ang_speed_i)
-				change = ang_speed_i;
-			else if(change < -1*ang_speed_i)
-				change = -1*ang_speed_i;
-			bldc_pos_set[m] += change;
-		}
+	for(int m=0; m<2; m++)
+	{
+		int ang_speed_i = (int)lin_speed; //!!!!!!!!!!!!!!!!!
+		int change = target_mpos[m] - mpos[m];
+		if(change > ang_speed_i)
+			change = ang_speed_i;
+		else if(change < -1*ang_speed_i)
+			change = -1*ang_speed_i;
+		bldc_pos_set[m] += change;
+	}
 
 
 
@@ -275,8 +284,8 @@ void drive_handler()
 	{
 		if(run)
 		{
-			motor_torque_lim(0, 50);
-			motor_torque_lim(1, 50);
+			motor_torque_lim(0, 25);
+			motor_torque_lim(1, 25);
 			motor_run(0);
 			motor_run(1);
 			ang_speed = 2.0;
