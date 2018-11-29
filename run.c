@@ -116,6 +116,59 @@ static const sensor_mount_t sensor_mounts[N_SENSORS] =
  /*9:                */ { 1,   160,  -140, DEGTORAD(  360-23), DEGTORAD(  2), 320 }
 };
 
+int err_cnt;
+static void log_err()
+{
+	err_cnt += 10;
+	if(err_cnt > 30)
+	{
+		error(101);
+	}
+}
+
+
+uint32_t led_colors[N_SENSORS];
+int led_modes[N_SENSORS];
+int led_prev_blink[N_SENSORS];
+
+void led_status(int sid, uint32_t val, int mode)
+{
+	if(sid<0 || sid>=N_SENSORS) error(150);
+	led_colors[sid] = val;
+	led_modes[sid] = mode;
+}
+
+void update_led(int sidx)
+{
+	if(led_modes[sidx] == LED_MODE_BLINK)
+	{
+		if(led_prev_blink[sidx])
+			rgb_update(0);
+		else
+			rgb_update(led_colors[sidx]);
+		led_prev_blink[sidx] = ~led_prev_blink[sidx];
+	}
+	else
+	{
+		rgb_update(led_colors[sidx]);
+		if(led_modes[sidx] == LED_MODE_FADE)
+		{
+			int bright = (led_colors[sidx]&0xff000000)>>24;
+			int r = (led_colors[sidx]&0xff0000)>>16;
+			int g = (led_colors[sidx]&0x00ff00)>>8;
+			int b = (led_colors[sidx]&0x0000ff)>>0;
+	
+			r = (r*3)>>2;
+			g = (g*3)>>2;
+			b = (b*3)>>2;
+			if(r < 2 && g < 2 && b < 2)
+				led_colors[sidx] = 0;
+			else
+				led_colors[sidx] = (bright<<24) | (r<<16) | (g<<8) | (b<<0);
+
+		}
+	}
+}
 
 static int lowbat_die_cnt = 0;
 static int cycle;
@@ -128,8 +181,8 @@ void run_cycle()
 		cycle = 0;
 	}
 
-	if(cycle <= 9)
-		gen_data = 1;
+//	if(cycle <= 9)
+	gen_data = 1;
 
 	if(is_tx_overrun())
 	{
@@ -192,8 +245,6 @@ void run_cycle()
 
 	INIT_TOF_TS();
 
-	rgb_update(1, 128, 128, 128);
-
 	// Acquire compensation B/W with fixed intlen - temperature at the same time
 	dcmi_crop_wide();
 	epc_greyscale(); block_epc_i2c(4);
@@ -203,7 +254,7 @@ void run_cycle()
 	epc_temperature_magic_mode(sidx);
 	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 	epc_trig();
-	if(poll_capt_with_timeout_complete()) error(101);
+	if(poll_capt_with_timeout_complete()) log_err();
 	TOF_TS(0);
 
 	int16_t chiptemp = epc_read_temperature(sidx);
@@ -216,9 +267,8 @@ void run_cycle()
 	//DBG_PR_VAR_U32(fine_steps);
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
 
-	rgb_update(1, 64, 64, 64);
 
-
+	update_led(sidx);
 
 
 	static uint8_t  wid_ampl[2][TOF_XS*TOF_YS];
@@ -246,9 +296,8 @@ void run_cycle()
 	// Next will be longer:
 	epc_intlen(intlen_mults[0], INTUS(100)); block_epc_i2c(4);
 
-	if(poll_capt_with_timeout_complete()) error(102);
+	if(poll_capt_with_timeout_complete()) log_err();
 
-	rgb_update(0, 0, 0, 0);
 
 
 	// QUITE SHORT WIDE
@@ -263,13 +312,11 @@ void run_cycle()
 
 	compensated_tof_calc_dist_ampl(&wid_ampl_avg[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
 
-	if(poll_capt_with_timeout_complete()) error(103);
+	if(poll_capt_with_timeout_complete()) log_err();
 
 	if(wid_ampl_avg[0] > 22)
 	{
-		rgb_update(4, 255, 0, 0);
-		delay_ms(30);
-		rgb_update(0, 0, 0, 0);
+		delay_ms(20);
 		wid_raw_send = 0;
 		goto SKIP;
 	}
@@ -278,7 +325,7 @@ void run_cycle()
 	// QUITE SHORT NARROW
 	delay_ms(1);
 	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(100)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(500)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
 	epc_trig();
@@ -289,14 +336,12 @@ void run_cycle()
 
 
 
-	if(poll_capt_with_timeout_complete()) error(104);
+	if(poll_capt_with_timeout_complete()) log_err();
 
 
 	if(wid_ampl_avg[1] > 40)
 	{
-		rgb_update(4, 150, 80, 0);
-		delay_ms(20);
-		rgb_update(0, 0, 0, 0);
+		delay_ms(15);
 		wid_raw_send = 1;
 
 		goto SKIP;
@@ -310,7 +355,9 @@ void run_cycle()
 	// 40	200
 	//  0	4000
 //	int inttime_us = 4000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
-	int inttime_us = 400;
+	int inttime_us = 3000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
+	if(inttime_us < 200) inttime_us = 200;
+//	int inttime_us = 400;
 //	if(sidx==1)
 //		DBG_PR_VAR_I32(inttime_us);
 
@@ -326,7 +373,7 @@ void run_cycle()
 
 	nar_raw_send = 0;
 
-	if(poll_capt_with_timeout_complete()) error(105);
+	if(poll_capt_with_timeout_complete()) log_err();
 
 	// reuse 0
 	compensated_tof_calc_dist_ampl(&wid_ampl_avg[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
@@ -398,5 +445,7 @@ void run_cycle()
 	}	
 	
 	//profile_cpu_blocking_20ms();
+
+	err_cnt -= 1;
 
 }

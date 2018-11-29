@@ -136,7 +136,7 @@ void set_curr_lim(int ma)
 }
 
 
-static uint32_t pid_i_max = 1000;
+static uint32_t pid_i_max = 1000*256;
 static int32_t pid_p = 70;
 static int32_t pid_i = 70;
 static int32_t pid_d = 0;
@@ -168,9 +168,9 @@ volatile int ib_trace[TRACE_LEN], ic_trace[TRACE_LEN];
 
 #define ERR_SAT 20
 
-#define P_SHIFT 0
-#define I_SHIFT 3
-#define D_SHIFT 0
+#define P_SHIFT 4
+#define I_SHIFT 11
+#define D_SHIFT 4
 
 uint32_t bldc_pos_set[2];
 uint32_t bldc_pos[2];
@@ -291,9 +291,9 @@ void bldc0_inthandler()
 				else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
 
 				mult = 
-					  (((int64_t)pid_p*16*(int64_t)err)>>P_SHIFT) /* P */
+					  (((int64_t)pid_p*(int64_t)err)>>P_SHIFT) /* P */
 					+ (((int64_t)pid_i*(int64_t)pid_integral)>>I_SHIFT)  /* I */
-					+ (((int64_t)pid_d*16*(int64_t)derr)>>D_SHIFT); /* D */
+					+ (((int64_t)pid_d*(int64_t)derr)>>D_SHIFT); /* D */
 
 				dbg_mult = mult;
 

@@ -6,7 +6,7 @@
 #include "misc.h"
 #include "own_std.h"
 #include "timebase.h"
-
+#include "imu.h"
 
 
 #include "imu_m_compensation.c"
@@ -116,12 +116,16 @@ SPI6 cannot be mapped to DMA1 or DMA2, so it has to be mapped to BDMA.
 	- relevant SPI
 */
 
+volatile int last_handler = -1;
+
 void agm01_errhandler()
 {
 	SAFETY_SHUTDOWN();
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
+
+	DBG_PR_VAR_I16(last_handler);
 
 	if(AGM01_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX01 ");
 	if(AGM01_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX01 ");
@@ -146,6 +150,9 @@ void agm23_errhandler()
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
 
+	DBG_PR_VAR_I16(last_handler);
+
+
 	if(AGM23_TX_DMA_STREAM->CCR & 1) uart_print_string_blocking("TX23 ");
 	if(AGM23_RX_DMA_STREAM->CCR & 1) uart_print_string_blocking("RX23 ");
 	uart_print_string_blocking("\r\n23SPICR = "); o_btoa16_fixed(AGM23_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
@@ -162,12 +169,14 @@ void agm23_errhandler()
 
 }
 
-void agm45_errhandler()
+void agm45_errhandler0()
 {
 	SAFETY_SHUTDOWN();
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
+
+	DBG_PR_VAR_I16(last_handler);
 
 	if(AGM45_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX45 ");
 	if(AGM45_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX45 ");
@@ -185,6 +194,56 @@ void agm45_errhandler()
 
 }
 
+void agm45_errhandler1()
+{
+	SAFETY_SHUTDOWN();
+	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
+	uart_print_string_blocking(__func__);
+	uart_print_string_blocking("\r\n");
+
+	DBG_PR_VAR_I16(last_handler);
+
+	if(AGM45_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX45 ");
+	if(AGM45_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX45 ");
+	uart_print_string_blocking("\r\n45SPICR = "); o_btoa16_fixed(AGM45_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45SPISR = "); o_btoa16_fixed(AGM45_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(AGM45_SPI->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45TX NDTR  = "); o_utoa16(AGM45_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45RX NDTR  = "); o_utoa16(AGM45_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45SPICFG2 = "); o_utoa32_hex(AGM45_SPI->CFG2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("\r\n");
+	error(20);
+
+}
+
+
+void agm45_errhandler2()
+{
+	SAFETY_SHUTDOWN();
+	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
+	uart_print_string_blocking(__func__);
+	uart_print_string_blocking("\r\n");
+
+	DBG_PR_VAR_I16(last_handler);
+
+	if(AGM45_TX_DMA_STREAM->CR & 1) uart_print_string_blocking("TX45 ");
+	if(AGM45_RX_DMA_STREAM->CR & 1) uart_print_string_blocking("RX45 ");
+	uart_print_string_blocking("\r\n45SPICR = "); o_btoa16_fixed(AGM45_SPI->CR1&0xffff, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45SPISR = "); o_btoa16_fixed(AGM45_SPI->SR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("CTSIZE = "); o_utoa16_fixed(AGM45_SPI->SR>>16, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45TXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_TX_DMA, AGM45_TX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45RXDMA = "); o_btoa8_fixed(DMA_INTFLAGS(AGM45_RX_DMA, AGM45_RX_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45TX NDTR  = "); o_utoa16(AGM45_TX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45RX NDTR  = "); o_utoa16(AGM45_RX_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+	uart_print_string_blocking("45SPICFG2 = "); o_utoa32_hex(AGM45_SPI->CFG2, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+	uart_print_string_blocking("\r\n");
+	error(20);
+
+}
 
 #define WR_REG(_a_, _d_) ( (_a_) | ((_d_)<<8) ) // 16-bit SPI operation to write a BMX055 register
 
@@ -320,6 +379,9 @@ int final_wait_time = 20000;
 #define A_DMA_WAIT_TIME ((7*6+1)*14 + 100)
 #define G_DMA_WAIT_TIME ((7*6+1)*14 + 100)
 #define M_DMA_WAIT_TIME ((1*8+1)*14 + 100)
+//#define A_DMA_WAIT_TIME ((7*6+1)*15 + 200)
+//#define G_DMA_WAIT_TIME ((7*6+1)*15 + 200)
+//#define M_DMA_WAIT_TIME ((1*8+1)*15 + 200)
 
 // Estimate of time spent running the extra cycle of Magnetometer read, temperature read, and magnetometer trigger.
 // Better to overestimate a bit, causing extra repolling.
@@ -397,52 +459,6 @@ static inline uint8_t ag45_read_fifo_lvl()
 	return status>>8;
 }
 
-typedef struct __attribute__((packed))
-{
-	int16_t x;
-	int16_t y;
-	int16_t z;
-} xyz_i16_packed_t;
-
-
-// n field:
-// Works as a "read fifo" command (0x3f register address) on the TX packet
-// Comes inevitably back on the RX packet, containing random, do not care data
-// Is reused as a "number of samples" field, after DMA is done :-).
-typedef struct __attribute__((packed))
-{
-	uint8_t n;
-	xyz_i16_packed_t xyz[8]; //5
-} g_dma_packet_t;
-
-typedef struct __attribute__((packed))
-{
-	uint8_t n;
-	xyz_i16_packed_t xyz[8]; //3
-} a_dma_packet_t;
-
-typedef union __attribute__((packed))
-{
-	struct __attribute__((packed))
-	{
-		uint8_t dummy;
-		int16_t x;
-		int16_t y;
-		int16_t z;
-		uint16_t rhall;
-		uint16_t align1;
-		uint8_t  align2;
-	} coords;
-
-	struct __attribute__((packed))
-	{
-		uint8_t dummy;
-		uint32_t first;
-		uint32_t second;
-		uint16_t align1;
-		uint8_t  align2;
-	} blocks;
-} m_dma_packet_t;
 
 #define M_REMOVE_STATUS_BITS(_x_) do{((m_dataframe_in_fifo_t*)&(_x_))->blocks.first &= 0xfff8fff8; ((xyz_in_fifo_t*)&(_x_))->blocks.second &= 0xfffcfffe; }while(0)
 
@@ -486,6 +502,10 @@ volatile g_dma_packet_t g_packet5 __attribute__((aligned(4))) __attribute__((sec
 volatile m_dma_packet_t m_packet5 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 
 
+volatile a_dma_packet_t * const imu_a[6] = {&a_packet0, &a_packet1, &a_packet2, &a_packet3, &a_packet4, &a_packet5};
+volatile g_dma_packet_t * const imu_g[6] = {&g_packet0, &g_packet1, &g_packet2, &g_packet3, &g_packet4, &g_packet5};
+
+
 // A & G read commands are the same: start with 0xbf, then don't care.
 static const g_dma_packet_t ag_dma_command  __attribute__((aligned(4))) __attribute__((section(".sram3_data"))) = {0xbf, {{0}}};
 static const g_dma_packet_t ag_bdma_command __attribute__((aligned(4))) __attribute__((section(".sram4_data"))) = {0xbf, {{0}}};
@@ -496,11 +516,11 @@ static const m_dma_packet_t  m_bdma_command __attribute__((aligned(4))) __attrib
 
 
 
-#define TX_DMA_CONFIG  (0b01UL<<16 /*med prio*/ | 0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ | 1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/ | 0b110 /*err interrupts*/)
-#define RX_DMA_CONFIG  (0b01UL<<16 /*med prio*/ | 0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ | 1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/ | 0b110 /*err interrupts*/)
+#define TX_DMA_CONFIG  (0b01UL<<16 /*high prio*/ | 0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ | 1UL<<10 /*mem increment*/ | 0b01UL<<6 /*mem-to-periph*/ | 0b110 /*err interrupts*/)
+#define RX_DMA_CONFIG  (0b01UL<<16 /*high prio*/ | 0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ | 1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/ | 0b110 /*err interrupts*/)
 
-#define TX_BDMA_CONFIG (0b01UL<<12 /*med prio*/ | 0b10UL<<10 /*32-bit mem*/ | 0b10UL<<8 /*32-bit periph*/ | 1UL<<7 /*mem increment*/ | 1UL<<4 /*mem-to-periph*/ | 0b1000 /*err int*/)
-#define RX_BDMA_CONFIG (0b01UL<<12 /*med prio*/ | 0b10UL<<10 /*32-bit mem*/ | 0b10UL<<8 /*32-bit periph*/ | 1UL<<7 /*mem increment*/ | 0UL<<4 /*periph-to-mem*/ | 0b1000 /*err int*/)
+#define TX_BDMA_CONFIG (0b11UL<<12 /*med prio*/ | 0b10UL<<10 /*32-bit mem*/ | 0b10UL<<8 /*32-bit periph*/ | 1UL<<7 /*mem increment*/ | 1UL<<4 /*mem-to-periph*/ | 0b1000 /*err int*/)
+#define RX_BDMA_CONFIG (0b11UL<<12 /*med prio*/ | 0b10UL<<10 /*32-bit mem*/ | 0b10UL<<8 /*32-bit periph*/ | 1UL<<7 /*mem increment*/ | 0UL<<4 /*periph-to-mem*/ | 0b1000 /*err int*/)
 
 #define SPI_CR_OFF (1UL<<12 /*SSI*/)
 #define SPI_CR_ON (SPI_CR_OFF | 1UL /*ena*/)
@@ -809,6 +829,7 @@ static union
 
 static void inthandler0()
 {
+	last_handler = 0;
 	TIM3->SR = 0UL;
 	fifo.quick.first = fifo.quick.second = 0;
 	SEL_A024();
@@ -820,6 +841,7 @@ static void inthandler0()
 
 static void inthandler1()
 {
+	last_handler = 1;
 	TIM3->SR = 0UL;
 	DESEL_A024();
 	fifo.lvls.a[0] = ag01_read_fifo_lvl();
@@ -834,6 +856,7 @@ static void inthandler1()
 
 static void inthandler2()
 {
+	last_handler = 2;
 	TIM3->SR = 0UL;
 	DESEL_A135();
 	fifo.lvls.a[1] = ag01_read_fifo_lvl();
@@ -848,6 +871,7 @@ static void inthandler2()
 
 static void inthandler3()
 {
+	last_handler = 3;
 	TIM3->SR = 0UL;
 	DESEL_G024();
 	fifo.lvls.g[0] = ag01_read_fifo_lvl();
@@ -862,6 +886,7 @@ static void inthandler3()
 
 static void inthandler4()
 {
+	last_handler = 4;
 	TIM3->SR = 0UL;
 	DESEL_G135();
 	fifo.lvls.g[1] = ag01_read_fifo_lvl();
@@ -955,6 +980,7 @@ static void inthandler4()
 
 static void inthandler5()
 {
+	last_handler = 5;
 	TIM3->SR = 0UL;
 	DESEL_A024();
 	a_packet0.n = fifo.lvls.a[0];
@@ -971,6 +997,7 @@ static void inthandler5()
 
 static void inthandler6()
 {
+	last_handler = 6;
 	TIM3->SR = 0UL;
 	DESEL_A135();
 	a_packet1.n = fifo.lvls.a[1];
@@ -987,6 +1014,7 @@ static void inthandler6()
 
 static void inthandler7()
 {
+	last_handler = 7;
 	TIM3->SR = 0UL;
 	DESEL_G024();
 	g_packet0.n = fifo.lvls.g[0];
@@ -1008,12 +1036,16 @@ volatile int ms;
 
 static void inthandler8()
 {
+	last_handler = 8;
 	TIM3->SR = 0UL;
 	DESEL_G135();
 
 	g_packet1.n = fifo.lvls.g[1];
 	g_packet3.n = fifo.lvls.g[3];
 	g_packet5.n = fifo.lvls.g[5];
+
+	// A & G data is finished. Generate software interrupt to do the processing at lower interrupt priority than our current context.
+	NVIC->STIR = 147;
 
 	uint32_t dt = cnt_100us - m_conv_start_100us;
 	if(dt >= M_INTERVAL_100US) // Purposedly wrapping uint32 subtraction as per C specification
@@ -1049,6 +1081,7 @@ static void inthandler8()
 
 static void inthandler9()
 {
+	last_handler = 9;
 	TIM3->SR = 0UL;
 	DESEL_M024();
 	SEL_M135();
@@ -1062,6 +1095,7 @@ static void inthandler9()
 
 static void inthandler10()
 {
+	last_handler = 10;
 	TIM3->SR = 0UL;
 	DESEL_M135();
 	ag01_nondma();
@@ -1079,6 +1113,7 @@ static void inthandler10()
 
 static void inthandler11()
 {
+	last_handler = 11;
 	TIM3->SR = 0UL;
 	DESEL_A024();
 	// Keep the temperature replies in SPI FIFOs, read in the next state.
@@ -1097,6 +1132,7 @@ static void inthandler11()
 
 static void inthandler12()
 {
+	last_handler = 12;
 	TIM3->SR = 0UL;
 	DESEL_A135();
 	m_conv_start_100us = cnt_100us;
@@ -1128,6 +1164,7 @@ static void inthandler12()
 
 static void inthandler13()
 {
+	last_handler = 13;
 	TIM3->SR = 0UL;
 	DESEL_M024();
 	SEL_M135();
@@ -1142,6 +1179,7 @@ static void inthandler13()
 
 static void inthandler14()
 {
+	last_handler = 14;
 	TIM3->SR = 0UL;
 	DESEL_M135();
 	// empty the RX fifo of both TRIG operation dummy replies at once:
@@ -1646,8 +1684,8 @@ void init_imu()
 		// FIFO error interrupt - Unofficial errata: happens on non-FIFO related, including undocumented errors as well!
 		// ST declines to update errata or correct the manual, playing dumb instead:
 		// https://community.st.com/s/question/0D50X00009ZDC3LSAX/rm0433-dmabdma-wrong-memory-region-as-sourcetarget-will-set-fifo-error
-		AGM01_TX_DMA_STREAM->FCR |= 1UL<<7;
-		AGM01_RX_DMA_STREAM->FCR |= 1UL<<7;
+//		AGM01_TX_DMA_STREAM->FCR |= 1UL<<7;
+//		AGM01_RX_DMA_STREAM->FCR |= 1UL<<7;
 
 		AGM01_TX_DMAMUX();
 		AGM01_RX_DMAMUX();
@@ -1741,8 +1779,8 @@ void init_imu()
 		AGM45_TX_DMA_STREAM->PAR = (uint32_t)&(AGM45_SPI->TXDR);
 		AGM45_RX_DMA_STREAM->PAR = (uint32_t)&(AGM45_SPI->RXDR);
 
-		AGM45_TX_DMA_STREAM->FCR |= 1UL<<7;
-		AGM45_RX_DMA_STREAM->FCR |= 1UL<<7;
+//		AGM45_TX_DMA_STREAM->FCR |= 1UL<<7;
+//		AGM45_RX_DMA_STREAM->FCR |= 1UL<<7;
 
 		AGM45_TX_DMAMUX();
 		AGM45_RX_DMAMUX();
@@ -1808,6 +1846,10 @@ void init_imu()
 	NVIC_SetPriority(TIM3_IRQn, INTPRIO_IMU_TIMER);
 	NVIC_EnableIRQ(TIM3_IRQn);
 
+	NVIC_SetPriority(147, INTPRIO_SOFTWARE);
+	NVIC_EnableIRQ(147);
+
+	set_timer(50000);
 }
 
 

@@ -74,16 +74,37 @@ void profile_cpu_blocking_20ms();
 #define INTPRIO_ADC3         2
 
 // These may be masked off for atomic operations:
-#define INTPRIO_BLDC         3
-#define INTPRIO_SBC_COMM     4
-#define INTPRIO_IMU_DMA      5
-#define INTPRIO_IMU_TIMER    6
+#define INTPRIO_IMU_DMA      3
+#define INTPRIO_IMU_TIMER    4
+#define INTPRIO_BLDC         5
+#define INTPRIO_SBC_COMM     6
 #define INTPRIO_TOF_I2C      7
 
 // By having the timebase handler with the least priority, this means if any ISR in the system gets stuck, the timebase handler never gets
 // called, the power switch is not replenished and power is cut really quickly. A great watchdog. Note: in shutdown (error or safety), the priority
 // is changed so that power is kept on, to wait for the flasher command. Same is true for the SBC priority.
-#define INTPRIO_TIMEBASE     14
+#define INTPRIO_TIMEBASE     13
+
+#define INTPRIO_SOFTWARE     14
+
+
+// Cool white    4,255,255,190
+// Neutral white 4,255,210,110
+// Warm white    4,255,150, 50
+
+// Blinker yellow bright 4,255,120,0
+// Blinker yellow dim    2,255,100,0
+
+// Traffic light green  4,0,255,10
+void led_status(int sid, uint32_t val, int mode);
+
+#define BLACK  0x00000000
+#define WHITE  0x01ffe090
+#define YELLOW 0x01ff8000
+#define RED    0x04ff0000
+#define LED_MODE_FADE  0
+#define LED_MODE_KEEP  1
+#define LED_MODE_BLINK 2
 
 
 

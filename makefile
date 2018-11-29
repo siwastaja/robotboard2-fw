@@ -1,13 +1,13 @@
 # This makefile is made to work with the toolchain downloadable at https://launchpad.net/gcc-arm-embedded
 
-DEVIP = 192.168.1.5
+DEVIP = 192.168.0.12
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
 SIZE = arm-none-eabi-size
 OBJCOPY = arm-none-eabi-objcopy
 
-OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o run.o
+OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o
 #OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run.o ../robotboard2-fw-calibrator/tof_calibrator.o
 
 

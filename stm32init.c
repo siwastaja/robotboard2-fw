@@ -33,7 +33,9 @@ extern void bldc1_inthandler();
 
 extern void agm01_errhandler();
 extern void agm23_errhandler();
-extern void agm45_errhandler();
+extern void agm45_errhandler0();
+extern void agm45_errhandler1();
+extern void agm45_errhandler2();
 
 extern void adc12_inthandler();
 extern void adc3_inthandler();
@@ -45,6 +47,8 @@ extern void adc3_dma_errhandler();
 extern void charger_safety_errhandler();
 
 extern void charger_adc2_pha_inthandler();
+
+extern void drive_handler();
 
 extern unsigned int _STACKTOP;
 
@@ -85,7 +89,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x0074            2       */ (unsigned int *) invalid_handler,
 /* 0x0078            3       */ (unsigned int *) epc_rx_dma_inthandler,
 /* 0x007C            4       */ (unsigned int *) agm01_errhandler,
-/* 0x0080            5       */ (unsigned int *) agm45_errhandler,
+/* 0x0080            5       */ (unsigned int *) agm45_errhandler0,
 /* 0x0084            6       */ (unsigned int *) agm01_errhandler,
 /* 0x0088 ADC1&2             */ (unsigned int *) charger_adc2_pha_inthandler, // set dynamically, but this default is needed
 /* 0x008C                    */ (unsigned int *) invalid_handler,
@@ -105,7 +109,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x00C4 I2C2 EVENT         */ (unsigned int *) invalid_handler,
 /* 0x00C8      ERR           */ (unsigned int *) invalid_handler,
 /* 0x00CC SPI1               */ (unsigned int *) invalid_handler,
-/* 0x00D0 SPI2               */ (unsigned int *) agm45_errhandler,
+/* 0x00D0 SPI2               */ (unsigned int *) agm45_errhandler1,
 /* 0x00D4 USART1             */ (unsigned int *) invalid_handler,
 /* 0x00D8 USART2             */ (unsigned int *) invalid_handler,
 /* 0x00DC USART3             */ (unsigned int *) invalid_handler,
@@ -116,7 +120,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x00F0 TIM8 update        */ (unsigned int *) invalid_handler,
 /* 0x00F4 TIM8 trig/commu    */ (unsigned int *) invalid_handler,
 /* 0x00F8 TIM8 capt/comp     */ (unsigned int *) bldc1_inthandler,
-/* 0x00FC DMA1 STREAM7       */ (unsigned int *) agm45_errhandler,
+/* 0x00FC DMA1 STREAM7       */ (unsigned int *) agm45_errhandler2,
 /* 0x0100                    */ (unsigned int *) invalid_handler,
 /* 0x0104                    */ (unsigned int *) invalid_handler,
 /* 0x0108 TIM5               */ (unsigned int *) timebase_inthandler,
@@ -216,7 +220,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x0280                    */ (unsigned int *) invalid_handler,
 /* 0x0284                    */ (unsigned int *) invalid_handler,
 /* 0x0288                    */ (unsigned int *) invalid_handler,
-/* 0x028C                    */ (unsigned int *) invalid_handler,
+/* 0x028C (empty #147)       */ (unsigned int *) drive_handler,
 /* 0x0290                    */ (unsigned int *) invalid_handler,
 /* 0x0294                    */ (unsigned int *) invalid_handler
 

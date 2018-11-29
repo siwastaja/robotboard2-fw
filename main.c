@@ -513,10 +513,8 @@ void main()
 
 
 
-//	init_imu();
-	uart_print_string_blocking("init ok\r\n"); 
+	init_imu();
 	extern void timer_test();
-//	timer_test();
 	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
 	init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
@@ -529,24 +527,9 @@ void main()
 	init_cpu_profiler();
 
 	extern void bldc_test();
-	bldc_test();
+
 	tof_ctrl_init();
-//	sbc_comm_test();
-//	dump_scb();
-
-/*	while(1)
-	{
-		LED_ON();
-		app_power_on();
-		delay_ms(2000);
-		LED_OFF();
-		app_power_off();
-		delay_ms(2000);
-	}
-*/
-
-
-//	pointer_system_test();
+	uart_print_string_blocking("init ok\r\n"); 
 
 
 	#ifdef CALIBRATOR
