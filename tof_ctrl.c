@@ -340,6 +340,7 @@ void epc_dcmi_dma_inthandler()
 	epc_capture_finished = 1;
 }
 
+#define DCMI_DMA_CR (0b01UL<<16 /*med prio*/ | 0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ | 1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/)
 
 void dcmi_init()
 {
@@ -367,22 +368,18 @@ void dcmi_init()
 	DCMI->CR |= 1UL<<14; // Enable
 
 	DCMI_DMA_STREAM->PAR = (uint32_t)&(DCMI->DR);
-	DCMI_DMA_STREAM->CR = 0b01UL<<16 /*med prio*/ | 0UL<<18 /*double buffer OFF*/ | 0UL<<8 /*circular OFF*/ |
-			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
-	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/ | 0UL<<4 /* Transfer complete interrupt: OFF!*/;
+	DCMI_DMA_STREAM->CR = DCMI_DMA_CR;
 
+//	DCMI_DMA_STREAM->FCR = 1UL<<2 /* Enable FIFO */ | 0b01UL /*FIFO threshold 50% (2 words)*/;
 	// NDTR is not set yet because it varies. Stream is not enabled yet.
 
 	DCMI->CR |= 1UL<<0; // Start CAPTURE
 }
 
-
 void dcmi_start_dma(void *data, int size)
 {
 	// Disable the stream first
-	DCMI_DMA_STREAM->CR = 0b01UL<<16 /*med prio*/ |
-			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
-	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
+	DCMI_DMA_STREAM->CR = DCMI_DMA_CR;
 
 	while(DCMI_DMA_STREAM->CR & 1UL) ;
 
@@ -391,9 +388,7 @@ void dcmi_start_dma(void *data, int size)
 	DCMI_DMA_STREAM->M0AR = (uint32_t)data;
 
 	DCMI_DMA_STREAM->NDTR = size/4; // Num of 32-bit transfers
-	DCMI_DMA_STREAM->CR = 0b01UL<<16 /*med prio*/ | 
-			   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
-	                   1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/ | 1UL<<4 /* Transfer complete interrupt*/;
+	DCMI_DMA_STREAM->CR = DCMI_DMA_CR | 1UL<<4 /* Transfer complete interrupt*/;
 
 	DMA_CLEAR_INTFLAGS(DCMI_DMA, DCMI_DMA_STREAM_NUM);
 	DCMI_DMA_STREAM->CR |= 1; // Enable DMA
@@ -665,8 +660,12 @@ uint8_t epc_read_eeprom_byte()
 
 
 static const uint8_t curr_settings[5] = {0b01000 /*5 mA*/, 0b01000 /*5 mA*/, 0b00100 /*10mA*/, 0b10000 /*17.5mA*/, 0b01100 /*30mA*/};
-void rgb_update(int bright, uint8_t r, uint8_t g, uint8_t b)
+void rgb_update(uint32_t val)
 {
+	int bright = (val&0xff000000)>>24;
+	int r = (val&0x00ff0000)>>16;
+	int g = (val&0x0000ff00)>>8;
+	int b = (val&0x000000ff)>>0;
 	if(bright < 0) bright = 0;
 	else if(bright > 4) bright = 4;
 
@@ -782,144 +781,20 @@ void block_epc_i2c(int err_idx)
 }
 
 
-void cool_effect2()
-{
-	int bright = 4, r = 0, g = 0, b = 0;
 
-	while(1)
-	{
-		uint8_t cmd = uart_input();
-		if(cmd == 'A')
-			r+=20;
-		if(cmd == 'Z')
-			r-=20;
-		if(cmd == 'a')
-			r+=5;
-		if(cmd == 'z')
-			r-=5;
-
-		if(cmd == 'S')
-			g+=20;
-		if(cmd == 'X')
-			g-=20;
-		if(cmd == 's')
-			g+=5;
-		if(cmd == 'x')
-			g-=5;
-
-		if(cmd == 'D')
-			b+=20;
-		if(cmd == 'C')
-			b-=20;
-		if(cmd == 'd')
-			b+=5;
-		if(cmd == 'c')
-			b-=5;
-
-		if(cmd >= '0' && cmd <= '4')
-			bright = cmd-'0';
-
-		if(r<0) r=0; else if(r>255) r = 255;
-		if(g<0) g=0; else if(g>255) g = 255;
-		if(b<0) b=0; else if(b>255) b = 255;
-
-		rgb_update(bright, r,  g,  b);
-
-		delay_ms(5);
-		static int cnt=0;
-		cnt++;
-		if(cnt==20)
-		{
-			cnt=0;
-			uart_print_string_blocking("R "); o_utoa8_fixed(r, printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking(" G "); o_utoa8_fixed(g, printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking(" B "); o_utoa8_fixed(b, printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking(" I "); o_utoa8_fixed(bright, printbuf); uart_print_string_blocking(printbuf);
-
-			uart_print_string_blocking("\r\n");
-		}
-
-	}
-
-}
-
-// Cool white    4,255,255,190
-// Neutral white 4,255,210,110
-// Warm white    4,255,150, 50
-
-// Blinker yellow bright 4,255,120,0
-// Blinker yellow dim    2,255,100,0
-
-// Traffic light green  4,0,255,10
-
-void cool_effect()
-{
-	uint8_t r = 0, g = 0, b = 0;
-	int state = 0;
-	while(1)
-	{
-		if(state == 0)
-		{
-			if(r==255) state++; else r++;
-		}
-		else if(state == 1)
-		{
-			if(r==0) state++; else r--;
-		}
-		else if(state == 2)
-		{
-			if(g==255) state++; else g++;
-		}
-		else if(state == 3)
-		{
-			if(g==0) state++; else g--;
-		}
-		else if(state == 4)
-		{
-			if(b==255) state++; else b++;
-		}
-		else if(state == 5)
-		{
-			if(b==0) state++; else b--;
-		}
-		else if(state == 6)
-		{
-			if(r==255) state++; else {r++;g++;}
-		}
-		else if(state == 7)
-		{
-			if(r==0) state++; else {r--;g--;}
-		}
-		else if(state == 8)
-		{
-			if(g==255) state++; else {b++;g++;}
-		}
-		else if(state == 9)
-		{
-			if(g==0) state++; else {b--;g--;}
-		}
-		else if(state == 10)
-		{
-			if(g==255) state++; else {r++;b++;g++;}
-		}
-		else if(state == 11)
-		{
-			if(g==0) state=0; else {r--;b--;g--;}
-		}
-
-
-		rgb_update(4, r,  g,  b);
-
-		delay_ms(5);
-	}
-}
-
-
-
+#define SOFTSTART_PERIOD_LEN 400
 
 void init_sensors()
 {
-	for(int i=0; i<200; i++)
+	for(int i=0; i<SOFTSTART_PERIOD_LEN/2; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(29);
+		PLUS3V3_ON();
+		delay_us(1);
+	}
+
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
 	{
 		PLUS3V3_OFF();
 		delay_us(19);
@@ -927,7 +802,7 @@ void init_sensors()
 		delay_us(1);
 	}
 
-	for(int i=0; i<200; i++)
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
 	{
 		PLUS3V3_OFF();
 		delay_us(18);
@@ -935,7 +810,7 @@ void init_sensors()
 		delay_us(2);
 	}
 
-	for(int i=0; i<200; i++)
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
 	{
 		PLUS3V3_OFF();
 		delay_us(17);
@@ -943,15 +818,15 @@ void init_sensors()
 		delay_us(3);
 	}
 
-	for(int i=0; i<200; i++)
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
 	{
 		PLUS3V3_OFF();
-		delay_us(18);
+		delay_us(16);
 		PLUS3V3_ON();
 		delay_us(4);
 	}
 
-	for(int i=0; i<200; i++)
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
 	{
 		PLUS3V3_OFF();
 		delay_us(14);
@@ -959,7 +834,7 @@ void init_sensors()
 		delay_us(6);
 	}
 
-	for(int i=0; i<200; i++)
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
 	{
 		PLUS3V3_OFF();
 		delay_us(12);
@@ -967,7 +842,15 @@ void init_sensors()
 		delay_us(8);
 	}
 
-	for(int i=0; i<200; i++)
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(10);
+		PLUS3V3_ON();
+		delay_us(10);
+	}
+
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
 	{
 		PLUS3V3_OFF();
 		delay_us(8);
@@ -975,12 +858,20 @@ void init_sensors()
 		delay_us(12);
 	}
 
-	for(int i=0; i<200; i++)
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
 	{
 		PLUS3V3_OFF();
-		delay_us(4);
+		delay_us(6);
 		PLUS3V3_ON();
-		delay_us(16);
+		delay_us(14);
+	}
+
+	for(int i=0; i<SOFTSTART_PERIOD_LEN; i++)
+	{
+		PLUS3V3_OFF();
+		delay_us(3);
+		PLUS3V3_ON();
+		delay_us(17);
 	}
 
 
@@ -1030,9 +921,7 @@ void init_sensors()
 		init_err_cnt = idx;
 		delay_us(100);
 
-		rgb_update(4, 255, 255, 255);
-		delay_ms(10);
-		rgb_update(0, 0, 0, 0);
+		rgb_update(0x0400ff00);
 
 	//	while(1);
 
@@ -1151,6 +1040,8 @@ void init_sensors()
 		epc_enable_dll(); block_epc_i2c(0);
 		epc_coarse_dll_steps(0); block_epc_i2c(0);
 		epc_pll_steps(0); block_epc_i2c(4); // THIS ISN'T ZERO BY DEFAULT!!
+
+		rgb_update(0);
 
 //		uart_print_string_blocking("single sensor init success\r\n");
 	}
