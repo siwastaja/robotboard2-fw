@@ -587,7 +587,7 @@ void parse_rx_packet()
 	s2b_header_t *p_header = (s2b_header_t*)rx_fifo[rx_fifo_cpu];
 
 	int offs = S2B_HEADER_LEN;
-	uart_print_string_blocking("PARSE: n_cmds = "); o_utoa16(p_header->n_cmds, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//	uart_print_string_blocking("PARSE: n_cmds = "); o_utoa16(p_header->n_cmds, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 	for(int p = 0; p < p_header->n_cmds; p++)
 	{
@@ -601,8 +601,8 @@ void parse_rx_packet()
 			break;
 		}
 
-		uart_print_string_blocking("PARSE: paylen = "); o_utoa16(p_cmdheader->paylen, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		uart_print_string_blocking("PARSE: msgid = "); o_utoa16(p_cmdheader->msgid, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//		uart_print_string_blocking("PARSE: paylen = "); o_utoa16(p_cmdheader->paylen, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//		uart_print_string_blocking("PARSE: msgid = "); o_utoa16(p_cmdheader->msgid, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 		if(p_cmdheader->paylen != s2b_msgs[p_cmdheader->msgid].size)
 		{
@@ -612,10 +612,10 @@ void parse_rx_packet()
 			break;
 		}
 
-		for(int i=0; i<p_cmdheader->paylen; i++)
-		{
-			o_utoa8_hex(p_data[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-		}
+//		for(int i=0; i<p_cmdheader->paylen; i++)
+//		{
+//			o_utoa8_hex(p_data[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+//		}
 
 		switch(p_cmdheader->msgid)
 		{

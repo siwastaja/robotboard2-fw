@@ -136,9 +136,10 @@ void set_curr_lim(int ma)
 }
 
 
-static uint32_t pid_i_max = 1000*256;
-static int32_t pid_p = 70;
-static int32_t pid_i = 70;
+static uint32_t pid_i_max = 3000*256;
+static int32_t pid_p = 60;
+static int32_t pid_i = 250;
+static int32_t pid_i_threshold = (3*SUBSTEPS)/2;
 static int32_t pid_d = 0;
 
 
@@ -166,10 +167,10 @@ volatile int ib_trace[TRACE_LEN], ic_trace[TRACE_LEN];
 #define CURRLIM_RATE1  200
 #define CURRLIM_RATE2    2
 
-#define ERR_SAT 20
+#define ERR_SAT (20*SUBSTEPS)
 
 #define P_SHIFT 4
-#define I_SHIFT 11
+#define I_SHIFT 12
 #define D_SHIFT 4
 
 uint32_t bldc_pos_set[2];
@@ -181,14 +182,36 @@ volatile int32_t pid_int_info;
 int run[2] = {0};
 int wanna_stop[2] = {0};
 
+
+volatile int go;
+volatile int gospeed = 12;
 void bldc_1khz()
 {
+	static int cnt = 0;
+	if(++cnt > gospeed)
+	{
+		cnt = 0;
+
+		if(go == 1)
+		{
+			bldc_pos_set[0] += 32;
+			bldc_pos_set[1] += 32;
+		}
+		else if(go == 2)
+		{
+			bldc_pos_set[0] -= 32;
+			bldc_pos_set[1] -= 32;
+		}
+	}
 }
 
 
 #define STOP_LEN 6000 // approx half a second.
 #define STOP_THRESHOLD (SUBSTEPS*3/2)
 
+volatile int dbg_err, dbg_sin_mult, dbg_m;
+
+volatile int stop_state_dbg[2];
 void bldc0_inthandler() __attribute__((section(".text_itcm")));
 void bldc0_inthandler()
 {
@@ -251,7 +274,8 @@ void bldc0_inthandler()
 	if(err < 0 ) reverse = 1; else reverse = 0;
 
 	static uint32_t prev_bldc_pos_set;
-	if(run[0]==0 || prev_bldc_pos_set != bldc_pos_set[0])
+	int change = bldc_pos_set[0] - prev_bldc_pos_set;
+	if(run[0]==0 || change < -5*SUBSTEPS || change > 5*SUBSTEPS)
 	{
 		pid_integral = 0;
 	}
@@ -277,13 +301,22 @@ void bldc0_inthandler()
 		{
 			if(!(cnt & 63))
 			{
+				dbg_err = err;
 				if(err > ERR_SAT) err = ERR_SAT;
 				else if(err < -ERR_SAT) err = -ERR_SAT;
 
 				int derr = (err - pid_prev_err);
 				pid_prev_err = err;
 
-				pid_integral += err;
+				if(err > pid_i_threshold) pid_integral += 256; //err - pid_i_threshold;
+				else if(err < -1*pid_i_threshold) pid_integral += -256; //err + pid_i_threshold;
+				else
+				{
+					pid_integral = 0;
+
+//					if(pid_integral>0) pid_integral--;
+//					else if(pid_integral<0) pid_integral++;
+				}
 
 				int64_t pid_i_max_extended = (int64_t)pid_i_max;
 				int64_t pid_i_min_extended = -1*pid_i_max_extended;
@@ -314,6 +347,8 @@ void bldc0_inthandler()
 			if(sin_mult != 0)
 				sin_mult += MIN_MULT_OFFSET;
 
+			dbg_sin_mult = sin_mult;
+
 		}
 		loc = base_hall_aims[hall_pos] + timing_shift + (reverse?(-PH90SHIFT):(PH90SHIFT));
 
@@ -326,7 +361,8 @@ void bldc0_inthandler()
 		if(--stop_state == 0)
 			run[0] = 0;
 
-		if(err < -1 || err > 1)
+		// Went out of spec, don't stop
+		if(err < -STOP_THRESHOLD || err > STOP_THRESHOLD)
 		{
 			sin_mult = 0;
 			stop_state = 0;
@@ -340,6 +376,8 @@ void bldc0_inthandler()
 
 
 	uint8_t m = (sin_mult * currlim_mult)>>8; // 254 max
+
+	dbg_m = m;
 	TIM1->CCR1 = (PWM_MID) + ((m*sine[idxc])>>11); // sine: -32768..32767, times 254 max: multiplication result ranges +/- 4064
 	TIM1->CCR2 = (PWM_MID) + ((m*sine[idxb])>>11);
 	TIM1->CCR3 = (PWM_MID) + ((m*sine[idxa])>>11);
@@ -378,6 +416,7 @@ void bldc0_inthandler()
 		currlim_mult++;
 
 	if(currlim_mult < 5) currlim_mult = 5;
+	stop_state_dbg[0] = stop_state;
 }
 
 void bldc1_inthandler() __attribute__((section(".text_itcm")));
@@ -441,7 +480,8 @@ void bldc1_inthandler()
 	if(err < 0 ) reverse = 1; else reverse = 0;
 
 	static uint32_t prev_bldc_pos_set;
-	if(run[1]==0 || prev_bldc_pos_set != bldc_pos_set[1])
+	int change = bldc_pos_set[1] - prev_bldc_pos_set;
+	if(run[1]==0 || change < -5*SUBSTEPS || change > 5*SUBSTEPS)
 	{
 		pid_integral = 0;
 	}
@@ -473,7 +513,14 @@ void bldc1_inthandler()
 				int derr = (err - pid_prev_err);
 				pid_prev_err = err;
 
-				pid_integral += err;
+				if(err > pid_i_threshold) pid_integral += 256; //err - pid_i_threshold;
+				else if(err < -1*pid_i_threshold) pid_integral += -256; //err + pid_i_threshold;
+				else
+				{
+					pid_integral = 0;
+//					if(pid_integral>0) pid_integral--;
+//					else if(pid_integral<0) pid_integral++;
+				}
 
 				int64_t pid_i_max_extended = (int64_t)pid_i_max;
 				int64_t pid_i_min_extended = -1*pid_i_max_extended;
@@ -481,9 +528,9 @@ void bldc1_inthandler()
 				else if(pid_integral < pid_i_min_extended) pid_integral = pid_i_min_extended;
 
 				mult =
-					  (((int64_t)pid_p*16*(int64_t)err)>>P_SHIFT) /* P */
+					  (((int64_t)pid_p*(int64_t)err)>>P_SHIFT) /* P */
 					+ (((int64_t)pid_i*(int64_t)pid_integral)>>I_SHIFT)  /* I */
-					+ (((int64_t)pid_d*16*(int64_t)derr)>>D_SHIFT); /* D */
+					+ (((int64_t)pid_d*(int64_t)derr)>>D_SHIFT); /* D */
 
 				dbg_mult = mult;
 
@@ -516,7 +563,7 @@ void bldc1_inthandler()
 		if(--stop_state == 0)
 			run[1] = 0;
 
-		if(err < -1 || err > 1)
+		if(err < -STOP_THRESHOLD || err > STOP_THRESHOLD)
 		{
 			sin_mult = 0;
 			stop_state = 0;
@@ -568,6 +615,8 @@ void bldc1_inthandler()
 		currlim_mult++;
 
 	if(currlim_mult < 5) currlim_mult = 5;
+	stop_state_dbg[1] = stop_state;
+
 }
 
 void bldc_safety_shutdown() __attribute__((section(".text_itcm")));
@@ -577,25 +626,6 @@ void bldc_safety_shutdown()
 	MC1_DIS_GATE();
 
 }
-
-void dorun()
-{
-	run[0] = 1;
-	run[1] = 1;
-}
-
-void nonrun()
-{
-	run[0] = 0;
-	run[1] = 0;
-}
-
-void dontstop()
-{
-	wanna_stop[0] = 0;
-	wanna_stop[1] = 0;
-}
-
 void motor_run(int m) __attribute__((section(".text_itcm")));
 void motor_run(int m)
 {
@@ -661,15 +691,9 @@ int get_motor_torque(int m)
 	return (curr_info_ma[m]*100)/25000;
 }
 
-#if 0
 void bldc_test()
 {
-//	MC0_EN_GATE();
-//	MC1_EN_GATE();
 	init_cpu_profiler();
-
-//	TIM1->CCR3 = PWM_MID+400;
-
 
 	set_curr_lim(20000);
 
@@ -705,154 +729,154 @@ void bldc_test()
 		DBG_PR_VAR_I32(pid_i_max);
 		DBG_PR_VAR_I32(pid_int_info);
 
-		DBG_PR_VAR_I32(pid_ff);
 		DBG_PR_VAR_I32(pid_p);
 		DBG_PR_VAR_I32(pid_i);
 		DBG_PR_VAR_I32(pid_d);
 
+		DBG_PR_VAR_I32(stop_state_dbg[0]);
+		DBG_PR_VAR_I32(stop_state_dbg[1]);
+
+		DBG_PR_VAR_I32(dbg_err);
+		DBG_PR_VAR_I32(dbg_sin_mult);
+		DBG_PR_VAR_I32(dbg_m);
+
+
 		uart_print_string_blocking("\r\n");
 	
-		for(int i=0; i<20; i++)
+		for(int i=0; i<100; i++)
 		{
 			uint8_t cmd = uart_input();
 
 			if(cmd == 'o')
-				MC0_EN_GATE();
-			else if(cmd == 'p')
-				MC0_DIS_GATE();
-			else if(cmd == 'O')
-				MC1_EN_GATE();
-			else if(cmd == 'P')
-				MC1_DIS_GATE();
+			{
+				motor_stop_now(0);
+				motor_stop_now(1);
+				motor_run(0);
+				motor_run(1);
+			}
+			else if(cmd == 'p' || cmd == 'P')
+			{
+				motor_release(0);
+				motor_release(1);
+			}
 			else if(cmd == '1')
 			{
-				dorun();
-				dontstop();
-				bldc_pos_set[0]-=1;
-				bldc_pos_set[1]-=1;
+				motor_run(0);
+				motor_run(1);
+				bldc_pos_set[0]-=SUBSTEPS;
+				bldc_pos_set[1]-=SUBSTEPS;
 			}
 			else if(cmd == '2')
 			{
-				dorun();
-				dontstop();
-				bldc_pos_set[0]+=1;
-				bldc_pos_set[1]+=1;
+				motor_run(0);
+				motor_run(1);
+				bldc_pos_set[0]+=SUBSTEPS;
+				bldc_pos_set[1]+=SUBSTEPS;
 			}
 			else if(cmd == '!')
 			{
-				dorun();
-				dontstop();
-				bldc_pos_set[0]-=3;
-				bldc_pos_set[1]-=3;
+				motor_run(0);
+				motor_run(1);
+				bldc_pos_set[0]-=4*SUBSTEPS;
+				bldc_pos_set[1]-=4*SUBSTEPS;
 			}
 			else if(cmd == '\"')
 			{
-				dorun();
-				dontstop();
-				bldc_pos_set[0]+=3;
-				bldc_pos_set[1]+=3;
+				motor_run(0);
+				motor_run(1);
+				bldc_pos_set[0]+=4*SUBSTEPS;
+				bldc_pos_set[1]+=4*SUBSTEPS;
 			}
 			else if(cmd == '8')
 			{
-				dorun();
-				dontstop();
-				bldc_pos_set[0]+=1;
-				bldc_pos_set[1]-=1;
+				motor_run(0);
+				motor_run(1);
+				bldc_pos_set[0]-=1*SUBSTEPS;
+				bldc_pos_set[1]+=1*SUBSTEPS;
 			}
 			else if(cmd == '9')
 			{
-				dorun();
-				dontstop();
-				bldc_pos_set[0]-=1;
-				bldc_pos_set[1]+=1;
-			}
-			else if(cmd == 'r')
-			{
-				gospeed = 400;
-			}
-			else if(cmd == 't')
-			{
-				gospeed = 200;
-			}
-			else if(cmd == 'y')
-			{
-				gospeed = 100;
-			}
-			else if(cmd == 'u')
-			{
-				gospeed = 50;
-			}
-			else if(cmd == 'i')
-			{
-				gospeed = 25;
+				motor_run(0);
+				motor_run(1);
+				bldc_pos_set[0]+=1*SUBSTEPS;
+				bldc_pos_set[1]-=1*SUBSTEPS;
 			}
 			else if(cmd == '(')
 			{
-				dorun();
-				dontstop();
-				bldc_pos_set[0]+=3;
-				bldc_pos_set[1]-=3;
+				motor_run(0);
+				motor_run(1);
+				bldc_pos_set[0]-=4*SUBSTEPS;
+				bldc_pos_set[1]+=4*SUBSTEPS;
 			}
 			else if(cmd == ')')
 			{
-				dorun();
-				dontstop();
-				bldc_pos_set[0]-=3;
-				bldc_pos_set[1]+=3;
+				motor_run(0);
+				motor_run(1);
+				bldc_pos_set[0]+=4*SUBSTEPS;
+				bldc_pos_set[1]-=4*SUBSTEPS;
 			}
-			else if(cmd == '0')
+			else if(cmd == 'q')
 			{
-				nonrun();
-				ok_cnt[0] = 0;
-				ok_cnt[1] = 0;
-				bldc_pos_set[0] = bldc_pos[0];
-				bldc_pos_set[1] = bldc_pos[1];
+				motor_let_stop(0);
+				motor_let_stop(1);
+			}
+			else if(cmd == 'r')
+			{
+				gospeed = 48;
+			}
+			else if(cmd == 't')
+			{
+				gospeed = 24;
+			}
+			else if(cmd == 'y')
+			{
+				gospeed = 12;
+			}
+			else if(cmd == 'u')
+			{
+				gospeed = 6;
+			}
+			else if(cmd == 'i')
+			{
+				gospeed = 3;
 			}
 			else if(cmd == 'G')
 			{
-				go = 1;	dorun(); wanna_stop[0] = 0; wanna_stop[1] = 0;
+				go = 1;
+				motor_run(0);
+				motor_run(1);
 			}
-			else if(cmd == 'g')
+			else if(cmd == 'g' || cmd == 'h')
 			{
-				go = 0; wanna_stop[0] = 1; wanna_stop[1] = 1;
+				go = 0;
+				motor_let_stop(0);
+				motor_let_stop(1);
 			}
 			else if(cmd == 'H')
 			{
-				go = 2;	dorun(); wanna_stop[0] = 0; wanna_stop[1] = 0;
+				go = 2;
+				motor_run(0);
+				motor_run(1);
 			}
-			else if(cmd == 'h')
-			{
-				go = 0; wanna_stop[0] = 1; wanna_stop[1] = 1;
-			}
-
-			else if(cmd == 'k')
-				timing_shift -= 50<<16;
-			else if(cmd == 'l')
-				timing_shift += 50<<16;
 			else if(cmd == 'a')
-				pid_p += 5;
+				pid_p += 10;
 			else if(cmd == 'z')
-				pid_p -= 5;
+				pid_p -= 10;
 			else if(cmd == 's')
-				pid_i += 5;
+				pid_i += 10;
 			else if(cmd == 'x')
-				pid_i -= 5;
+				pid_i -= 10;
 			else if(cmd == 'd')
-				pid_d += 5;
+				pid_d += 10;
 			else if(cmd == 'c')
-				pid_d -= 5;
-			else if(cmd == 'f')
-				pid_ff += 5;
-			else if(cmd == 'v')
-				pid_ff -= 5;
+				pid_d -= 10;
 
-			delay_ms(5);
+			delay_ms(1);
 
 		}		
 
 	}
 }
-#endif
 
 /*
 
