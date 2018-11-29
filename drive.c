@@ -4,7 +4,10 @@
 #include "imu.h"
 #include "bldc.h"
 #include "own_std.h"
+#include "sin_lut.h"
+#include "math.h"
 #include "../robotsoft/api_board_to_soft.h"
+#include "../robotsoft/api_soft_to_board.h"
 
 static char printbuf[128];
 
@@ -34,8 +37,26 @@ static inline int is_robot_moving()
 	return moving;
 }
 
+hires_pos_t cur_pos;
+hires_pos_t target_pos;
 
-volatile hires_pos_t hires_cur_pos;
+void new_target(hires_pos_t pos)
+{
+	target_pos = pos;
+}
+
+void cmd_go_to(s2b_move_abs_t* m)
+{
+	target_pos.x = (int64_t)m->x<<16;
+	target_pos.y = (int64_t)m->y<<16;
+
+	int64_t dx = cur_pos.x - target_pos.x;
+	int64_t dy = cur_pos.y - target_pos.y;
+
+	uint32_t new_ang = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2*M_PI));
+
+	target_pos.ang = new_ang;
+}
 
 void drive_handler()
 {
@@ -113,7 +134,7 @@ void drive_handler()
 
 	if(ac_th_det_on>5000)
 	{
-		hires_cur_pos.ang += (97495LL*(int64_t)gz)>>16;
+		cur_pos.ang += (97495LL*(int64_t)gz)>>16;
 	}
 	else
 	{
@@ -127,13 +148,167 @@ void drive_handler()
 	}
 
 
-	if(hw_pose)
-	{
-		hw_pose->ang = hires_cur_pos.ang;
-		hw_pose->x = hires_cur_pos.x>>16;
-		hw_pose->y = hires_cur_pos.y>>16;
-	}
+	uint32_t mpos[2];
+	mpos[0] = bldc_pos[0];
+	mpos[1] = bldc_pos[1];
 
 	
+	static uint32_t prevpos[2];
+	static int initialized;
+	int32_t deltapos[2];
+	if(!initialized)
+	{
+		prevpos[0] = mpos[0];
+		prevpos[1] = mpos[1];
+		initialized=1;
+		target_pos = cur_pos;
+	}
+	deltapos[0] = mpos[0] - prevpos[0];
+	deltapos[1] = mpos[1] - prevpos[1];
+	prevpos[0] = mpos[0];
+	prevpos[1] = mpos[1];
+
+	if(deltapos[0] < -1000 || deltapos[0] > 1000 || deltapos[1] < -1000 || deltapos[1] > 1000) error(132);
+
+	deltapos[0] *= (790<<16)/(90*256);
+	deltapos[1] *= -1*(790<<16)/(90*256);
+
+	int32_t fwd = (deltapos[0] + deltapos[1])>>1;
+
+	cur_pos.x += ((int64_t)lut_cos_from_u32(cur_pos.ang) * (int64_t)fwd)>>SIN_LUT_RESULT_SHIFT;
+	cur_pos.y += ((int64_t)lut_sin_from_u32(cur_pos.ang) * (int64_t)fwd)>>SIN_LUT_RESULT_SHIFT;
+
+
+	if(hw_pose)
+	{
+		hw_pose->ang = cur_pos.ang;
+		hw_pose->x = cur_pos.x>>16;
+		hw_pose->y = cur_pos.y>>16;
+	}
+
+
+	int32_t ang_err = cur_pos.ang - target_pos.ang;
+
+	int64_t dx = cur_pos.x - target_pos.x;
+	int64_t dy = cur_pos.y - target_pos.y;
+	int32_t lin_err = sqrt(sq((double)dx) + sq((double)dy));
+
+	static int run, prev_run;
+
+	static double ang_speed;
+	double max_ang_speed_by_ang_err = 0.25*abso(ang_err)/ANG_1_DEG;
+	double max_ang_speed = 20.0; // steps per cycle
+
+	static double lin_speed;
+	double max_lin_speed_by_lin_err = 0.05*(lin_err>>16); // 400mm error -> speed unit 20
+	double max_lin_speed = 20.0;
+
+
+	if(ang_speed > max_ang_speed_by_ang_err)
+		ang_speed = max_ang_speed_by_ang_err;
+	else if(ang_speed < max_ang_speed) ang_speed *= 1.004;
+
+	if(lin_speed > max_lin_speed_by_lin_err)
+		lin_speed = max_lin_speed_by_lin_err;
+	else if(lin_speed < max_lin_speed) lin_speed *= 1.004;
+	
+	// Calculate the target wheel positions to correct the measured angular error
+	// In theory, this movement produces the "correct" end result automatically
+	// However, only the _remaining_ error (by gyro!) is used on each cycle, so the target
+	// wheel position gets better and better.
+	// 180 degree positive turn is -18000 units on both wheels
+	// 18 degree is -1800
+	// 1.8 degree is -180 units
+	// 1 degree is -100 units
+	
+	uint32_t target_mpos[2];
+
+
+	// Calculate target position solely on angular error (no linear motion)
+	if(ang_err < -10*ANG_1_DEG || ang_err > 10*ANG_1_DEG)
+	{
+		target_mpos[0] = mpos[0] + 100*(ang_err/ANG_1_DEG);
+		target_mpos[1] = mpos[1] + 100*(ang_err/ANG_1_DEG);
+	}
+	else
+	{
+
+	}
+
+
+	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG)
+	{
+		run = 1;
+	}
+	else if(ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG)
+	{
+		run = 0;
+	}
+
+// Example code for "dumb" stepping
+//		int dir = (ang_err>0)?1:-1;
+//		bldc_pos_set[0] += dir*(int)speed;
+//		bldc_pos_set[1] += dir*(int)speed;
+
+		// We know the target wheel positions, but limit the rate of change
+		for(int m=0; m<2; m++)
+		{
+			int ang_speed_i = (int)ang_speed;
+			int change = target_mpos[m] - mpos[m];
+			if(change > ang_speed_i)
+				change = ang_speed_i;
+			else if(change < -1*ang_speed_i)
+				change = -1*ang_speed_i;
+			bldc_pos_set[m] += change;
+		}
+
+
+
+	if(drive_diag)
+	{
+		drive_diag->ang_err = ang_err;
+		drive_diag->x = mpos[1];
+		drive_diag->y = target_mpos[1];
+	}
+
+	if(prev_run != run)
+	{
+		if(run)
+		{
+			motor_torque_lim(0, 50);
+			motor_torque_lim(1, 50);
+			motor_run(0);
+			motor_run(1);
+			ang_speed = 2.0;
+			lin_speed = 2.0;
+		}
+		else
+		{
+			motor_let_stop(0);
+			motor_let_stop(1);
+		}
+	}
+	prev_run = run;
 
 }
+
+/*
+void motor_run(int m);
+
+// Changes the state so that the motor goes into stop state once the position error has been corrected
+void motor_let_stop(int m);
+
+// Instantly stops the motor, and sets the error to zero by changing bldc_pos_set
+void motor_stop_now(int m);
+
+// Sets the motor current limit, torque between 0-100%
+void motor_torque_lim(int m, int percent);
+
+// Returns measured current converted to torque 0-100%
+int get_motor_torque(int m);
+
+// Completely frees the motor by floating the windings. Also does what motor_stop_now does.
+void motor_release(int m);
+
+*/
+

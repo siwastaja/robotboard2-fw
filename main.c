@@ -527,7 +527,7 @@ void main()
 	init_cpu_profiler();
 
 	extern void bldc_test();
-	bldc_test();
+//	bldc_test();
 
 	tof_ctrl_init();
 	uart_print_string_blocking("init ok\r\n"); 

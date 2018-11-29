@@ -167,7 +167,7 @@ volatile int ib_trace[TRACE_LEN], ic_trace[TRACE_LEN];
 #define CURRLIM_RATE1  200
 #define CURRLIM_RATE2    2
 
-#define ERR_SAT (20*SUBSTEPS)
+#define ERR_SAT (10*SUBSTEPS)
 
 #define P_SHIFT 4
 #define I_SHIFT 12
@@ -283,7 +283,8 @@ void bldc0_inthandler()
 
 	if(stop_state == 0 && run[0] && wanna_stop[0] && err > -STOP_THRESHOLD && err < STOP_THRESHOLD)
 	{
-		stop_state = abso(err)*STOP_LEN/STOP_THRESHOLD;
+//		stop_state = abso(err)*STOP_LEN/STOP_THRESHOLD;
+		stop_state = STOP_LEN;
 		if(stop_state < 1000) stop_state = 1000;
 		stop_initial_hall_pos = hall_pos;
 		stop_reverse = reverse;
@@ -357,7 +358,7 @@ void bldc0_inthandler()
 	{
 		int32_t phshift = PH90SHIFT/STOP_LEN * (STOP_LEN-stop_state);
 		loc = base_hall_aims[stop_initial_hall_pos] + timing_shift + (stop_reverse?(-1*phshift):(phshift));
-		sin_mult = 80;
+		sin_mult = 40;
 		if(--stop_state == 0)
 			run[0] = 0;
 
@@ -489,7 +490,8 @@ void bldc1_inthandler()
 
 	if(stop_state == 0 && run[1] && wanna_stop[1] && err > -STOP_THRESHOLD && err < STOP_THRESHOLD)
 	{
-		stop_state = abso(err)*STOP_LEN/STOP_THRESHOLD;
+//		stop_state = abso(err)*STOP_LEN/STOP_THRESHOLD;
+		stop_state = STOP_LEN;
 		if(stop_state < 1000) stop_state = 1000;
 		stop_initial_hall_pos = hall_pos;
 		stop_reverse = reverse;
@@ -559,7 +561,7 @@ void bldc1_inthandler()
 	{
 		int32_t phshift = PH90SHIFT/STOP_LEN * (STOP_LEN-stop_state);
 		loc = base_hall_aims[stop_initial_hall_pos] + timing_shift + (stop_reverse?(-1*phshift):(phshift));
-		sin_mult = 90;
+		sin_mult = 40;
 		if(--stop_state == 0)
 			run[1] = 0;
 
@@ -660,9 +662,9 @@ void motor_torque_lim(int m, int percent)
 {
 	if(m < 0 || m > 1 || percent<0 || percent>100) error(122);
 
-	int curr = percent*25000/100;
-	int pp = 40 + percent*40/100;
-	int pi = 50 + percent*30/100;
+	int curr = (percent*25000)/100;
+	int pp = 50 + (percent*50)/100;
+	int pi = 150 + (percent*250)/100;
 
 	pid_p = pp;
 	pid_i = pi;

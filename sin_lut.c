@@ -2,7 +2,7 @@
 #include <inttypes.h>
 #include "sin_lut.h"
 
-const int16_t sin_lut[SIN_LUT_POINTS] __attribute__((section(".sin_lut"))) =
+const int16_t sin_lut[SIN_LUT_POINTS] __attribute__((section(".dtcm_data"))) __attribute__((aligned(4))) =
 {
 0,
 50,

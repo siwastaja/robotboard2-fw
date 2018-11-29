@@ -641,6 +641,14 @@ void parse_rx_packet()
 				break;
 			#endif
 
+			case CMD_MOVE_ABS:
+			{
+				extern void cmd_go_to(s2b_move_abs_t* m);
+
+				cmd_go_to((s2b_move_abs_t*)p_data);
+			}
+			break;
+
 			default:
 			{
 
