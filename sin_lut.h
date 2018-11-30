@@ -21,4 +21,16 @@ static inline int16_t lut_cos_from_u32(uint32_t ang)
 	return sin_lut[ang>>(32-SIN_LUT_BITS)]; // Won't overindex; ang=0 -> idx = 0, ang=2^32-1 -> idx = 4095
 }
 
+
+static inline int16_t lut_sin_from_u16(uint16_t ang)
+{
+	return sin_lut[ang>>(16-SIN_LUT_BITS)]; // Won't overindex; ang=0 -> idx = 0, ang=2^32-1 -> idx = 4095
+}
+
+static inline int16_t lut_cos_from_u16(uint16_t ang)
+{
+	ang += 16384; // Will wrap around properly
+	return sin_lut[ang>>(16-SIN_LUT_BITS)]; // Won't overindex; ang=0 -> idx = 0, ang=2^32-1 -> idx = 4095
+}
+
 #endif

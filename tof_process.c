@@ -135,10 +135,11 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 //#define DBGPR
 //#define PIX (30*160+80)
 
-void compensated_tof_calc_dist_ampl(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
-void compensated_tof_calc_dist_ampl(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg)
+void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
+void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg)
 {
-	uint32_t avg_ampl = 0;
+//	uint32_t avg_ampl = 0;
+	uint8_t max_ampl = 0;
 	for(int i=0; i < TOF_XS*TOF_YS; i++)
 	{
 		uint16_t dist;
@@ -201,9 +202,9 @@ void compensated_tof_calc_dist_ampl(uint8_t *avg_ampl_out, uint8_t *ampl_out, ui
 
 
 			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/30; if(ampl > 255) ampl = 255;
+				ampl = (abso(dcs20)+abso(dcs31))/23; if(ampl > 255) ampl = 255;
 			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/23;
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
 			#endif
 
 			if(ampl<3)
@@ -234,19 +235,23 @@ void compensated_tof_calc_dist_ampl(uint8_t *avg_ampl_out, uint8_t *ampl_out, ui
 		}
 		ampl_out[i] = ampl;
 		dist_out[i] = dist;
-		avg_ampl += ampl;
+//		avg_ampl += ampl;
+		if(ampl > max_ampl) max_ampl = ampl;
 	}
 
-	if(avg_ampl_out != NULL)
-		*avg_ampl_out = avg_ampl/(TOF_XS*TOF_YS);
+//	if(avg_ampl_out != NULL)
+//		*avg_ampl_out = avg_ampl/(TOF_XS*TOF_YS);
+
+	if(max_ampl_out != NULL)
+		*max_ampl_out = max_ampl;
 }
 
 
-void compensated_tof_calc_dist_ampl_narrow(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
-void compensated_tof_calc_dist_ampl_narrow(uint8_t *avg_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg)
+void compensated_tof_calc_dist_ampl_narrow(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
+void compensated_tof_calc_dist_ampl_narrow(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg)
 {
-	uint32_t avg_ampl = 0;
-
+//	uint32_t avg_ampl = 0;
+	uint8_t max_ampl = 0;
 	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
 	{
 		uint16_t dist;
@@ -309,9 +314,9 @@ void compensated_tof_calc_dist_ampl_narrow(uint8_t *avg_ampl_out, uint8_t *ampl_
 
 
 			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/30; if(ampl > 255) ampl = 255;
+				ampl = (abso(dcs20)+abso(dcs31))/23; if(ampl > 255) ampl = 255;
 			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/23;
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
 			#endif
 
 			if(ampl<3)
@@ -342,11 +347,50 @@ void compensated_tof_calc_dist_ampl_narrow(uint8_t *avg_ampl_out, uint8_t *ampl_
 		}
 		ampl_out[i] = ampl;
 		dist_out[i] = dist;
-		avg_ampl += ampl;
+		//avg_ampl += ampl;
+		if(ampl > max_ampl) max_ampl = ampl;
+
 	}
 
-	if(avg_ampl_out != NULL)
-		*avg_ampl_out = avg_ampl/(TOF_XS*TOF_YS);
+//	if(avg_ampl_out != NULL)
+//		*avg_ampl_out = avg_ampl/(TOF_XS*TOF_YS);
+
+	if(max_ampl_out != NULL)
+		*max_ampl_out = max_ampl;
+}
+
+// Positive *corr: narrow is longer - wide is too short.
+int32_t calc_widnar_correction(int32_t* corr, uint8_t *wid_ampl, uint16_t *wid_dist, uint8_t *nar_ampl, uint16_t *nar_dist)  __attribute__((section(".text_itcm")));
+int32_t calc_widnar_correction(int32_t* corr, uint8_t *wid_ampl, uint16_t *wid_dist, uint8_t *nar_ampl, uint16_t *nar_dist)
+{
+	if(corr == NULL)
+		return -999999;
+
+	int cnt = 0;
+	int32_t wid_dist_acc = 0;
+	int32_t nar_dist_acc = 0;
+	for(int nyy=0; nyy<TOF_YS_NARROW; nyy++)
+	{
+		for(int nxx=0; nxx<TOF_XS_NARROW; nxx++)
+		{
+			int wxx = nxx + TOF_NARROW_X_START;
+			int wyy = nyy + TOF_NARROW_Y_START;
+
+			uint16_t wampl = wid_ampl[wyy*TOF_XS+wxx];
+			uint16_t nampl = nar_ampl[nyy*TOF_XS_NARROW+nxx];
+			if(wampl > 12 && nampl > 12 && wampl < 255 && nampl < 255 && nampl < (wampl<<1) && nampl > (wampl>>1))
+			{
+				cnt++;
+				wid_dist_acc += wid_dist[wyy*TOF_XS+wxx];
+				nar_dist_acc += nar_dist[nyy*TOF_XS_NARROW+nxx];
+			}
+		}
+	}
+
+	if(cnt > 0)
+		*corr = (nar_dist_acc-wid_dist_acc)/cnt;
+
+	return cnt;
 }
 
 
@@ -830,6 +874,53 @@ void tof_calc_dist_3hdr_with_ignore_with_straycomp(uint16_t* dist_out, uint8_t* 
 		}
 	}
 }
+
+
+static uint8_t stray_weight[15*40] __attribute__((section(".dtcm_data"))) =
+{                                             /* LEDS ON THIS SIDE */
+ 20,20,30,39,45,60,70,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,80,70,60,45,39,30,20,20,
+ 10,10,15,20,25,32,37,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,37,32,25,20,15,10,10,
+ 9, 9,13,18,23,29,34,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,36,34,29,23,18,13, 9, 9,
+ 8, 8,12,16,20,26,30,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,30,26,20,16,12, 8, 8,
+ 6, 6,10,13,17,22,25,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,27,25,22,17,13,10, 6, 6,
+ 6, 6, 9,12,15,19,22,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,22,19,15,12, 9, 6, 6,
+ 5, 5, 8,11,14,18,21,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,22,21,18,14,11, 8, 5, 5,
+ 5, 5, 7,10,13,16,19,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,20,19,16,13,10, 7, 5, 5,
+ 4, 4, 7, 9,12,15,18,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,18,15,12, 9, 7, 4, 4,
+ 4, 4, 6, 8,11,14,16,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,17,16,14,11, 8, 6, 4, 4,
+ 4, 4, 6, 8,10,13,15,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,15,13,10, 8, 6, 4, 4,
+ 4, 4, 6, 8,10,13,15,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,15,13,10, 8, 6, 4, 4,
+ 3, 3, 5, 7, 9,12,14,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,14,12, 9, 7, 5, 3, 3,
+ 3, 3, 5, 7, 9,11,13,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,13,11, 9, 7, 5, 3, 3,
+ 3, 3, 5, 7, 9,11,13,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,13,11, 9, 7, 5, 3, 3
+};                            /* NON-LED SIDE: items here don't seem to cause any issue */
+
+void calc_stray_estimate(uint8_t *ampl_in, uint16_t *dist_in, uint16_t *stray_ampl, uint16_t *stray_dist)  __attribute__((section(".text_itcm")));
+void calc_stray_estimate(uint8_t *ampl_in, uint16_t *dist_in, uint16_t *stray_ampl, uint16_t *stray_dist)
+{
+	int32_t ampl_acc = 0;
+	int64_t dist_acc = 0;
+	// To save time, we only process 1/16 of the pixels
+	for(int yy=0; yy<15; yy++)
+	{
+		for(int xx=0; xx<40; xx++)
+		{
+			int weigh_i = yy*40+xx;
+			int pix_i = (yy<<2)*160+(xx<<2);
+
+			int32_t ampl_causing_stray = (int32_t)ampl_in[pix_i] * (int32_t)stray_weight[weigh_i]; // Biggest = 255*99 = 25245
+
+			ampl_acc += ampl_causing_stray;
+			dist_acc += dist_in[pix_i] * ampl_causing_stray; // Weigh the distances based on the amplitude. Biggest: 65535 * 25245
+		}
+	}
+
+	*stray_dist = dist_acc / ampl_acc; // Average distance of weighed stray-causing light (short distances dominate)
+	*stray_ampl = ampl_acc / (15*40); // Biggest = 25245
+}
+
+
+
 
 /*
 	threshold = 250mm

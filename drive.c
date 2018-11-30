@@ -287,7 +287,7 @@ void drive_handler()
 
 	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG || lin_err > 50LL*65536LL || lin_err < -50LL*65536LL)
 	{
-		run = 1;
+		//run = 1;
 	}
 	else if(ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)
 	{

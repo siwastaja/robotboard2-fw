@@ -170,6 +170,25 @@ void update_led(int sidx)
 	}
 }
 
+uint16_t measure_stray()
+{
+	int32_t stray = 16384;
+	for(int i=0; i<40; i++)
+	{
+		delay_us(12);
+		uint16_t now = adc3.s.epc_stray_estimate;
+		if(now < stray) stray = now;
+	}
+
+	stray = 16384-stray-1000;
+	if(stray < 0) stray = 0;
+	int64_t s = stray;
+	stray = (s*s*s)/1500000000LL;
+	return stray;
+}
+
+#define IFDBG if(sidx == 7)
+
 static int lowbat_die_cnt = 0;
 static int cycle;
 void run_cycle()
@@ -186,7 +205,7 @@ void run_cycle()
 
 	if(is_tx_overrun())
 	{
-		uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
+//		uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
 		gen_data = 0;
 	}
 
@@ -268,8 +287,6 @@ void run_cycle()
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
 
 
-	update_led(sidx);
-
 
 	static uint8_t  wid_ampl[2][TOF_XS*TOF_YS];
 	static uint16_t wid_dist[2][TOF_XS*TOF_YS];
@@ -294,7 +311,7 @@ void run_cycle()
 	copy_cal_to_shadow(sidx, 0);
 
 	// Next will be longer:
-	epc_intlen(intlen_mults[0], INTUS(100)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(150)); block_epc_i2c(4);
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
@@ -304,17 +321,16 @@ void run_cycle()
 
 	dcmi_start_dma(&dcsb, SIZEOF_4DCS);
 	epc_trig();
-	delay_us(350);
-	uint16_t wide_stray = adc3.s.epc_stray_estimate;
+	uint16_t wide_stray = measure_stray(); // blocks for 500us
 
-	uint8_t wid_ampl_avg[2] = {0};
-	uint8_t nar_ampl_avg[2] = {0};
+	uint8_t wid_ampl_max[2] = {0};
+	uint8_t nar_ampl_max[2] = {0};
 
-	compensated_tof_calc_dist_ampl(&wid_ampl_avg[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
+	compensated_tof_calc_dist_ampl(&wid_ampl_max[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	if(wid_ampl_avg[0] > 22)
+	if(wid_ampl_max[0] == 255)
 	{
 		delay_ms(20);
 		wid_raw_send = 0;
@@ -325,21 +341,33 @@ void run_cycle()
 	// QUITE SHORT NARROW
 	delay_ms(1);
 	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(500)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(50)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
+	rgb_update(0); // red led slightly distorts the stray meas
 	epc_trig();
-	delay_us(350);
-	uint16_t narrow_stray = adc3.s.epc_stray_estimate;
+	uint16_t narrow_stray = measure_stray(); // blocks for 500us
+	update_led(sidx);
 
-	compensated_tof_calc_dist_ampl(&wid_ampl_avg[1], wid_ampl[1], wid_dist[1], &dcsb, &mono_comp);
+	// calc quite short wide:
+	compensated_tof_calc_dist_ampl(&wid_ampl_max[1], wid_ampl[1], wid_dist[1], &dcsb, &mono_comp);
+	uint16_t inimage_stray_ampl_est;
+	uint16_t inimage_stray_dist_est;
+	calc_stray_estimate(wid_ampl[1], wid_dist[1], &inimage_stray_ampl_est, &inimage_stray_dist_est);
 
-
+	IFDBG
+	{
+		DBG_PR_VAR_U16(inimage_stray_ampl_est);
+		DBG_PR_VAR_U16(inimage_stray_dist_est);
+		DBG_PR_VAR_U16(wide_stray);
+		DBG_PR_VAR_U16(narrow_stray);
+	}
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
+	wid_raw_send = 1;
 
-	if(wid_ampl_avg[1] > 40)
+	if(wid_ampl_max[1] == 255)
 	{
 		delay_ms(15);
 		wid_raw_send = 1;
@@ -349,17 +377,24 @@ void run_cycle()
 
 
 	// Actual wide
-	// Previous inttime: 200 us
-	// avg	new
-	// pre
-	// 40	200
-	//  0	4000
+	// Previous inttime: 150 us
+	// Aim for max amplitude of 150
+
 //	int inttime_us = 4000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
-	int inttime_us = 3000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
-	if(inttime_us < 200) inttime_us = 200;
+//	int inttime_us = 3000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
+	int inttime_us = 150.0/(double)wid_ampl_max[1] * 150.0;
+	if(inttime_us < 150) inttime_us = 150;
+	else if(inttime_us > 4000) inttime_us = 4000;
 //	int inttime_us = 400;
-//	if(sidx==1)
-//		DBG_PR_VAR_I32(inttime_us);
+
+	IFDBG
+	{
+		DBG_PR_VAR_I32(wid_ampl_max[1]);
+		DBG_PR_VAR_I32(inttime_us);
+	}
+
+
+	// AUTOEXPOSED MIDLONG WIDE
 
 	epc_intlen(intlen_mults[0], INTUS(inttime_us)); block_epc_i2c(4);
 	epc_4dcs(); block_epc_i2c(4);
@@ -375,10 +410,72 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	// reuse 0
-	compensated_tof_calc_dist_ampl(&wid_ampl_avg[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
 
+
+
+	// AUTOEXPOSED MIDLONG NARROW
+
+	delay_ms(1);
+	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(inttime_us/3)); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
+	epc_trig();
+//	delay_us(350);
+//	uint16_t narrow_stray = adc3.s.epc_stray_estimate;
+
+
+	// calc autoexposed midlong wide: reuse 0
+	compensated_tof_calc_dist_ampl(&wid_ampl_max[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
 	wid_raw_send = 0;
+
+
+	if(poll_capt_with_timeout_complete()) log_err();
+
+	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl[1], nar_dist[1], &dcsa_narrow, &mono_comp);
+	nar_raw_send = 1;
+
+	int32_t widnar_corr;
+	int widnar_ret;
+	widnar_ret = calc_widnar_correction(&widnar_corr, wid_ampl[0], wid_dist[0], nar_ampl[1], nar_dist[1]);
+
+	if(widnar_ret > 20)
+	{
+		if(widnar_ret < 30)
+			widnar_corr /= 4;
+		else if(widnar_ret < 40)
+			widnar_corr /= 3;
+		else if(widnar_ret < 50)
+			widnar_corr /= 2;
+		else if(widnar_ret < 60)
+			widnar_corr = (widnar_corr*3)/4;
+
+		for(int i=0; i<TOF_XS*TOF_YS; i++)
+		{
+			wid_dist[0][i] += widnar_corr;
+		}
+	}
+
+
+	IFDBG
+	{
+		DBG_PR_VAR_I32(widnar_ret);
+		DBG_PR_VAR_I32(widnar_corr);
+	}
+
+	if(test_msg3)
+	{
+		memset(test_msg3->buf, 0, 200*200);
+
+		for(int yy=1; yy<TOF_YS-1; yy++)
+		{
+			for(int xx=1; xx<TOF_XS-1; xx++)
+			{
+				
+			}
+		}
+
+	}
 
 	SKIP:
 
@@ -389,8 +486,6 @@ void run_cycle()
 		tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
 		memcpy(tof_raw_dist->dist, wid_dist[wid_raw_send], sizeof tof_raw_dist->dist);
 		memcpy(tof_raw_dist->dist_narrow, nar_dist[nar_raw_send], sizeof tof_raw_dist->dist_narrow);
-		memcpy(tof_raw_dist->dist, wid_dist[0], sizeof tof_raw_dist->dist);
-		memcpy(tof_raw_dist->dist_narrow, nar_dist[0], sizeof tof_raw_dist->dist_narrow);
 		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
 		tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
 	}
