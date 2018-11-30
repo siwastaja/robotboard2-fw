@@ -53,6 +53,7 @@ void cmd_go_to(s2b_move_abs_t* m)
 	new_direction = 1;
 }
 
+void drive_handler() __attribute__((section(".text_itcm")));
 void drive_handler()
 {
 	static int gyro_dc_x[6];
@@ -103,9 +104,9 @@ void drive_handler()
 
 		if(is_robot_moving())
 		{
-			led_status(9, WHITE, LED_MODE_FADE);
-			led_status(0, WHITE, LED_MODE_FADE);
-			led_status(1, WHITE, LED_MODE_FADE);
+	//		led_status(9, WHITE, LED_MODE_FADE);
+	//		led_status(0, WHITE, LED_MODE_FADE);
+	//		led_status(1, WHITE, LED_MODE_FADE);
 		}
 		else
 		{
@@ -147,6 +148,10 @@ void drive_handler()
 	uint32_t mpos[2];
 	mpos[0] = bldc_pos[0];
 	mpos[1] = bldc_pos[1];
+
+//	int32_t mpos_err[2];
+//	mpos_err[0] = bldc_pos[0] - bldc_pos_set[0];
+//	mpos_err[1] = bldc_pos[1] - bldc_pos_set[1];
 
 	
 	static uint32_t prevpos[2];
@@ -197,29 +202,57 @@ void drive_handler()
 
 	int32_t ang_err = cur_pos.ang - ang_to_target;
 
+	int reverse = 0;
+	if(ang_err > 110*ANG_1_DEG || ang_err < -110*ANG_1_DEG)
+	{
+		reverse = 1;
+		ang_err = (uint32_t)ang_err + (uint32_t)(ANG_180_DEG);
+	}
+
+	static int run, prev_run;
+
+	if(reverse)
+	{
+		lin_err *= -1;
+		if(run)
+		{
+			led_status(4, WHITE, LED_MODE_FADE);
+			led_status(5, WHITE, LED_MODE_FADE);
+			led_status(6, WHITE, LED_MODE_FADE);
+		}
+		led_status(9, BLACK, LED_MODE_FADE);
+		led_status(0, BLACK, LED_MODE_FADE);
+		led_status(1, BLACK, LED_MODE_FADE);
+	}
+	else
+	{
+		led_status(4, BLACK, LED_MODE_FADE);
+		led_status(5, BLACK, LED_MODE_FADE);
+		led_status(6, BLACK, LED_MODE_FADE);
+		if(run)
+		{
+			led_status(9, WHITE, LED_MODE_FADE);
+			led_status(0, WHITE, LED_MODE_FADE);
+			led_status(1, WHITE, LED_MODE_FADE);
+		}
+	}
 
 	// Over 100 meters is an error.
 	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(133);
 
-	static int run, prev_run;
-
 	static double ang_speed;
-	double max_ang_speed_by_ang_err = 0.25*abso(ang_err)/ANG_1_DEG;
+	double max_ang_speed_by_ang_err = 2.0 + 0.25*abso(ang_err)/ANG_1_DEG;
+	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
 	double max_ang_speed = 20.0; // steps per cycle
+	double min_ang_speed = 2.0;
 
 	static double lin_speed;
-	double max_lin_speed_by_lin_err = 0.05*(double)(lin_err>>16); // 400mm error -> speed unit 20
-	double max_lin_speed = 20.0;
+	double max_lin_speed_by_lin_err = 5.0 + 0.05*(double)abso((lin_err>>16)); // 400mm error -> speed unit 20
+	double max_lin_speed_by_ang_err = 100.0 / (abso(ang_err)/ANG_1_DEG); // 10 deg error -> max lin speed 10 units.
+	double max_lin_speed = 35.0;
+	double min_lin_speed = 5.0;
 
 
-	if(ang_speed > max_ang_speed_by_ang_err)
-		ang_speed = max_ang_speed_by_ang_err;
-	else if(ang_speed < max_ang_speed) ang_speed *= 1.004;
-
-	if(lin_speed > max_lin_speed_by_lin_err)
-		lin_speed = max_lin_speed_by_lin_err;
-	else if(lin_speed < max_lin_speed) lin_speed *= 1.004;
-	
 	// Calculate the target wheel positions to correct the measured angular error
 	// In theory, this movement produces the "correct" end result automatically
 	// However, only the _remaining_ error (by gyro!) is used on each cycle, so the target
@@ -229,46 +262,97 @@ void drive_handler()
 	// 1.8 degree is -180 units
 	// 1 degree is -100 units
 	
-	uint32_t target_mpos[2];
+	int32_t delta_mpos_ang[2];
+	int32_t delta_mpos_lin[2];
 
+	int correcting_angle = 0;
+	int correcting_linear = 0;
 
-	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG)
+	if(ang_err < -10*ANG_1_DEG || ang_err > 10*ANG_1_DEG)
 	{
-		// Calculate target position solely on angular error (no linear motion)
-		target_mpos[0] = mpos[0] + 100*(ang_err/ANG_1_DEG);
-		target_mpos[1] = mpos[1] + 100*(ang_err/ANG_1_DEG);
+		correcting_angle = 1;
+		correcting_linear = 0;
 	}
 	else
 	{
-		// Calc targ pos solely on lin error
-		target_mpos[0] = mpos[0] + lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
-		target_mpos[1] = mpos[1] - lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
+		correcting_angle = 1;
+		correcting_linear = 1;
 	}
 
-	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG || lin_err > 50LL*65536LL)
+	delta_mpos_ang[0] = 100*(ang_err/ANG_1_DEG);
+	delta_mpos_ang[1] = 100*(ang_err/ANG_1_DEG);
+
+	delta_mpos_lin[0] = lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
+	delta_mpos_lin[1] = -1*lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
+
+	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG || lin_err > 50LL*65536LL || lin_err < -50LL*65536LL)
 	{
 		run = 1;
 	}
-	else if(ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG && lin_err < 20LL*65536LL)
+	else if(ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)
 	{
 		run = 0;
 	}
 
-// Example code for "dumb" stepping
-//		int dir = (ang_err>0)?1:-1;
-//		bldc_pos_set[0] += dir*(int)speed;
-//		bldc_pos_set[1] += dir*(int)speed;
 
-		// We know the target wheel positions, but limit the rate of change
+	if(correcting_angle)
+	{	
+		if(ang_speed < max_ang_speed) ang_speed *= 1.004;
+	}
+	else
+	{
+		if(ang_speed > min_ang_speed) ang_speed *= 1.0/1.004;
+	}
+
+	if(ang_speed > max_ang_speed_by_ang_err)
+		ang_speed = max_ang_speed_by_ang_err;
+	if(ang_speed > max_ang_speed_by_lin_err)
+		ang_speed = max_ang_speed_by_lin_err;
+
+	if(correcting_linear)
+	{	
+		if(lin_speed < max_lin_speed) lin_speed *= 1.005;
+	}
+	else
+	{
+		if(lin_speed > min_lin_speed) lin_speed *= 1.0/1.005;
+	}
+
+	if(lin_speed > max_lin_speed_by_lin_err)
+		lin_speed = max_lin_speed_by_lin_err;
+	if(lin_speed > max_lin_speed_by_ang_err)
+		lin_speed = max_lin_speed_by_ang_err;
+
+	int max_mpos_err = 5*256;
+	static int max_pos_err_cnt;
+	// We know the target wheel positions, but limit the rate of change
+	int dbg1=0, dbg2=0;
 	for(int m=0; m<2; m++)
 	{
-		int ang_speed_i = (int)lin_speed; //!!!!!!!!!!!!!!!!!
-		int change = target_mpos[m] - mpos[m];
-		if(change > ang_speed_i)
-			change = ang_speed_i;
-		else if(change < -1*ang_speed_i)
-			change = -1*ang_speed_i;
-		bldc_pos_set[m] += change;
+		int ang_speed_i = (int)ang_speed;
+		int lin_speed_i = (int)lin_speed;
+
+		int d_ang = delta_mpos_ang[m];
+		int d_lin = delta_mpos_lin[m];
+
+		if(d_ang > ang_speed_i) d_ang = ang_speed_i;
+		else if(d_ang < -1*ang_speed_i) d_ang = -1*ang_speed_i;
+
+		if(d_lin > lin_speed_i) d_lin = lin_speed_i;
+		else if(d_lin < -1*lin_speed_i) d_lin = -1*lin_speed_i;
+
+		int increment = d_ang + d_lin;
+		uint32_t new_pos = bldc_pos_set[m] + (uint32_t)increment;
+		int new_pos_err = mpos[m] - new_pos;
+		if(m==0){ dbg1 = delta_mpos_lin[m]; dbg2 = increment;}
+		if(new_pos_err > max_mpos_err || new_pos_err < -1*max_mpos_err)
+		{
+			max_pos_err_cnt++;
+		}
+		else
+		{
+			bldc_pos_set[m] = new_pos;
+		}
 	}
 
 
@@ -276,20 +360,20 @@ void drive_handler()
 	if(drive_diag)
 	{
 		drive_diag->ang_err = ang_err;
-		drive_diag->x = mpos[1];
-		drive_diag->y = target_mpos[1];
+		drive_diag->x = dbg1; //bldc_pos_set[0] - bldc_pos[0]; //ang_speed; // mpos[1];
+		drive_diag->y = dbg2; //bldc_pos_set[1] - bldc_pos[1]; //lin_speed; //target_mpos[1];
 	}
 
 	if(prev_run != run)
 	{
 		if(run)
 		{
-			motor_torque_lim(0, 25);
-			motor_torque_lim(1, 25);
+			motor_torque_lim(0, 30);
+			motor_torque_lim(1, 30);
 			motor_run(0);
 			motor_run(1);
-			ang_speed = 2.0;
-			lin_speed = 2.0;
+			ang_speed = min_ang_speed;
+			lin_speed = min_lin_speed;
 		}
 		else
 		{
@@ -298,6 +382,22 @@ void drive_handler()
 		}
 	}
 	prev_run = run;
+
+	static int nonrun_cnt;
+	if(run)
+		nonrun_cnt = 0;
+	else
+	{
+		if(nonrun_cnt < 200)
+		{
+			nonrun_cnt++;
+		}
+		else
+		{
+			bldc_pos_set[0] = bldc_pos[0];
+			bldc_pos_set[1] = bldc_pos[1];
+		}
+	}
 
 }
 

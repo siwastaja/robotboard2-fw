@@ -153,6 +153,25 @@ void chargepump_replenish_pulsetrain()
 	}
 }
 
+void delay_us_local(uint32_t i) // from flash, running at slower clock
+{
+	i *= 15; // 100 for 400MHz -> 15 for 60MHz
+	i -= 7;
+	while(i--)
+		__asm__ __volatile__ ("nop");
+}
+
+void chargepump_replenish_pulsetrain_before_itcm_copy()
+{
+	for(int i=0; i<18; i++)
+	{
+		PLAT_CP_HI();
+		delay_us_local(16);
+		PLAT_CP_LO();
+		delay_us_local(32);
+	}
+}
+
 
 // 10% duty at 1kHz; charges the gate slower, but keeps it charged with very little power.
 // specify the delay length in ms
@@ -616,7 +635,7 @@ void pwrswitch_1khz()
 	}
 	else if(main_power_enabled == 1)
 	{
-		if(++shutdown_cnt > 5000) // Milliseconds to give the SBC to shut down
+		if(++shutdown_cnt > 10000) // Milliseconds to give the SBC to shut down
 		{
 			main_power_enabled = 0;
 		}

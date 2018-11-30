@@ -286,7 +286,7 @@ void main()
 	// Block for 500ms, but generate charge pump drive enough to keep it charged if it already is
 	// (for example, when soft-resetting the system without pressing power switch)
 
-	pwrswitch_chargepump_init();
+//	pwrswitch_chargepump_init(); // moved to stm32init.c
 	chargepump_pulsetrain_low_power(500); // if this is removed, change the next replenish_pulsetrain to initial_pulsetrain.
 
 
@@ -390,9 +390,11 @@ void main()
 	RCC->CR |= 1UL<<26; // PLL2 on
 
 	relocate_vectors();
+	chargepump_replenish_pulsetrain();
 	init_sram1234();
 	chargepump_replenish_pulsetrain();
 	init_axi_data();
+	chargepump_replenish_pulsetrain();
 	init_dtcm();
 
 	while(!(RCC->CR & 1UL<<27)) ; // Wait for PLL2 ready
@@ -426,6 +428,7 @@ void main()
 	#endif
 
 	init_adcs();
+	chargepump_replenish_pulsetrain();
 	init_audio();
 	init_sbc_comm();
 
@@ -477,7 +480,7 @@ void main()
 	*/
 
 
-	PWR->CR1 |= 0b110UL<<5 /*Power Voltage Detector level: 2.85V*/ | 1UL<<4 /*PVD on*/;
+	PWR->CR1 |= 0b101UL<<5 /*Power Voltage Detector level: 2.70V*/ | 1UL<<4 /*PVD on*/;
 
 	// PVD event is EXTI event #16
 

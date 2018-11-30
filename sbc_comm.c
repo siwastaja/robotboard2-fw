@@ -467,7 +467,7 @@ void sbc_spi_cs_end_inthandler()
 	// Check if there is the maintenance magic code:
 	if(*((volatile uint32_t*)&rx_fifo[rx_fifo_spi]) == 0x9876fedb)
 	{
-		uart_print_string_blocking("flasher!\r\n");
+//		uart_print_string_blocking("flasher!\r\n");
 		run_flasher();
 	}
 

@@ -512,8 +512,12 @@ void stm32init(void)
 
 	RCC->AHB4ENR |= 1UL<<28; // Enable backup ram access clock.
 
-	if(backup_ram.immediate_5v == 0x420b1a5e)
+	IO_TO_GPI(GPIOE,2); // power switch sense
+	#define PWRSWITCH_PRESSED (!IN(GPIOE,2))
+
+	if(backup_ram.immediate_5v == 0x420b1a5e && !PWRSWITCH_PRESSED)
 	{
+		// If the power switch is pressed, the backup ram is wrong
 		RCC->AHB4ENR |= 1UL<<5;
 		IO_TO_GPO(GPIOF, 5);
 		BIG5V_ON();
@@ -551,6 +555,13 @@ void stm32init(void)
 
 	PWR->D3CR = 0b11UL<<14; // VOS1
 
+	extern void pwrswitch_chargepump_init();
+	pwrswitch_chargepump_init();
+	// this may be necessary when reseting from flasher. In normal boot, the user still presses
+	// the power switch, so this isn't necessary in that case:
+	extern void chargepump_replenish_pulsetrain_before_itcm_copy();
+	chargepump_replenish_pulsetrain_before_itcm_copy(); 
+
 	uint32_t* text_itcm_begin  = (uint32_t*)&_TEXT_ITCM_BEGIN;
 	uint32_t* text_itcm_end    = (uint32_t*)&_TEXT_ITCM_END;
 	uint32_t* text_itcm_i_begin = (uint32_t*)&_TEXT_ITCM_I_BEGIN;
@@ -561,6 +572,8 @@ void stm32init(void)
 		text_itcm_begin++;
 		text_itcm_i_begin++;
 	}
+
+	chargepump_replenish_pulsetrain_before_itcm_copy(); 
 
 	__DSB(); __ISB();
 

@@ -476,6 +476,7 @@ void flasher()
 //static char printbuf[128];
 void run_flasher()
 {
+	__disable_irq();
 	// Maximize the TIM5 ISR priority so it will pre-empt our current context, which is the SPI interrupt where
 	// run_flasher() was called from (normally something fairly high; or when in error context, 1).
 	NVIC_SetPriority(TIM5_IRQn, 0);
@@ -483,7 +484,6 @@ void run_flasher()
 	extern int main_power_enabled;
 	main_power_enabled = 2;
 	SET_TIMEBASE_VECTOR_TO_KEEPON();
-	beep_blocking(100, 120, 1000);
 
 	// Disable all interrupts, except the charge pump
 	// TIM5_IRQn is #50, which is in register 1.
@@ -498,9 +498,13 @@ void run_flasher()
 	__DSB();
 	__ISB();
 
+	__enable_irq();
+
 
 	SAFETY_SHUTDOWN();
 
+
+	beep_blocking(100, 120, 1000);
 	beep_blocking(150, 80, 1000);
 
 
