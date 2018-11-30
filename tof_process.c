@@ -207,11 +207,11 @@ void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, ui
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
 			#endif
 
-			if(ampl<3)
-			{
-				dist = 65534;
-			}
-			else
+//			if(ampl<3)
+//			{
+//				dist = 65534;
+//			}
+//			else
 			{
 				int pixgroup;
 				if(!(i&1)) // even
@@ -319,11 +319,11 @@ void compensated_tof_calc_dist_ampl_narrow(uint8_t *max_ampl_out, uint8_t *ampl_
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
 			#endif
 
-			if(ampl<3)
-			{
-				dist = 65534;
-			}
-			else
+//			if(ampl<3)
+//			{
+//				dist = 65534;
+//			}
+//			else
 			{
 				int pixgroup;
 				if(!(i&1)) // even

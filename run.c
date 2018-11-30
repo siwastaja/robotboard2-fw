@@ -435,7 +435,7 @@ void run_cycle()
 	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl[1], nar_dist[1], &dcsa_narrow, &mono_comp);
 	nar_raw_send = 1;
 
-	int32_t widnar_corr;
+	int32_t widnar_corr = 0;
 	int widnar_ret;
 	widnar_ret = calc_widnar_correction(&widnar_corr, wid_ampl[0], wid_dist[0], nar_ampl[1], nar_dist[1]);
 
@@ -450,10 +450,10 @@ void run_cycle()
 		else if(widnar_ret < 60)
 			widnar_corr = (widnar_corr*3)/4;
 
-		for(int i=0; i<TOF_XS*TOF_YS; i++)
-		{
-			wid_dist[0][i] += widnar_corr;
-		}
+//		for(int i=0; i<TOF_XS*TOF_YS; i++)
+//		{
+//			wid_dist[0][i] += widnar_corr;
+//		}
 	}
 
 
@@ -463,17 +463,55 @@ void run_cycle()
 		DBG_PR_VAR_I32(widnar_corr);
 	}
 
-	if(test_msg3)
+	//if(test_msg3)
 	{
-		memset(test_msg3->buf, 0, 200*200);
-
+		//memset(test_msg3->buf, 0, 200*200);
+		memset(wid_dist[1], 0, sizeof wid_dist[1]);
+		memcpy(wid_ampl[1], wid_ampl[0], sizeof wid_ampl[1]);
+		uint8_t ampl_accept = 4;
 		for(int yy=1; yy<TOF_YS-1; yy++)
 		{
 			for(int xx=1; xx<TOF_XS-1; xx++)
 			{
-				
+				int32_t dists[5];
+
+				dists[0] = wid_dist[0][(yy+0)*TOF_XS+(xx+0)] + widnar_corr;
+				dists[1] = wid_dist[0][(yy-1)*TOF_XS+(xx+0)] + widnar_corr;
+				dists[2] = wid_dist[0][(yy+1)*TOF_XS+(xx+0)] + widnar_corr;
+				dists[3] = wid_dist[0][(yy+0)*TOF_XS+(xx+1)] + widnar_corr;
+				dists[4] = wid_dist[0][(yy+0)*TOF_XS+(xx-1)] + widnar_corr;
+
+				uint8_t ampls[5];
+				ampls[0] = wid_ampl[0][(yy+0)*TOF_XS+(xx+0)];
+				ampls[1] = wid_ampl[0][(yy-1)*TOF_XS+(xx+0)];
+				ampls[2] = wid_ampl[0][(yy+1)*TOF_XS+(xx+0)];
+				ampls[3] = wid_ampl[0][(yy+0)*TOF_XS+(xx+1)];
+				ampls[4] = wid_ampl[0][(yy+0)*TOF_XS+(xx-1)];
+
+				int32_t avg = (dists[0]+dists[1]+dists[2]+dists[3]+dists[4])/5;
+
+				int n_conform = 0;
+				int32_t conform_avg = 0;
+				for(int i=0; i<5; i++)
+				{
+					if(ampls[i] < 255 && ampls[i] > ampl_accept && dists[i] > avg-100 && dists[i] < avg+100)
+					{
+						n_conform++;
+						conform_avg += dists[i];
+					}
+				}
+
+				if(n_conform >= 3)
+				{
+					conform_avg /= n_conform;
+				}
+				else
+					conform_avg = 65534;
+
+				wid_dist[1][yy*TOF_XS+xx] = conform_avg;
 			}
 		}
+		wid_raw_send = 1;
 
 	}
 
