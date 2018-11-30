@@ -12,6 +12,9 @@
 
 #include "flash.h" // for offset address
 
+#include "sin_lut.h"
+#include "geotables.h"
+
 #define FLASH_SENSOR0  (FLASH_OFFSET + (0*8+2)*128*1024)  // bank1 sector2
 #define FLASH_SENSOR5  (FLASH_OFFSET + (1*8+2)*128*1024)  // bank2 sector2
 
@@ -393,6 +396,150 @@ int32_t calc_widnar_correction(int32_t* corr, uint8_t *wid_ampl, uint16_t *wid_d
 	return cnt;
 }
 
+
+/*
+typedef struct
+{
+	int mount_mode;             // mount position 1,2,3 or 4
+	float x_rel_robot;          // zero = robot origin. Positive = robot front (forward)
+	float y_rel_robot;          // zero = robot origin. Positive = to the right of the robot
+	float ang_rel_robot;        // zero = robot forward direction. positive = ccw
+	float vert_ang_rel_ground;  // zero = looks directly forward. positive = looks up. negative = looks down
+	float z_rel_ground;         // sensor height from the ground	
+} sensor_mount_t;
+*/
+//#define M_PI 3.141592653
+#define RADTODEG(x) ((x)*(360.0/(2.0*M_PI)))
+#define DEGTORAD(x) ((x)*((2.0*M_PI)/360.0))
+
+const sensor_mount_t sensor_mounts[N_SENSORS] =
+{          //      mountmode    x     y       hor ang           ver ang      height    
+ /*0:                */ { 0,     0,     0, DEGTORAD(       0), DEGTORAD(  2),   0 },
+ /*1:                */ { 2,   160,   140, DEGTORAD(      23), DEGTORAD(  2), 320 },
+ /*2:                */ { 1,  -200,   230, DEGTORAD(   90-23), DEGTORAD(  2), 320 },
+ /*3:                */ { 2,  -410,   230, DEGTORAD(      90), DEGTORAD(  2), 320 },
+ /*4:                */ { 1,  -490,   140, DEGTORAD(  180-23), DEGTORAD(  2), 320 },
+ /*5:                */ { 2,  -490,     0, DEGTORAD(    180 ), DEGTORAD(  2), 320 },
+ /*6:                */ { 2,  -490,  -140, DEGTORAD(  180+23), DEGTORAD(  2), 320 },
+ /*7:                */ { 1,  -410,  -230, DEGTORAD(   270  ), DEGTORAD(  2), 320 },
+ /*8:                */ { 2,  -200,  -230, DEGTORAD(  270+23), DEGTORAD(  2), 320 },
+ /*9:                */ { 1,   160,  -140, DEGTORAD(  360-23), DEGTORAD(  2), 320 }
+};
+
+
+void tof_to_zmap(int8_t* zmap, uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx) __attribute__((section(".text_itcm")));
+void tof_to_zmap(int8_t* zmap, uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx)
+{
+	if(sidx < 0 || sidx >= N_SENSORS) error(150);
+
+	uint16_t sensor_hor_ang = sensor_mounts[sidx].ang_rel_robot;
+	uint16_t sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
+	int32_t  sensor_x = sensor_mounts[sidx].x_rel_robot;
+	int32_t  sensor_y = sensor_mounts[sidx].y_rel_robot;
+	int32_t  sensor_z = sensor_mounts[sidx].z_rel_ground;
+
+	uint8_t ampl_accept = 4;
+
+	for(int py=1; py<TOF_YS-1; py++)
+	{
+		for(int px=1; px<TOF_XS-1; px++)
+		{
+			int32_t dists[5];
+
+			dists[0] = wid_dist[(py+0)*TOF_XS+(px+0)] + widnar_corr;
+			dists[1] = wid_dist[(py-1)*TOF_XS+(px+0)] + widnar_corr;
+			dists[2] = wid_dist[(py+1)*TOF_XS+(px+0)] + widnar_corr;
+			dists[3] = wid_dist[(py+0)*TOF_XS+(px+1)] + widnar_corr;
+			dists[4] = wid_dist[(py+0)*TOF_XS+(px-1)] + widnar_corr;
+
+			uint8_t ampls[5];
+			ampls[0] = wid_ampl[(py+0)*TOF_XS+(px+0)];
+			ampls[1] = wid_ampl[(py-1)*TOF_XS+(px+0)];
+			ampls[2] = wid_ampl[(py+1)*TOF_XS+(px+0)];
+			ampls[3] = wid_ampl[(py+0)*TOF_XS+(px+1)];
+			ampls[4] = wid_ampl[(py+0)*TOF_XS+(px-1)];
+
+			int32_t avg = (dists[0]+dists[1]+dists[2]+dists[3]+dists[4])/5;
+
+			int n_conform = 0;
+			int32_t conform_avg = 0;
+			for(int i=0; i<5; i++)
+			{
+				if(ampls[i] < 255 && ampls[i] > ampl_accept && dists[i] > avg-100 && dists[i] < avg+100)
+				{
+					n_conform++;
+					conform_avg += dists[i];
+				}
+			}
+
+			if(n_conform >= 3)
+			{
+				int32_t d = conform_avg / n_conform;
+
+				uint16_t hor_ang, ver_ang;
+
+			//	DBG_PR_VAR_I32(d);
+
+				// TODO: This optimizes out once we have sensor-by-sensor geometric tables;
+				// they can be pre-built to the actual mount_mode.
+				switch(sensor_mounts[sidx].mount_mode)
+				{
+					case 1: 
+					hor_ang = -1*geocoords[py*TOF_XS+px].yang;
+					ver_ang = geocoords[py*TOF_XS+px].xang;
+					break;
+
+					case 2: 
+					hor_ang = geocoords[py*TOF_XS+px].yang;
+					ver_ang = -1*geocoords[py*TOF_XS+px].xang;
+					break;
+
+					case 3:
+					hor_ang = -1*geocoords[py*TOF_XS+px].xang;
+					ver_ang = geocoords[py*TOF_XS+px].yang;
+					break;
+
+					case 4:
+					hor_ang = geocoords[py*TOF_XS+px].xang;
+					ver_ang = -1*geocoords[py*TOF_XS+px].yang;
+					break;
+
+					default: error(145); while(1); // to tell the compiler we always set hor_ang, ver_ang
+				}
+
+
+			//	DBG_PR_VAR_U16(hor_ang);
+			//	DBG_PR_VAR_U16(ver_ang);
+
+				int32_t x = (((int64_t)d * (int64_t)lut_cos_from_u16(ver_ang + sensor_ver_ang) * (int64_t)lut_cos_from_u16(hor_ang + sensor_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + sensor_x;
+				int32_t y = -1* ((((int64_t)d * (int64_t)lut_cos_from_u16(ver_ang + sensor_ver_ang) * (int64_t)lut_sin_from_u16(hor_ang + sensor_hor_ang)))>>(2*SIN_LUT_RESULT_SHIFT)) + sensor_y;
+				int32_t z = (((int64_t)d * (int64_t)lut_sin_from_u16(ver_ang + sensor_ver_ang))>>SIN_LUT_RESULT_SHIFT) + sensor_z;
+
+			//	DBG_PR_VAR_I32(x);
+			//	DBG_PR_VAR_I32(y);
+			//	DBG_PR_VAR_I32(z);
+
+
+				if(z > -500 && z < 1500)
+				{
+					x/=40;
+					y/=40;
+					z/=20;
+
+					x+=100;
+					y+=100;
+
+					if(x>=0 && x<200 && y>=0 && y<200)
+					{
+						if(z > zmap[y*200+x]) 
+							zmap[y*200+x] = z;
+					}
+				}
+
+			}
+		}
+	}
+}
 
 /*
 Process four DCS images, with offset_mm in millimeters. With clk_div=1, does the calculation at fled=20MHz (unamb range = 7.5m). Larger clk_div

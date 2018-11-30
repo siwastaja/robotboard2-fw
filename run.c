@@ -88,34 +88,6 @@ uint32_t timestamp_initial;
 */
 
 
-typedef struct
-{
-	int mount_mode;             // mount position 1,2,3 or 4
-	float x_rel_robot;          // zero = robot origin. Positive = robot front (forward)
-	float y_rel_robot;          // zero = robot origin. Positive = to the right of the robot
-	float ang_rel_robot;        // zero = robot forward direction. positive = ccw
-	float vert_ang_rel_ground;  // zero = looks directly forward. positive = looks up. negative = looks down
-	float z_rel_ground;         // sensor height from the ground	
-} sensor_mount_t;
-
-//#define M_PI 3.141592653
-#define RADTODEG(x) ((x)*(360.0/(2.0*M_PI)))
-#define DEGTORAD(x) ((x)*((2.0*M_PI)/360.0))
-
-static const sensor_mount_t sensor_mounts[N_SENSORS] =
-{          //      mountmode    x     y       hor ang           ver ang      height    
- /*0:                */ { 0,     0,     0, DEGTORAD(       0), DEGTORAD(  2),   0 },
- /*1:                */ { 2,   160,   140, DEGTORAD(      23), DEGTORAD(  2), 320 },
- /*2:                */ { 1,  -200,   230, DEGTORAD(   90-23), DEGTORAD(  2), 320 },
- /*3:                */ { 2,  -410,   230, DEGTORAD(      90), DEGTORAD(  2), 320 },
- /*4:                */ { 1,  -490,   140, DEGTORAD(  180-23), DEGTORAD(  2), 320 },
- /*5:                */ { 2,  -490,     0, DEGTORAD(    180 ), DEGTORAD(  2), 320 },
- /*6:                */ { 2,  -490,  -140, DEGTORAD(  180+23), DEGTORAD(  2), 320 },
- /*7:                */ { 1,  -410,  -230, DEGTORAD(   270  ), DEGTORAD(  2), 320 },
- /*8:                */ { 2,  -200,  -230, DEGTORAD(  270+23), DEGTORAD(  2), 320 },
- /*9:                */ { 1,   160,  -140, DEGTORAD(  360-23), DEGTORAD(  2), 320 }
-};
-
 int err_cnt;
 static void log_err()
 {
@@ -191,6 +163,7 @@ uint16_t measure_stray()
 
 static int lowbat_die_cnt = 0;
 static int cycle;
+void run_cycle()  __attribute__((section(".text_itcm")));
 void run_cycle()
 {
 	int gen_data = 0;
@@ -250,6 +223,8 @@ void run_cycle()
 	if(!sensors_in_use[sidx])
 		return;
 
+	sidx = 7;
+
 //		goto SKIP_TOF;
 
 
@@ -274,7 +249,6 @@ void run_cycle()
 	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 	epc_trig();
 	if(poll_capt_with_timeout_complete()) log_err();
-	TOF_TS(0);
 
 	int16_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
@@ -426,7 +400,10 @@ void run_cycle()
 
 
 	// calc autoexposed midlong wide: reuse 0
+	TOF_TS(0);
+
 	compensated_tof_calc_dist_ampl(&wid_ampl_max[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
+	TOF_TS(1);
 	wid_raw_send = 0;
 
 
@@ -463,57 +440,19 @@ void run_cycle()
 		DBG_PR_VAR_I32(widnar_corr);
 	}
 
-	//if(test_msg3)
+	TOF_TS(2);
+	if(test_msg3)
 	{
-		//memset(test_msg3->buf, 0, 200*200);
-		memset(wid_dist[1], 0, sizeof wid_dist[1]);
-		memcpy(wid_ampl[1], wid_ampl[0], sizeof wid_ampl[1]);
-		uint8_t ampl_accept = 4;
-		for(int yy=1; yy<TOF_YS-1; yy++)
-		{
-			for(int xx=1; xx<TOF_XS-1; xx++)
-			{
-				int32_t dists[5];
+		memset(test_msg3->buf, -127, 200*200);
 
-				dists[0] = wid_dist[0][(yy+0)*TOF_XS+(xx+0)] + widnar_corr;
-				dists[1] = wid_dist[0][(yy-1)*TOF_XS+(xx+0)] + widnar_corr;
-				dists[2] = wid_dist[0][(yy+1)*TOF_XS+(xx+0)] + widnar_corr;
-				dists[3] = wid_dist[0][(yy+0)*TOF_XS+(xx+1)] + widnar_corr;
-				dists[4] = wid_dist[0][(yy+0)*TOF_XS+(xx-1)] + widnar_corr;
+		tof_to_zmap((int8_t*)test_msg3->buf, wid_ampl[0], wid_dist[0], widnar_corr, sidx);
 
-				uint8_t ampls[5];
-				ampls[0] = wid_ampl[0][(yy+0)*TOF_XS+(xx+0)];
-				ampls[1] = wid_ampl[0][(yy-1)*TOF_XS+(xx+0)];
-				ampls[2] = wid_ampl[0][(yy+1)*TOF_XS+(xx+0)];
-				ampls[3] = wid_ampl[0][(yy+0)*TOF_XS+(xx+1)];
-				ampls[4] = wid_ampl[0][(yy+0)*TOF_XS+(xx-1)];
-
-				int32_t avg = (dists[0]+dists[1]+dists[2]+dists[3]+dists[4])/5;
-
-				int n_conform = 0;
-				int32_t conform_avg = 0;
-				for(int i=0; i<5; i++)
-				{
-					if(ampls[i] < 255 && ampls[i] > ampl_accept && dists[i] > avg-100 && dists[i] < avg+100)
-					{
-						n_conform++;
-						conform_avg += dists[i];
-					}
-				}
-
-				if(n_conform >= 3)
-				{
-					conform_avg /= n_conform;
-				}
-				else
-					conform_avg = 65534;
-
-				wid_dist[1][yy*TOF_XS+xx] = conform_avg;
-			}
-		}
-		wid_raw_send = 1;
+		//memset(wid_dist[1], 0, sizeof wid_dist[1]);
+		//memcpy(wid_ampl[1], wid_ampl[0], sizeof wid_ampl[1]);
+		//wid_raw_send = 1;
 
 	}
+	TOF_TS(3);
 
 	SKIP:
 
@@ -576,6 +515,8 @@ void run_cycle()
 		check_rx();
 		delay_ms(1);
 	}	
+
+	delay_ms(200);
 	
 	//profile_cpu_blocking_20ms();
 
