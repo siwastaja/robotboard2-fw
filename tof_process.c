@@ -447,18 +447,21 @@ typedef struct
 	-------------
 */
 
+
+
+
 const sensor_mount_t sensor_mounts[N_SENSORS] =
 {          //      mountmode    x     y       hor ang           ver ang      height    
- /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16(  2),   0 },
- /*1:                */ { 1,   130,   103, DEGTOANG16(      23), DEGTOANG16(  2), 320 },
- /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23), DEGTOANG16(  2), 320 },
- /*3:                */ { 1,  -380,   215, DEGTOANG16(      90), DEGTOANG16(  2), 320 },
- /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23), DEGTOANG16(  2), 320 },
- /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ), DEGTOANG16(  2), 320 },
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23), DEGTOANG16(  2), 320 },
- /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ), DEGTOANG16(  2), 320 },
- /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23), DEGTOANG16(  2), 320 },
- /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23), DEGTOANG16(  2), 320 }
+ /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 3),   0 },
+ /*1:                */ { 1,   130,   103, DEGTOANG16(      23), DEGTOANG16( 3), 330+60 },
+ /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23), DEGTOANG16( 3), 330+60  },
+ /*3:                */ { 1,  -380,   215, DEGTOANG16(      90), DEGTOANG16( 3), 330+60  },
+ /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23), DEGTOANG16( 3), 330+40  },
+ /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ), DEGTOANG16( 3), 330+60  },
+ /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23), DEGTOANG16( 3), 330+60  },
+ /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ), DEGTOANG16( 0), 330+60  },
+ /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23), DEGTOANG16( 3), 330+60  },
+ /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23), DEGTOANG16(357), 330+60  }
 };
 
 #define VOX_SEG_XS 100
@@ -554,8 +557,8 @@ const seg_limits_t seg_lims[12] =
 };
 
 
-void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept) __attribute__((section(".text_itcm")));
-void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept)
+void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max) __attribute__((section(".text_itcm")));
+void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max)
 {
 	if(sidx < 0 || sidx >= N_SENSORS) error(150);
 
@@ -603,6 +606,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 //	for(int py=29; py<32; py++)
 	{
 		for(int px=1; px<TOF_XS-1; px++)
+//		for(int px=75; px<85; px++)
 //		for(int px=79; px<82; px++)
 		{
 			int32_t dists[5];
@@ -626,7 +630,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 			int32_t conform_avg = 0;
 			for(int i=0; i<5; i++)
 			{
-				if(ampls[i] < 255 && ampls[i] > ampl_accept && dists[i] > avg-100 && dists[i] < avg+100)
+				if(ampls[i] >= ampl_accept_min && ampls[i] <= ampl_accept_max && dists[i] > avg-100 && dists[i] < avg+100)
 				{
 					n_conform++;
 					conform_avg += dists[i];

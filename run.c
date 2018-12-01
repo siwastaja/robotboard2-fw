@@ -126,24 +126,20 @@ uint16_t measure_stray()
 
 #define IFDBG if(sidx == 999)
 
+
+static int round_of_longer_exposure;
+
 static int lowbat_die_cnt = 0;
-static int cycle;
 void run_cycle()  __attribute__((section(".text_itcm")));
 void run_cycle()
 {
 	int gen_data = 0;
-	cycle++;
-	if(cycle == 4*10)
-	{
-		cycle = 0;
-	}
 
-//	if(cycle <= 9)
 	gen_data = 1;
 
 	if(is_tx_overrun())
 	{
-//		uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
+		uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
 		gen_data = 0;
 	}
 
@@ -184,9 +180,13 @@ void run_cycle()
 	static int sidx = 0;
 	sidx++;
 	if(sidx >= N_SENSORS)
+	{
 		sidx = 0;
+		round_of_longer_exposure = ~round_of_longer_exposure;
+	}
 	if(!sensors_in_use[sidx])
 		return;
+
 
 //	sidx = 7;
 
@@ -318,8 +318,14 @@ void run_cycle()
 //	int inttime_us = 3000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
 	int inttime_us = 150.0/(double)wid_ampl_max * 150.0;
 	if(inttime_us < 150) inttime_us = 150;
-	else if(inttime_us > 4000) inttime_us = 4000;
+	else if(inttime_us > 3000) inttime_us = 3000;
 //	int inttime_us = 400;
+
+	if(round_of_longer_exposure)
+	{
+		inttime_us *= 4;
+		if(inttime_us > 8000) inttime_us = 8000;
+	}
 
 	IFDBG
 	{
@@ -382,11 +388,6 @@ void run_cycle()
 			widnar_corr /= 2;
 		else if(widnar_ret < 60)
 			widnar_corr = (widnar_corr*3)/4;
-
-//		for(int i=0; i<TOF_XS*TOF_YS; i++)
-//		{
-//			wid_dist[i] += widnar_corr;
-//		}
 	}
 
 
@@ -397,29 +398,21 @@ void run_cycle()
 	}
 
 	TOF_TS(2);
-	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, 5);
-	TOF_TS(3);
-
-	if(gen_data && mcu_voxel_map)
+	uint8_t min_ampl;
+	uint8_t max_ampl;
+	if(round_of_longer_exposure)
 	{
-		static int b;
-		mcu_voxel_map->block_id = b;
-		mcu_voxel_map->z_step = Z_STEP;
-		mcu_voxel_map->base_z = BASE_Z;
-		memcpy(mcu_voxel_map->map, voxmap.segs[b], sizeof(mcu_voxel_map->map));
-
-		b++;
-		if(b>=12)
-		{	
-			b=0;
-		//	memset(&voxmap, 0, sizeof(voxmap));
-		}
-
+		min_ampl = 6;
+		max_ampl = 128;
+	}
+	else
+	{
+		min_ampl = 12;
+		max_ampl = 254;
 	}
 
-
-	SKIP:
-
+	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, min_ampl, max_ampl);
+	TOF_TS(3);
 
 	if(gen_data && tof_raw_dist)
 	{
@@ -438,6 +431,39 @@ void run_cycle()
 		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
 	}
 
+	if(gen_data && tof_diagnostics)
+	{
+		tof_diagnostics->temperature = chiptemp;
+	}
+
+
+	SKIP:
+
+	if(gen_data && mcu_voxel_map)
+	{
+		static int bl;
+
+		mcu_voxel_map->block_id = bl;
+		mcu_voxel_map->z_step = Z_STEP;
+		mcu_voxel_map->base_z = BASE_Z;
+		memcpy(mcu_voxel_map->map, voxmap.segs[bl], sizeof(mcu_voxel_map->map));
+
+//		memset(voxmap.segs[bl], 0, sizeof(voxmap.segs[0]));
+
+		bl++;
+		if(bl >= 12) bl = 0;
+	}
+
+	static int empty_cnt;
+	empty_cnt++;
+	if(empty_cnt > 20000)
+	{
+		memset(&voxmap, 0, sizeof(voxmap));
+		empty_cnt = 0;
+	}
+
+
+
 /*
 	if(gen_data && tof_raw_ambient8)
 	{
@@ -451,10 +477,6 @@ void run_cycle()
 
 
 
-	if(gen_data && tof_diagnostics)
-	{
-		tof_diagnostics->temperature = chiptemp;
-	}
 
 //	SKIP_TOF:;
 

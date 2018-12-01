@@ -274,5 +274,5 @@ typedef struct __attribute__((packed))
 
 extern full_voxel_map_t voxmap;
 
-void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept);
+void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max);
 
