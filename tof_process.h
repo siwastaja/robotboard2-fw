@@ -94,7 +94,6 @@ int32_t calc_widnar_correction(int32_t* corr, uint8_t *wid_ampl, uint16_t *wid_d
 
 void calc_stray_estimate(uint8_t *ampl_in, uint16_t *dist_in, uint16_t *stray_ampl, uint16_t *stray_dist);
 
-void tof_to_zmap(int8_t* zmap, uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx);
 
 /*
 	TOF calibration data is the dominating source of flash storage - if we followed the Espros'
@@ -252,17 +251,28 @@ extern const tof_calib_t * const tof_calibs[N_SENSORS];
 
 typedef struct
 {
-	int mount_mode;             // mount position 1,2,3 or 4
-	float x_rel_robot;          // zero = robot origin. Positive = robot front (forward)
-	float y_rel_robot;          // zero = robot origin. Positive = to the right of the robot
-	float ang_rel_robot;        // zero = robot forward direction. positive = ccw
-	float vert_ang_rel_ground;  // zero = looks directly forward. positive = looks up. negative = looks down
-	float z_rel_ground;         // sensor height from the ground	
+	int32_t mount_mode;             // mount position 1,2,3 or 4
+	int32_t x_rel_robot;          // zero = robot origin. Positive = robot front (forward)
+	int32_t y_rel_robot;          // zero = robot origin. Positive = to the right of the robot
+	uint16_t ang_rel_robot;        // zero = robot forward direction. positive = ccw
+	uint16_t vert_ang_rel_ground;  // zero = looks directly forward. positive = looks up. negative = looks down
+	int32_t z_rel_ground;         // sensor height from the ground	
 } sensor_mount_t;
 
 //#define M_PI 3.141592653
 #define RADTODEG(x) ((x)*(360.0/(2.0*M_PI)))
 #define DEGTORAD(x) ((x)*((2.0*M_PI)/360.0))
+#define DEGTOANG16(x)  ((uint16_t)((float)(x)/(360.0)*65536.0))
 
 extern const sensor_mount_t sensor_mounts[N_SENSORS];
+
+#include "../robotsoft/api_board_to_soft.h"
+typedef struct __attribute__((packed))
+{
+	uint16_t segs[12][VOX_SEG_XS*VOX_SEG_YS];
+} full_voxel_map_t;
+
+extern full_voxel_map_t voxmap;
+
+void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept);
 

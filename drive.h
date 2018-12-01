@@ -23,5 +23,5 @@ typedef struct
 	int64_t y;   // 1/65536 mm
 } hires_pos_t;
 
-extern volatile hires_pos_t hires_cur_pos;
+extern hires_pos_t cur_pos;
 

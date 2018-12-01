@@ -285,11 +285,11 @@ void drive_handler()
 	delta_mpos_lin[0] = lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
 	delta_mpos_lin[1] = -1*lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
 
-	if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG || lin_err > 50LL*65536LL || lin_err < -50LL*65536LL)
+	if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_err > 60LL*65536LL || lin_err < -60LL*65536LL)
 	{
-		//run = 1;
+	//	run = 1;
 	}
-	else if(ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)
+	else if(ang_err > -5*ANG_1_DEG && ang_err < 5*ANG_1_DEG && lin_err < 30LL*65536LL && lin_err > -30LL*65536LL)
 	{
 		run = 0;
 	}

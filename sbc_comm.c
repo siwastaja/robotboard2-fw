@@ -89,15 +89,15 @@ the commands shouldn't take a lot of time. Also, RX buffer are smaller so we can
 
 */
 
-#define TX_FIFO_DEPTH  4
-#define RX_FIFO_DEPTH  6
+#define TX_FIFO_DEPTH  3
+#define RX_FIFO_DEPTH  4
 
 #if (B2S_MAX_LEN%8 != 0 || S2B_MAX_LEN%8 != 0)
 	#error "SPI max transfer lengths must be multiples of 8"
 #endif
 
-static volatile uint8_t tx_fifo[TX_FIFO_DEPTH][B2S_MAX_LEN] __attribute__((aligned(8))); // __attribute__((section(".sram1_bss")));
-static volatile uint8_t rx_fifo[RX_FIFO_DEPTH][S2B_MAX_LEN] __attribute__((aligned(8)));// __attribute__((section(".sram1_bss")));
+static volatile uint8_t tx_fifo[TX_FIFO_DEPTH][B2S_MAX_LEN] __attribute__((aligned(8))) __attribute__((section(".sram1_bss")));
+static volatile uint8_t rx_fifo[RX_FIFO_DEPTH][S2B_MAX_LEN] __attribute__((aligned(8))) __attribute__((section(".sram1_bss")));
 // Putting rxfifo to sram1_bss breaks everything in subtle and unbelievable ways. Need to debug.
 
 static volatile int tx_fifo_cpu = 0;

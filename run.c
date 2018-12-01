@@ -35,9 +35,7 @@ uint8_t conv_bat_percent(int mv)
 
 epc_img_t mono_comp __attribute__((aligned(4)));
 epc_4dcs_t dcsa __attribute__((aligned(4)));
-epc_4dcs_t dcsb __attribute__((aligned(4)));
 epc_4dcs_narrow_t dcsa_narrow __attribute__((aligned(4)));
-epc_4dcs_narrow_t dcsb_narrow __attribute__((aligned(4)));
 
 void soft_err()
 {
@@ -53,39 +51,6 @@ uint32_t timestamp_initial;
 #define TOF_TS(id_) do{if(gen_data && tof_diagnostics) { tof_diagnostics->timestamps[(id_)] = cnt_100us - timestamp_initial;} }while(0)
 
 
-/*
-	Sensor mount position 1:
-	 _ _
-	| | |
-	| |L|
-	|O|L|
-	| |L|
-	|_|_|  (front view)
-
-	Sensor mount position 2:
-	 _ _
-	| | |
-	|L| |
-	|L|O|
-	|L| |
-	|_|_|  (front view)
-
-	Sensor mount position 3:
-
-	-------------
-	|  L  L  L  |
-	-------------
-	|     O     |
-	-------------
-
-	Sensor mount position 4:
-
-	-------------
-	|     O     |
-	-------------
-	|  L  L  L  |
-	-------------
-*/
 
 
 int err_cnt;
@@ -159,7 +124,7 @@ uint16_t measure_stray()
 	return stray;
 }
 
-#define IFDBG if(sidx == 7)
+#define IFDBG if(sidx == 999)
 
 static int lowbat_die_cnt = 0;
 static int cycle;
@@ -223,7 +188,7 @@ void run_cycle()
 	if(!sensors_in_use[sidx])
 		return;
 
-	sidx = 7;
+//	sidx = 7;
 
 //		goto SKIP_TOF;
 
@@ -262,14 +227,11 @@ void run_cycle()
 
 
 
-	static uint8_t  wid_ampl[2][TOF_XS*TOF_YS];
-	static uint16_t wid_dist[2][TOF_XS*TOF_YS];
-	static uint8_t  nar_ampl[2][TOF_XS_NARROW*TOF_YS_NARROW];
-	static uint16_t nar_dist[2][TOF_XS_NARROW*TOF_YS_NARROW];
+	static uint8_t  wid_ampl[TOF_XS*TOF_YS];
+	static uint16_t wid_dist[TOF_XS*TOF_YS];
+	static uint8_t  nar_ampl[TOF_XS_NARROW*TOF_YS_NARROW];
+	static uint16_t nar_dist[TOF_XS_NARROW*TOF_YS_NARROW];
 
-
-	int wid_raw_send = 0;
-	int nar_raw_send = 0;
 
 	// SUPER SHORT WIDE
 
@@ -289,25 +251,24 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
+	uint8_t wid_ampl_max = 0;
+	uint8_t nar_ampl_max = 0;
 
+	compensated_tof_calc_dist_ampl(&wid_ampl_max, wid_ampl, wid_dist, &dcsa, &mono_comp);
 
 	// QUITE SHORT WIDE
 
-	dcmi_start_dma(&dcsb, SIZEOF_4DCS);
+	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
 	uint16_t wide_stray = measure_stray(); // blocks for 500us
 
-	uint8_t wid_ampl_max[2] = {0};
-	uint8_t nar_ampl_max[2] = {0};
 
-	compensated_tof_calc_dist_ampl(&wid_ampl_max[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	if(wid_ampl_max[0] == 255)
+	if(wid_ampl_max == 255)
 	{
 		delay_ms(20);
-		wid_raw_send = 0;
 		goto SKIP;
 	}
 
@@ -324,10 +285,11 @@ void run_cycle()
 	update_led(sidx);
 
 	// calc quite short wide:
-	compensated_tof_calc_dist_ampl(&wid_ampl_max[1], wid_ampl[1], wid_dist[1], &dcsb, &mono_comp);
+	compensated_tof_calc_dist_ampl(&wid_ampl_max, wid_ampl, wid_dist, &dcsa, &mono_comp);
 	uint16_t inimage_stray_ampl_est;
 	uint16_t inimage_stray_dist_est;
-	calc_stray_estimate(wid_ampl[1], wid_dist[1], &inimage_stray_ampl_est, &inimage_stray_dist_est);
+	calc_stray_estimate(wid_ampl, wid_dist, &inimage_stray_ampl_est, &inimage_stray_dist_est);
+//	tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 20);
 
 	IFDBG
 	{
@@ -339,12 +301,10 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	wid_raw_send = 1;
 
-	if(wid_ampl_max[1] == 255)
+	if(wid_ampl_max == 255)
 	{
 		delay_ms(15);
-		wid_raw_send = 1;
 
 		goto SKIP;
 	}
@@ -356,14 +316,14 @@ void run_cycle()
 
 //	int inttime_us = 4000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
 //	int inttime_us = 3000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
-	int inttime_us = 150.0/(double)wid_ampl_max[1] * 150.0;
+	int inttime_us = 150.0/(double)wid_ampl_max * 150.0;
 	if(inttime_us < 150) inttime_us = 150;
 	else if(inttime_us > 4000) inttime_us = 4000;
 //	int inttime_us = 400;
 
 	IFDBG
 	{
-		DBG_PR_VAR_I32(wid_ampl_max[1]);
+		DBG_PR_VAR_I32(wid_ampl_max);
 		DBG_PR_VAR_I32(inttime_us);
 	}
 
@@ -378,9 +338,7 @@ void run_cycle()
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
 
-	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl[0], nar_dist[0], &dcsa_narrow, &mono_comp);
-
-	nar_raw_send = 0;
+	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
@@ -402,19 +360,17 @@ void run_cycle()
 	// calc autoexposed midlong wide: reuse 0
 	TOF_TS(0);
 
-	compensated_tof_calc_dist_ampl(&wid_ampl_max[0], wid_ampl[0], wid_dist[0], &dcsa, &mono_comp);
+	compensated_tof_calc_dist_ampl(&wid_ampl_max, wid_ampl, wid_dist, &dcsa, &mono_comp);
 	TOF_TS(1);
-	wid_raw_send = 0;
 
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl[1], nar_dist[1], &dcsa_narrow, &mono_comp);
-	nar_raw_send = 1;
+	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
 
 	int32_t widnar_corr = 0;
 	int widnar_ret;
-	widnar_ret = calc_widnar_correction(&widnar_corr, wid_ampl[0], wid_dist[0], nar_ampl[1], nar_dist[1]);
+	widnar_ret = calc_widnar_correction(&widnar_corr, wid_ampl, wid_dist, nar_ampl, nar_dist);
 
 	if(widnar_ret > 20)
 	{
@@ -429,7 +385,7 @@ void run_cycle()
 
 //		for(int i=0; i<TOF_XS*TOF_YS; i++)
 //		{
-//			wid_dist[0][i] += widnar_corr;
+//			wid_dist[i] += widnar_corr;
 //		}
 	}
 
@@ -441,18 +397,26 @@ void run_cycle()
 	}
 
 	TOF_TS(2);
-	if(test_msg3)
+	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, 5);
+	TOF_TS(3);
+
+	if(gen_data && mcu_voxel_map)
 	{
-		memset(test_msg3->buf, -127, 200*200);
+		static int b;
+		mcu_voxel_map->block_id = b;
+		mcu_voxel_map->z_step = Z_STEP;
+		mcu_voxel_map->base_z = BASE_Z;
+		memcpy(mcu_voxel_map->map, voxmap.segs[b], sizeof(mcu_voxel_map->map));
 
-		tof_to_zmap((int8_t*)test_msg3->buf, wid_ampl[0], wid_dist[0], widnar_corr, sidx);
-
-		//memset(wid_dist[1], 0, sizeof wid_dist[1]);
-		//memcpy(wid_ampl[1], wid_ampl[0], sizeof wid_ampl[1]);
-		//wid_raw_send = 1;
+		b++;
+		if(b>=12)
+		{	
+			b=0;
+		//	memset(&voxmap, 0, sizeof(voxmap));
+		}
 
 	}
-	TOF_TS(3);
+
 
 	SKIP:
 
@@ -461,8 +425,8 @@ void run_cycle()
 	{
 		tof_raw_dist->sensor_idx = sidx;
 		tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
-		memcpy(tof_raw_dist->dist, wid_dist[wid_raw_send], sizeof tof_raw_dist->dist);
-		memcpy(tof_raw_dist->dist_narrow, nar_dist[nar_raw_send], sizeof tof_raw_dist->dist_narrow);
+		memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
+		memcpy(tof_raw_dist->dist_narrow, nar_dist, sizeof tof_raw_dist->dist_narrow);
 		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
 		tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
 	}
@@ -470,10 +434,8 @@ void run_cycle()
 	if(gen_data && tof_raw_ampl8)
 	{
 		tof_raw_ampl8->sensor_idx = sidx;
-		memcpy(tof_raw_ampl8->ampl, wid_ampl[0], sizeof tof_raw_ampl8->ampl);
-		memcpy(tof_raw_ampl8->ampl, wid_ampl[wid_raw_send], sizeof tof_raw_ampl8->ampl);
-		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl[0], sizeof tof_raw_ampl8->ampl_narrow);
-		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl[nar_raw_send], sizeof tof_raw_ampl8->ampl_narrow);
+		memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
+		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
 	}
 
 /*
@@ -515,8 +477,6 @@ void run_cycle()
 		check_rx();
 		delay_ms(1);
 	}	
-
-	delay_ms(200);
 	
 	//profile_cpu_blocking_20ms();
 
