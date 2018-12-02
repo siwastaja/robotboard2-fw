@@ -557,13 +557,23 @@ const seg_limits_t seg_lims[12] =
 };
 
 
-void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max) __attribute__((section(".text_itcm")));
-void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max)
+void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max, int32_t ref_x, int32_t ref_y) __attribute__((section(".text_itcm")));
+void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max, int32_t ref_x, int32_t ref_y)
 {
 	if(sidx < 0 || sidx >= N_SENSORS) error(150);
 
 	int32_t robot_x = cur_pos.x>>16;
 	int32_t robot_y = cur_pos.y>>16;
+
+/*
+	DBG_PR_VAR_I32(ref_x);
+	DBG_PR_VAR_I32(ref_y);
+
+	DBG_PR_VAR_I32(robot_x);
+	DBG_PR_VAR_I32(robot_y);
+*/
+	if(abso(robot_x-ref_x) > 3000 || abso(robot_y-ref_y) > 3000) error(151);
+
 	uint16_t robot_ang = cur_pos.ang>>16;
 
 	// Rotation: xr = x*cos(a) + y*sin(a)
@@ -577,11 +587,11 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 	uint16_t sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
 
 
-	int32_t  sensor_x = robot_x + 
+	int32_t  sensor_x = robot_x - ref_x +
 			((lut_cos_from_u16(robot_ang)*sensor_mounts[sidx].x_rel_robot)>>SIN_LUT_RESULT_SHIFT) +
 			((lut_sin_from_u16(robot_ang)*-1*sensor_mounts[sidx].y_rel_robot)>>SIN_LUT_RESULT_SHIFT);
 
-	int32_t  sensor_y = robot_y + 
+	int32_t  sensor_y = robot_y - ref_y + 
 			((lut_sin_from_u16(robot_ang)*sensor_mounts[sidx].x_rel_robot)>>SIN_LUT_RESULT_SHIFT) +
 			((lut_cos_from_u16(robot_ang)*sensor_mounts[sidx].y_rel_robot)>>SIN_LUT_RESULT_SHIFT);
 	int32_t  sensor_z = sensor_mounts[sidx].z_rel_ground;
@@ -600,6 +610,8 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 		DBG_PR_VAR_I32(sensor_y);
 		DBG_PR_VAR_I32(sensor_z);
 	#endif
+
+
 
 	int insertion_cnt = 0;
 	for(int py=1; py<TOF_YS-1; py++)

@@ -33,3 +33,7 @@ void tx_fifo_push();
 void flush_fifos();
 void update_subs(uint64_t *subs_vector);
 void block_until_tx_fifo_empty();
+
+void remove_sub(int idx);
+void add_sub(int idx);
+void restore_subs();

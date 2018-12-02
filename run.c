@@ -20,7 +20,7 @@
 #include "backup_ram.h"
 #include "run.h"
 #include "own_std.h"
-
+#include "drive.h"
 
 static char printbuf[128];
 
@@ -129,10 +129,35 @@ uint16_t measure_stray()
 
 static int round_of_longer_exposure;
 
+uint32_t vox_cnt;
+int32_t vox_ref_x = 0;
+int32_t vox_ref_y = 0;
+
+void restart_voxmap()
+{
+	memset(&voxmap, 0, sizeof(voxmap));
+	vox_cnt++;
+	vox_ref_x = cur_pos.x>>16;
+	vox_ref_y = cur_pos.y>>16;
+}
+
+#define VOXMAP_SEND_INTERVAL 3
+
 static int lowbat_die_cnt = 0;
 void run_cycle()  __attribute__((section(".text_itcm")));
 void run_cycle()
 {
+	static int sidx = 0;
+	sidx++;
+	if(sidx >= N_SENSORS)
+	{
+		sidx = 0;
+		round_of_longer_exposure = ~round_of_longer_exposure;
+	}
+	if(!sensors_in_use[sidx])
+		return;
+
+
 	int gen_data = 0;
 
 	gen_data = 1;
@@ -143,7 +168,18 @@ void run_cycle()
 		gen_data = 0;
 	}
 
+	static int voxmap_send_cnt;
+
+	if(sidx == 9 && round_of_longer_exposure)
+	{
+		voxmap_send_cnt++;
+	}
 	
+	if(voxmap_send_cnt >= VOXMAP_SEND_INTERVAL)
+	{
+		add_sub(1); // Force this subscription for now... Others may be temporarily dropped if they won't fit (this has lowest ID)
+	}
+
 
 	int bat_mv = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
 
@@ -177,15 +213,6 @@ void run_cycle()
 		pwr_status->phb_charging_current_ma = charger_get_latest_cur_phb();
 	}
 
-	static int sidx = 0;
-	sidx++;
-	if(sidx >= N_SENSORS)
-	{
-		sidx = 0;
-		round_of_longer_exposure = ~round_of_longer_exposure;
-	}
-	if(!sensors_in_use[sidx])
-		return;
 
 
 //	sidx = 7;
@@ -411,7 +438,7 @@ void run_cycle()
 		max_ampl = 254;
 	}
 
-	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, min_ampl, max_ampl);
+	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, min_ampl, max_ampl, vox_ref_x, vox_ref_y);
 	TOF_TS(3);
 
 	if(gen_data && tof_raw_dist)
@@ -437,29 +464,47 @@ void run_cycle()
 	}
 
 
-	SKIP:
+	SKIP:;
 
-	if(gen_data && mcu_voxel_map)
+
+	static int do_restore_subs;
+	if(voxmap_send_cnt >= VOXMAP_SEND_INTERVAL)
 	{
-		static int bl;
+		// Subscription is forced above.
+		if(!mcu_multi_voxel_map)
+		{
+			error(155); // multi_voxel_map must fit by design; if it doesn't, make it smaller, or increase TX FIFO max size.
+		}
+		if(!is_tx_overrun()) // could look at gen_data, but let's recheck in case there is room now even if there wasn't before.
+		{
+			static int bl;
 
-		mcu_voxel_map->block_id = bl;
-		mcu_voxel_map->z_step = Z_STEP;
-		mcu_voxel_map->base_z = BASE_Z;
-		memcpy(mcu_voxel_map->map, voxmap.segs[bl], sizeof(mcu_voxel_map->map));
+			mcu_multi_voxel_map->running_cnt = vox_cnt;
+			mcu_multi_voxel_map->ref_x = vox_ref_x;
+			mcu_multi_voxel_map->ref_y = vox_ref_y;
+			mcu_multi_voxel_map->first_block_id = bl;
+			mcu_multi_voxel_map->z_step = Z_STEP;
+			mcu_multi_voxel_map->base_z = BASE_Z;
+			//DBG_PR_VAR_I32(bl);
+			memcpy(mcu_multi_voxel_map->maps[0], voxmap.segs[bl+0], sizeof(mcu_multi_voxel_map->maps[0]));
+			memcpy(mcu_multi_voxel_map->maps[1], voxmap.segs[bl+1], sizeof(mcu_multi_voxel_map->maps[0]));
+			memcpy(mcu_multi_voxel_map->maps[2], voxmap.segs[bl+2], sizeof(mcu_multi_voxel_map->maps[0]));
+			bl+=3;
+			if(bl >= 12)
+			{
+				//uart_print_string_blocking("restart\r\n"); 
+				bl = 0;
+				restart_voxmap();
+				voxmap_send_cnt = 0;
+				do_restore_subs = 2; // Can't restore the subs right away.
+			}
+		}
+		else
+		{
+			uart_print_string_blocking("\r\nVOXMAP: TX buffer overrun! Skipping data generation.\r\n"); 
 
-//		memset(voxmap.segs[bl], 0, sizeof(voxmap.segs[0]));
-
-		bl++;
-		if(bl >= 12) bl = 0;
-	}
-
-	static int empty_cnt;
-	empty_cnt++;
-	if(empty_cnt > 20000)
-	{
-		memset(&voxmap, 0, sizeof(voxmap));
-		empty_cnt = 0;
+		}
+		
 	}
 
 
@@ -485,6 +530,15 @@ void run_cycle()
 //		uart_print_string_blocking("\r\nPush!\r\n"); 
 		tx_fifo_push();
 	}
+
+	if(do_restore_subs == 1)
+	{
+		do_restore_subs = 0;
+		restore_subs();
+	}
+	if(do_restore_subs == 2)
+		do_restore_subs--;
+
 
 //	static int test_cnt = 0;
 

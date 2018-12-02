@@ -107,7 +107,9 @@ static volatile int rx_fifo_cpu = 0;
 static volatile int rx_fifo_spi = 0;
 
 // Enabled subscriptions, 1 bit per message ID, [0] LSb = id0, [0] MSb = id63, [1] LSb = id64, and so on:
-uint64_t subs[B2S_SUBS_U64_ITEMS]; 
+uint64_t subs[B2S_SUBS_U64_ITEMS];
+
+uint64_t requested_subs_copy[B2S_SUBS_U64_ITEMS];
 
 void update_subs(uint64_t *subs_vector)
 {
@@ -166,8 +168,39 @@ void update_subs(uint64_t *subs_vector)
 			tx_fifo[i][offs+o] = 0xee;
 		}
 	}
+}
 
+void remove_sub(int idx)
+{
+	uint64_t copy[2];
+	copy[0] = subs[0];
+	copy[1] = subs[1];
 
+	if(idx<64)
+		copy[0] &= ~(1ULL<<idx);
+	else
+		copy[1] &= ~(1ULL<<(idx-64));
+
+	update_subs(copy);
+}
+
+void add_sub(int idx)
+{
+	uint64_t copy[2];
+	copy[0] = subs[0];
+	copy[1] = subs[1];
+
+	if(idx<64)
+		copy[0] |= (1ULL<<idx);
+	else
+		copy[1] |= (1ULL<<(idx-64));
+
+	update_subs(copy);
+}
+
+void restore_subs()
+{
+	update_subs(requested_subs_copy);
 }
 
 static void init_tx_fifo_fixed_content()
@@ -621,7 +654,8 @@ void parse_rx_packet()
 		{
 			case CMD_SUBSCRIBE:
 			{
-				update_subs((uint64_t*)p_data);
+				memcpy(requested_subs_copy, p_data, sizeof(requested_subs_copy));
+				update_subs(requested_subs_copy);
 			}
 			break;
 
