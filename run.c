@@ -467,7 +467,7 @@ void run_cycle()
 	SKIP:;
 
 
-	static int do_restore_subs;
+	int do_restore_subs;
 	if(voxmap_send_cnt >= VOXMAP_SEND_INTERVAL)
 	{
 		// Subscription is forced above.
@@ -496,7 +496,7 @@ void run_cycle()
 				bl = 0;
 				restart_voxmap();
 				voxmap_send_cnt = 0;
-				do_restore_subs = 2; // Can't restore the subs right away.
+				do_restore_subs = 1;
 			}
 		}
 		else
@@ -531,14 +531,10 @@ void run_cycle()
 		tx_fifo_push();
 	}
 
-	if(do_restore_subs == 1)
+	if(do_restore_subs)
 	{
-		do_restore_subs = 0;
 		restore_subs();
 	}
-	if(do_restore_subs == 2)
-		do_restore_subs--;
-
 
 //	static int test_cnt = 0;
 

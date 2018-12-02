@@ -111,6 +111,7 @@ uint64_t subs[B2S_SUBS_U64_ITEMS];
 
 uint64_t requested_subs_copy[B2S_SUBS_U64_ITEMS];
 
+int stored_offs;
 void update_subs(uint64_t *subs_vector)
 {
 	for(int i=0; i<B2S_MAX_MSGIDS; i++)
@@ -152,6 +153,8 @@ void update_subs(uint64_t *subs_vector)
 		}
 	}
 
+	stored_offs = offs;
+/*
 	for(int i=0; i<TX_FIFO_DEPTH; i++)
 	{
 		// When the subscription are changed, write the list of subscriptions permanently on all buffers
@@ -168,6 +171,7 @@ void update_subs(uint64_t *subs_vector)
 			tx_fifo[i][offs+o] = 0xee;
 		}
 	}
+*/
 }
 
 void remove_sub(int idx)
@@ -231,6 +235,8 @@ void clear_err()
 		((b2s_header_t*)&tx_fifo[i][0])->err_flags = 0;
 }
 
+#if 0
+// The old version which isn't OK with frequently changing subscriptions really
 void tx_fifo_push()
 {
 	((b2s_header_t*)&tx_fifo[tx_fifo_cpu][0])->fifo_status = 0;
@@ -258,6 +264,51 @@ void tx_fifo_push()
 				*(b2s_msgs[s].p_accessor) = tx_fifo[tx_fifo_cpu] + offs;
 				offs += b2s_msgs[s].size;
 			} // if
+			t >>= 1;
+		}
+	}
+}
+#endif
+
+void tx_fifo_push()
+{
+	for(int o=0; o<B2S_SUBS_U64_ITEMS; o++)
+		*(uint64_t*)&tx_fifo[tx_fifo_cpu][SUBLIST_START_OFFSET+o*8] = subs[o];
+
+	// Similarly, write the payload len:
+	((b2s_header_t*)&tx_fifo[tx_fifo_cpu][0])->payload_len = stored_offs-MSGS_START_OFFSET;
+
+	// Write the footer,
+	for(int o=0; o<FOOTER_LEN; o++)
+		tx_fifo[tx_fifo_cpu][stored_offs+o] = 0xee;
+
+
+	((b2s_header_t*)&tx_fifo[tx_fifo_cpu][0])->fifo_status = 0;
+	__DSB();
+	DIS_IRQ();
+	tx_fifo_cpu++; if(tx_fifo_cpu >= TX_FIFO_DEPTH) tx_fifo_cpu = 0;
+	ENA_IRQ();
+
+
+	// Increased tx_fifo_cpu tells the SPI procedure that the data won't change anymore, and is OK to send.
+	// Having an SPI interrupt at this point is OK (and optimal).
+
+	// Now, let's make the active data pointers to point to the next TX FIFO block.
+	// This is basically the same offset calculation as in update_subs, but no need to check if the requests fit,
+	// because it's already checked (and subs item zeroed out if necessary).
+
+	int offs = MSGS_START_OFFSET;
+
+	for(int i=0; i<B2S_SUBS_U64_ITEMS; i++)
+	{
+		uint64_t t = subs[i];
+		for(int s=i*64; s<(i+1)*64; s++)
+		{
+			if (t & 1)     // id #s is enabled
+			{
+				*(b2s_msgs[s].p_accessor) = tx_fifo[tx_fifo_cpu] + offs;
+				offs += b2s_msgs[s].size;
+			}
 			t >>= 1;
 		}
 	}
