@@ -678,9 +678,9 @@ void motor_release(int m)
 	if(m < 0 || m > 1) error(123);
 
 	if(m==0)
-		MC0_EN_GATE();
+		MC0_DIS_GATE();
 	else
-		MC1_EN_GATE();
+		MC1_DIS_GATE();
 
 	run[m] = 0;
 	bldc_pos_set[m] = bldc_pos[m];

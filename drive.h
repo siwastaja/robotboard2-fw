@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "../robotsoft/api_soft_to_board.h"
 
 #define ANG_180_DEG 2147483648UL
 #define ANG_90_DEG  1073741824
@@ -25,3 +26,9 @@ typedef struct
 
 extern hires_pos_t cur_pos;
 
+
+void cmd_motors(int enabled);
+void cmd_go_to(s2b_move_abs_t* m);
+
+
+void cmd_corr_pos(s2b_corr_pos_t* cmd);

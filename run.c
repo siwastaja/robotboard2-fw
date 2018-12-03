@@ -141,7 +141,9 @@ void restart_voxmap()
 	vox_ref_y = cur_pos.y>>16;
 }
 
-#define VOXMAP_SEND_INTERVAL 3
+#define VOXMAP_SEND_INTERVAL 2
+
+extern void adjust();
 
 static int lowbat_die_cnt = 0;
 void run_cycle()  __attribute__((section(".text_itcm")));
@@ -157,6 +159,8 @@ void run_cycle()
 	if(!sensors_in_use[sidx])
 		return;
 
+
+	adjust();
 
 	int gen_data = 0;
 
@@ -223,6 +227,7 @@ void run_cycle()
 	const int intlen_mults[4] = {12, 6, 4, 3}; // with these, unit is always 0.6us.
 
 	tof_mux_select(sidx);
+	adjust();
 
 
 //	epc_enable_dll();  block_epc_i2c(4);
@@ -252,6 +257,7 @@ void run_cycle()
 	//DBG_PR_VAR_U32(fine_steps);
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
 
+	adjust();
 
 
 	static uint8_t  wid_ampl[TOF_XS*TOF_YS];
@@ -273,8 +279,6 @@ void run_cycle()
 
 	copy_cal_to_shadow(sidx, 0);
 
-	// Next will be longer:
-	epc_intlen(intlen_mults[0], INTUS(150)); block_epc_i2c(4);
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
@@ -283,13 +287,47 @@ void run_cycle()
 
 	compensated_tof_calc_dist_ampl(&wid_ampl_max, wid_ampl, wid_dist, &dcsa, &mono_comp);
 
+
+#if 0
+
+
+	epc_2dcs(); block_epc_i2c(4);
+	delay_ms(1);
+	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
+	epc_clk_div(2); block_epc_i2c(4);
+	epc_intlen(intlen_mults[2], INTUS(2000)); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcsa, SIZEOF_2DCS);
+	epc_trig();
+
+	copy_cal_to_shadow(sidx, 2);
+
+
+	if(poll_capt_with_timeout_complete()) log_err();
+
+	uint8_t wid_ampl_max = 0;
+	uint8_t nar_ampl_max = 0;
+
+	compensated_tof_calc_dist_ampl_2dcs(wid_ampl, wid_dist, &dcsa, &mono_comp);
+
+#endif
+
+
+
+
 	// QUITE SHORT WIDE
+
+	epc_intlen(intlen_mults[0], INTUS(150)); block_epc_i2c(4);
+	epc_clk_div(0); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
 	uint16_t wide_stray = measure_stray(); // blocks for 500us
 
+	copy_cal_to_shadow(sidx, 0);
 
+
+	adjust();
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
@@ -316,7 +354,6 @@ void run_cycle()
 	uint16_t inimage_stray_ampl_est;
 	uint16_t inimage_stray_dist_est;
 	calc_stray_estimate(wid_ampl, wid_dist, &inimage_stray_ampl_est, &inimage_stray_dist_est);
-//	tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 20);
 
 	IFDBG
 	{
@@ -328,13 +365,21 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
+	adjust();
 
 	if(wid_ampl_max == 255)
 	{
 		delay_ms(15);
 
+		// Quite short is already overexposed - not taking a longer shot, this is all we get
+		tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 5, 254, vox_ref_x, vox_ref_y);
+
 		goto SKIP;
 	}
+
+	// Let's use near-looking parts of the "quite short" - these can get overexposed on the next set.
+	// Don't use low-amplitude stuff, we'll get better stuff soon.
+	tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 60, 254, vox_ref_x, vox_ref_y);
 
 
 	// Actual wide
@@ -360,11 +405,14 @@ void run_cycle()
 		DBG_PR_VAR_I32(inttime_us);
 	}
 
+	adjust();
 
 	// AUTOEXPOSED MIDLONG WIDE
 
-	epc_intlen(intlen_mults[0], INTUS(inttime_us)); block_epc_i2c(4);
+	epc_clk_div(1); block_epc_i2c(4);
+	epc_intlen(intlen_mults[1], INTUS(inttime_us)); block_epc_i2c(4);
 	epc_4dcs(); block_epc_i2c(4);
+
 	delay_ms(1);
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 
@@ -372,6 +420,8 @@ void run_cycle()
 	epc_trig();
 
 	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
+
+	copy_cal_to_shadow(sidx, 1);
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
@@ -382,7 +432,7 @@ void run_cycle()
 
 	delay_ms(1);
 	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(inttime_us/3)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[1], INTUS(inttime_us/3)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
 	epc_trig();
@@ -396,6 +446,7 @@ void run_cycle()
 	compensated_tof_calc_dist_ampl(&wid_ampl_max, wid_ampl, wid_dist, &dcsa, &mono_comp);
 	TOF_TS(1);
 
+	adjust();
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
@@ -437,6 +488,7 @@ void run_cycle()
 		min_ampl = 12;
 		max_ampl = 254;
 	}
+	adjust();
 
 	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, min_ampl, max_ampl, vox_ref_x, vox_ref_y);
 	TOF_TS(3);
@@ -466,6 +518,7 @@ void run_cycle()
 
 	SKIP:;
 
+	adjust();
 
 	int do_restore_subs;
 	if(voxmap_send_cnt >= VOXMAP_SEND_INTERVAL)
@@ -520,6 +573,7 @@ void run_cycle()
 
 	// 3.2ms memcpy's raw dist, raw dist narrow, ampl8, ampl8 narrow, ambient8.
 
+	adjust();
 
 
 
@@ -547,7 +601,7 @@ void run_cycle()
 	for(int i=0; i<5; i++)
 	{
 		check_rx();
-		delay_ms(1);
+//		delay_ms(1);
 	}	
 	
 	//profile_cpu_blocking_20ms();

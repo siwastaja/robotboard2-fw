@@ -11,6 +11,8 @@
 #include "../robotsoft/api_soft_to_board.h"
 #undef DEFINE_API_VARIABLES
 
+#include "drive.h"
+
 // 1 or 0:
 #define CRC_EN 1
 
@@ -676,7 +678,16 @@ void parse_rx_packet()
 	for(int p = 0; p < p_header->n_cmds; p++)
 	{
 		s2b_cmdheader_t *p_cmdheader = (s2b_cmdheader_t*)&rx_fifo[rx_fifo_cpu][offs];
-		uint8_t *p_data = (uint8_t*)&rx_fifo[rx_fifo_cpu][offs+4];
+		uint8_t *p_data = (uint8_t*)&rx_fifo[rx_fifo_cpu][offs+S2B_CMDHEADER_LEN];
+
+//		uart_print_string_blocking("PARSE: paylen = "); o_utoa16(p_cmdheader->paylen, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//		uart_print_string_blocking("PARSE: msgid = "); o_utoa16(p_cmdheader->msgid, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+
+//		for(int i=0; i<42; i++)
+//		{
+//			o_utoa8_hex(rx_fifo[rx_fifo_cpu][i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+//		}
+//		 uart_print_string_blocking("\r\n");
 		if(offs + p_cmdheader->paylen >= S2B_MAX_LEN)
 		{
 			// Message would overflow
@@ -685,8 +696,6 @@ void parse_rx_packet()
 			break;
 		}
 
-//		uart_print_string_blocking("PARSE: paylen = "); o_utoa16(p_cmdheader->paylen, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-//		uart_print_string_blocking("PARSE: msgid = "); o_utoa16(p_cmdheader->msgid, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
 		if(p_cmdheader->paylen != s2b_msgs[p_cmdheader->msgid].size)
 		{
@@ -728,12 +737,26 @@ void parse_rx_packet()
 
 			case CMD_MOVE_ABS:
 			{
-				extern void cmd_go_to(s2b_move_abs_t* m);
-
 				cmd_go_to((s2b_move_abs_t*)p_data);
 			}
 			break;
 
+			case CMD_MOTORS:
+			{
+				if(((s2b_motors_t*)p_data)->enabled)
+					cmd_motors(250*4);
+				else
+					cmd_motors(0);
+			}
+			break;
+
+
+			case CMD_CORR_POS:
+			{
+				cmd_corr_pos((s2b_corr_pos_t*)p_data);
+			}
+			break;
+			
 			default:
 			{
 
@@ -741,7 +764,7 @@ void parse_rx_packet()
 			break;
 		}
 
-		offs += p_cmdheader->paylen;
+		offs += p_cmdheader->paylen + S2B_CMDHEADER_LEN;
 	}
 	
 }

@@ -253,6 +253,117 @@ void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, ui
 		*max_ampl_out = max_ampl;
 }
 
+#if 0
+void compensated_tof_calc_dist_ampl_2dcs(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
+void compensated_tof_calc_dist_ampl_2dcs(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg)
+{
+//	uint32_t avg_ampl = 0;
+	uint8_t max_ampl = 0;
+	for(int i=0; i < TOF_XS*TOF_YS; i++)
+	{
+		uint16_t dist;
+		int ampl;
+
+		int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
+
+		#ifdef DBGPR
+			if(i == PIX)
+			{
+				DBG_PR_VAR_I16(dcs0);
+				DBG_PR_VAR_I16(dcs1);
+				DBG_PR_VAR_I16(dcs2);
+				DBG_PR_VAR_I16(dcs3);
+			}
+		#endif
+
+		if(dcs0 < -2047 || dcs0 > 2046 || dcs1 < -2047 || dcs1 > 2046)
+		{
+			ampl = 255;
+			dist = 0;
+		}
+		else
+		{
+			int16_t dcs31 = -1*dcs1;
+			int16_t dcs20 = -1*dcs0;
+
+			#ifdef DBGPR
+				if(i == PIX)
+				{
+					DBG_PR_VAR_I16(dcs31);
+					DBG_PR_VAR_I16(dcs20);
+				}
+			#endif
+			#ifdef DO_AMB_CORR
+				int16_t bw = ((bwimg->img[i]&0b0011111111111100)>>2)-2048;
+				if(bw<0) bw=0;
+				int corr_factor;
+				if(!(i&1)) // even
+					corr_factor = shadow_luts.hif.amb_corr[i/2] & 0x0f;
+				else
+					corr_factor = shadow_luts.hif.amb_corr[i/2]>>4;
+				int16_t comp = (bw*corr_factor)>>4;
+
+				#ifdef DBGPR
+						if(i == PIX)
+						{
+							DBG_PR_VAR_I16(bw);
+							DBG_PR_VAR_I16(corr_factor);
+							DBG_PR_VAR_I16(comp);
+						}
+				#endif
+
+				dcs31 -= comp;
+				dcs20 -= comp;
+			#endif
+
+
+			#ifdef FAST_APPROX_AMPLITUDE
+				ampl = (abso(dcs20)+abso(dcs31))/23; if(ampl > 255) ampl = 255;
+			#else
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
+			#endif
+
+//			if(ampl<3)
+//			{
+//				dist = 65534;
+//			}
+//			else
+			{
+				int pixgroup;
+				if(!(i&1)) // even
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
+				else
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
+
+				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+
+				#ifdef DBGPR
+
+					if(i == PIX)
+					{
+						DBG_PR_VAR_I16(pixgroup);
+						DBG_PR_VAR_U16(dist);
+					}
+
+				#endif
+
+			}
+		}
+		ampl_out[i] = ampl;
+		dist_out[i] = dist;
+//		avg_ampl += ampl;
+		if(ampl > max_ampl) max_ampl = ampl;
+	}
+
+//	if(avg_ampl_out != NULL)
+//		*avg_ampl_out = avg_ampl/(TOF_XS*TOF_YS);
+
+	if(max_ampl_out != NULL)
+		*max_ampl_out = max_ampl;
+}
+#endif
+
 
 void compensated_tof_calc_dist_ampl_narrow(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
 void compensated_tof_calc_dist_ampl_narrow(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg)
@@ -449,20 +560,66 @@ typedef struct
 
 
 
-
-const sensor_mount_t sensor_mounts[N_SENSORS] =
+// const
+sensor_mount_t sensor_mounts[N_SENSORS] =
 {          //      mountmode    x     y       hor ang           ver ang      height    
  /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 3),   0 },
- /*1:                */ { 1,   130,   103, DEGTOANG16(      23), DEGTOANG16( 3), 330+60 },
- /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23), DEGTOANG16( 3), 330+60  },
- /*3:                */ { 1,  -380,   215, DEGTOANG16(      90), DEGTOANG16( 3), 330+60  },
- /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23), DEGTOANG16( 3), 330+40  },
- /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ), DEGTOANG16( 3), 330+60  },
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23), DEGTOANG16( 3), 330+60  },
- /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ), DEGTOANG16( 0), 330+60  },
- /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23), DEGTOANG16( 3), 330+60  },
- /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23), DEGTOANG16(357), 330+60  }
+ /*1:                */ { 1,   130,   103, DEGTOANG16(      23),    728,         300 },
+ /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23),    273,         300  },
+ /*3:                */ { 1,  -380,   215, DEGTOANG16(      90),    273,         300  },
+ /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23),    546,         300  },
+ /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ),   1092,         310  },
+ /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23),    728,         300  },
+ /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ),    273,         290  },
+ /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23),    910,         280  },
+ /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23),   65171,        300  }
 };
+
+void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
+{
+	sensor_mounts[idx].ang_rel_robot += d_hor_ang;
+	sensor_mounts[idx].vert_ang_rel_ground += d_ver_ang;
+	sensor_mounts[idx].z_rel_ground += d_z;
+
+	DBG_PR_VAR_I32(idx);
+	DBG_PR_VAR_U16(sensor_mounts[idx].ang_rel_robot);
+	DBG_PR_VAR_U16(sensor_mounts[idx].vert_ang_rel_ground);
+	DBG_PR_VAR_I32(sensor_mounts[idx].z_rel_ground);
+}
+
+int adjustings = 0;
+void adjust()
+{
+	uint8_t cmd = uart_input();
+
+	if(cmd >= '0' && cmd <= '9')
+		adjustings = cmd-'0';
+	else if(cmd == 'a')
+	{
+		recalc_sensor_mounts(adjustings, 0, 91, 0);
+	}
+	else if(cmd == 'z')
+	{
+		recalc_sensor_mounts(adjustings, 0, -91, 0);
+	}
+	else if(cmd == 's')
+	{
+		recalc_sensor_mounts(adjustings, 0, 0, 10);
+	}
+	else if(cmd == 'x')
+	{
+		recalc_sensor_mounts(adjustings, 0, 0, -10);
+	}
+	else if(cmd == 'q')
+	{
+		recalc_sensor_mounts(adjustings, 91, 0, 0);
+	}
+	else if(cmd == 'w')
+	{
+		recalc_sensor_mounts(adjustings, -91, 0, 0);
+	}
+
+}
 
 #define VOX_SEG_XS 100
 #define VOX_SEG_YS 100

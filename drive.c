@@ -45,6 +45,9 @@ void new_target(hires_pos_t pos)
 	target_pos = pos;
 }
 
+int motors_enabled = 0;
+
+
 int new_direction;
 void cmd_go_to(s2b_move_abs_t* m)
 {
@@ -52,6 +55,30 @@ void cmd_go_to(s2b_move_abs_t* m)
 	target_pos.y = (int64_t)m->y<<16;
 	new_direction = 1;
 }
+
+void cmd_motors(int enabled)
+{
+	motors_enabled = enabled;
+}
+
+void cmd_corr_pos(s2b_corr_pos_t* cmd)
+{
+	int64_t dx = cmd->dx;
+	int64_t dy = cmd->dy;
+
+	if(dx > 2000LL || dx < -2000LL || dy > 2000LL || dy < -2000LL)
+		error(167);
+
+	// Divide by 4 by only shifting 14 places instead of 16.
+	dx<<=14;
+	dy<<=14;
+
+	cur_pos.x += dx;
+	cur_pos.y += dy;
+	target_pos.x += dx;
+	target_pos.y += dy;
+}
+
 
 void drive_handler() __attribute__((section(".text_itcm")));
 void drive_handler()
@@ -241,15 +268,15 @@ void drive_handler()
 	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(133);
 
 	static double ang_speed;
-	double max_ang_speed_by_ang_err = 2.0 + 0.25*abso(ang_err)/ANG_1_DEG;
+	double max_ang_speed_by_ang_err = 1.0 + 0.10*abso(ang_err)/ANG_1_DEG; // was 0.25*
 	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
-	double max_ang_speed = 20.0; // steps per cycle
+	double max_ang_speed = 15.0; // steps per cycle // was 20.0
 	double min_ang_speed = 2.0;
 
 	static double lin_speed;
 	double max_lin_speed_by_lin_err = 5.0 + 0.05*(double)abso((lin_err>>16)); // 400mm error -> speed unit 20
 	double max_lin_speed_by_ang_err = 100.0 / (abso(ang_err)/ANG_1_DEG); // 10 deg error -> max lin speed 10 units.
-	double max_lin_speed = 35.0;
+	double max_lin_speed = 30.0;
 	double min_lin_speed = 5.0;
 
 
@@ -287,7 +314,8 @@ void drive_handler()
 
 	if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_err > 60LL*65536LL || lin_err < -60LL*65536LL)
 	{
-		run = 1;
+		if(motors_enabled)
+			run = 1;
 	}
 	else if(ang_err > -5*ANG_1_DEG && ang_err < 5*ANG_1_DEG && lin_err < 30LL*65536LL && lin_err > -30LL*65536LL)
 	{
@@ -386,7 +414,8 @@ void drive_handler()
 	static int nonrun_cnt;
 	if(run)
 		nonrun_cnt = 0;
-	else
+
+	if(!run || motors_enabled < 1)
 	{
 		if(nonrun_cnt < 200)
 		{
@@ -394,10 +423,14 @@ void drive_handler()
 		}
 		else
 		{
-			bldc_pos_set[0] = bldc_pos[0];
-			bldc_pos_set[1] = bldc_pos[1];
+			motor_release(0);
+			motor_release(1);
+//			bldc_pos_set[0] = bldc_pos[0];
+//			bldc_pos_set[1] = bldc_pos[1];
 		}
 	}
+
+	if(motors_enabled > 0) motors_enabled--;
 
 }
 

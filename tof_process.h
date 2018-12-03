@@ -264,7 +264,7 @@ typedef struct
 #define DEGTORAD(x) ((x)*((2.0*M_PI)/360.0))
 #define DEGTOANG16(x)  ((uint16_t)((float)(x)/(360.0)*65536.0))
 
-extern const sensor_mount_t sensor_mounts[N_SENSORS];
+extern /*const*/ sensor_mount_t sensor_mounts[N_SENSORS];
 
 #include "../robotsoft/api_board_to_soft.h"
 typedef struct __attribute__((packed))
