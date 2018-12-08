@@ -142,6 +142,213 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 //#define DBGPR
 //#define PIX (30*160+80)
 
+void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg)  __attribute__((section(".text_itcm")));
+void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg)
+{
+	for(int i=0; i < TOF_XS*TOF_YS; i++)
+	{
+		uint16_t dist;
+		int ampl;
+
+		int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs2 = ((in->dcs[2].img[i]&0b0011111111111100)>>2)-2048;
+		int16_t dcs3 = ((in->dcs[3].img[i]&0b0011111111111100)>>2)-2048;
+
+		int16_t dcs31 = dcs3-dcs1;
+		int16_t dcs20 = dcs2-dcs0;
+
+		dcs20_out[i] = dcs20;
+		dcs31_out[i] = dcs31;
+	}
+}
+
+#define HDR_FACTOR 8
+void compensated_hdr_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)   __attribute__((section(".text_itcm")));
+void compensated_hdr_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
+{
+	for(int i=0; i < TOF_XS*TOF_YS; i++)
+	{
+		uint16_t dist;
+		int ampl;
+
+		int16_t dcs20_lo = dcs20_lo_in[i];
+		int16_t dcs31_lo = dcs31_lo_in[i];
+		int16_t dcs20_hi = dcs20_hi_in[i];
+		int16_t dcs31_hi = dcs31_hi_in[i];
+
+
+		if(dcs20_lo < -4000 || dcs20_lo > 4000 || dcs31_lo < -4000 || dcs31_lo > 4000)
+		{
+			ampl = 255;
+			dist = 0;
+		}
+		else
+		{
+			int16_t dcs20, dcs31;
+
+			if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
+			{
+				dcs20 = dcs20_lo*HDR_FACTOR;
+				dcs31 = dcs31_lo*HDR_FACTOR;
+			}
+			else
+			{
+				dcs20 = dcs20_hi;
+				dcs31 = dcs31_hi;
+			}
+
+			#ifdef FAST_APPROX_AMPLITUDE
+				ampl = (abso(dcs20)+abso(dcs31))/(23);// if(ampl > 255) ampl = 255;
+			#else
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17);// if(ampl > 255) ampl = 255;
+			#endif
+
+			if(ampl<4)
+			{
+				dist=65534;
+			}
+			else
+			{
+				int pixgroup;
+				if(!(i&1)) // even
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
+				else
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
+
+				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+			}
+		}
+		ampl /= HDR_FACTOR; if(ampl>255) ampl=255;
+		ampl_out[i] = ampl;
+		dist_out[i] = dist;
+	}
+}
+
+int flare_factor = 11;
+
+void adjust()
+{
+	uint8_t cmd = uart_input();
+
+	if(cmd == 'a')
+	{
+		flare_factor++;
+	}
+	else if(cmd == 'z')
+	{
+		flare_factor--;
+	}
+	else if(cmd == 's')
+	{
+		flare_factor+=10;
+	}
+	else if(cmd == 'x')
+	{
+		flare_factor-=10;
+	}
+
+}
+
+void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)   __attribute__((section(".text_itcm")));
+void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
+{
+	int dcs20_accum = 0;
+	int dcs31_accum = 0;
+	for(int i=0; i < TOF_XS*TOF_YS; i++)
+	{
+		int16_t dcs20_lo = dcs20_lo_in[i];
+		int16_t dcs31_lo = dcs31_lo_in[i];
+		int16_t dcs20_hi = dcs20_hi_in[i];
+		int16_t dcs31_hi = dcs31_hi_in[i];
+
+		int32_t dcs20, dcs31;
+
+		if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
+		{
+			dcs20 = dcs20_lo*HDR_FACTOR;
+			dcs31 = dcs31_lo*HDR_FACTOR;
+		}
+		else
+		{
+			dcs20 = dcs20_hi;
+			dcs31 = dcs31_hi;
+		}
+
+		dcs20_accum += dcs20;
+		dcs31_accum += dcs31;
+	}
+
+	dcs20_accum /= TOF_XS*TOF_YS;
+	dcs31_accum /= TOF_XS*TOF_YS;
+
+	DBG_PR_VAR_I32(flare_factor);
+	DBG_PR_VAR_I32(dcs20_accum);
+	DBG_PR_VAR_I32(dcs31_accum);
+
+	for(int i=0; i < TOF_XS*TOF_YS; i++)
+	{
+		uint16_t dist;
+		int ampl;
+
+		int16_t dcs20_lo = dcs20_lo_in[i];
+		int16_t dcs31_lo = dcs31_lo_in[i];
+		int16_t dcs20_hi = dcs20_hi_in[i];
+		int16_t dcs31_hi = dcs31_hi_in[i];
+
+
+		if(dcs20_lo < -4000 || dcs20_lo > 4000 || dcs31_lo < -4000 || dcs31_lo > 4000)
+		{
+			ampl = 255;
+			dist = 0;
+		}
+		else
+		{
+			int16_t dcs20, dcs31;
+
+			if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
+			{
+				dcs20 = dcs20_lo*HDR_FACTOR;
+				dcs31 = dcs31_lo*HDR_FACTOR;
+			}
+			else
+			{
+				dcs20 = dcs20_hi;
+				dcs31 = dcs31_hi;
+			}
+
+			dcs31 -= ((int64_t)dcs31_accum*(int64_t)flare_factor)>>8;
+			dcs20 -= ((int64_t)dcs20_accum*(int64_t)flare_factor)>>8;
+			
+
+			#ifdef FAST_APPROX_AMPLITUDE
+				ampl = (abso(dcs20)+abso(dcs31))/(23);// if(ampl > 255) ampl = 255;
+			#else
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17);// if(ampl > 255) ampl = 255;
+			#endif
+
+			if(ampl<4)
+			{
+				dist = 65534;
+			}
+			else
+			{
+				int pixgroup;
+				if(!(i&1)) // even
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
+				else
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
+
+				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+			}
+		}
+		ampl /= HDR_FACTOR; if(ampl>255) ampl=255;
+		ampl_out[i] = ampl;
+		dist_out[i] = dist;
+	}
+}
+
+
 void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
 void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, epc_img_t *bwimg)
 {
@@ -214,11 +421,11 @@ void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, ui
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
 			#endif
 
-//			if(ampl<3)
-//			{
-//				dist = 65534;
-//			}
-//			else
+			if(ampl<4)
+			{
+				dist = 65534;
+			}
+			else
 			{
 				int pixgroup;
 				if(!(i&1)) // even
@@ -324,7 +531,7 @@ void compensated_tof_calc_dist_ampl_2dcs(uint8_t *ampl_out, uint16_t *dist_out, 
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
 			#endif
 
-//			if(ampl<3)
+//			if(ampl<4)
 //			{
 //				dist = 65534;
 //			}
@@ -437,7 +644,7 @@ void compensated_tof_calc_dist_ampl_narrow(uint8_t *max_ampl_out, uint8_t *ampl_
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
 			#endif
 
-//			if(ampl<3)
+//			if(ampl<4)
 //			{
 //				dist = 65534;
 //			}
@@ -588,6 +795,7 @@ void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
 }
 
 int adjustings = 0;
+#if 0
 void adjust()
 {
 	uint8_t cmd = uart_input();
@@ -620,7 +828,7 @@ void adjust()
 	}
 
 }
-
+#endif
 #define VOX_SEG_XS 100
 #define VOX_SEG_YS 100
 #define VOX_HIRES_UNIT 50 // mm
@@ -1048,7 +1256,7 @@ void tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, i
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/23;
 #endif
 
-				if(ampl<3)
+				if(ampl<4)
 					dist = 65534;
 				else
 					dist = dist_i;
@@ -1141,7 +1349,7 @@ void tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_n
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/23;
 #endif
 
-				if(ampl<3)
+				if(ampl<4)
 					dist = 65534;
 				else
 					dist = dist_i;
