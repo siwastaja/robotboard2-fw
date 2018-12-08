@@ -32,3 +32,5 @@ void cmd_go_to(s2b_move_abs_t* m);
 
 
 void cmd_corr_pos(s2b_corr_pos_t* cmd);
+
+void cmd_stop_movement();

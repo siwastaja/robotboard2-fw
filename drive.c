@@ -45,15 +45,27 @@ void new_target(hires_pos_t pos)
 	target_pos = pos;
 }
 
+int obstacle_front, obstacle_back, obstacle_right, obstacle_left; // Written to in tof_process.c
+
 int motors_enabled = 0;
 
+int32_t cur_id;
+uint32_t micronavi_status;
 
 int new_direction;
+int backmode;
 void cmd_go_to(s2b_move_abs_t* m)
 {
 	target_pos.x = (int64_t)m->x<<16;
 	target_pos.y = (int64_t)m->y<<16;
+	backmode = m->backmode;
 	new_direction = 1;
+	cur_id = m->id;
+	micronavi_status = 0;
+	obstacle_front = 0;
+	obstacle_back = 0;
+	obstacle_left = 0;
+	obstacle_right = 0;
 }
 
 void cmd_motors(int enabled)
@@ -79,6 +91,27 @@ void cmd_corr_pos(s2b_corr_pos_t* cmd)
 	target_pos.y += dy;
 }
 
+static int run;
+
+void cmd_stop_movement()
+{
+	target_pos = cur_pos;
+	new_direction = 0;
+	micronavi_status = 0;
+	run = 0;
+}
+
+
+
+static uint32_t ang_to_target;
+
+static void stop()
+{
+	target_pos = cur_pos;
+	new_direction = 0;
+	run = 0;
+	ang_to_target = cur_pos.ang;
+}
 
 void drive_handler() __attribute__((section(".text_itcm")));
 void drive_handler()
@@ -223,20 +256,20 @@ void drive_handler()
 
 	int64_t lin_err = sqrt(sq((double)dx) + sq((double)dy));
 
-	if(lin_err > 100LL*65536LL || new_direction)
+	if(lin_err > 150LL*65536LL || new_direction)
 		ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2*M_PI));
 	new_direction = 0;
 
 	int32_t ang_err = cur_pos.ang - ang_to_target;
 
 	int reverse = 0;
-	if(ang_err > 110*ANG_1_DEG || ang_err < -110*ANG_1_DEG)
+	if(backmode==1 || (backmode==2 && (ang_err > 110*ANG_1_DEG || ang_err < -110*ANG_1_DEG)))
 	{
 		reverse = 1;
 		ang_err = (uint32_t)ang_err + (uint32_t)(ANG_180_DEG);
 	}
 
-	static int run, prev_run;
+	static int prev_run;
 
 	if(reverse)
 	{
@@ -266,6 +299,7 @@ void drive_handler()
 
 	// Over 100 meters is an error.
 	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(133);
+
 
 	static double ang_speed;
 	double max_ang_speed_by_ang_err = 1.0 + 0.10*abso(ang_err)/ANG_1_DEG; // was 0.25*
@@ -321,6 +355,41 @@ void drive_handler()
 	{
 		run = 0;
 	}
+
+
+
+	if(lin_err > 100 && obstacle_front > 20)
+	{
+		micronavi_status |= 1UL<<0;
+		stop();
+		led_status(9, RED, LED_MODE_FADE);
+		led_status(0, RED, LED_MODE_FADE);
+		led_status(1, RED, LED_MODE_FADE);
+	}
+	else if(lin_err < -100 && obstacle_back > 20)
+	{
+		micronavi_status |= 1UL<<0;
+		stop();
+		led_status(4, RED, LED_MODE_FADE);
+		led_status(5, RED, LED_MODE_FADE);
+		led_status(6, RED, LED_MODE_FADE);
+	}
+	else if(ang_err > 10*ANG_1_DEG && obstacle_left > 20)
+	{
+		micronavi_status |= 1UL<<2;
+//		stop();
+		led_status(2, RED, LED_MODE_FADE);
+		led_status(3, RED, LED_MODE_FADE);
+	}
+	else if(ang_err < -10*ANG_1_DEG && obstacle_right > 20)
+	{
+		micronavi_status |= 1UL<<2;
+//		stop();
+		led_status(7, RED, LED_MODE_FADE);
+		led_status(8, RED, LED_MODE_FADE);
+	}
+
+
 
 
 	if(correcting_angle)
@@ -390,6 +459,9 @@ void drive_handler()
 		drive_diag->ang_err = ang_err;
 		drive_diag->x = dbg1; //bldc_pos_set[0] - bldc_pos[0]; //ang_speed; // mpos[1];
 		drive_diag->y = dbg2; //bldc_pos_set[1] - bldc_pos[1]; //lin_speed; //target_mpos[1];
+		drive_diag->id = cur_id;
+		drive_diag->remaining = abso((lin_err>>16));
+		drive_diag->micronavi_stop_flags = micronavi_status;
 	}
 
 	if(prev_run != run)

@@ -756,6 +756,12 @@ void parse_rx_packet()
 				cmd_corr_pos((s2b_corr_pos_t*)p_data);
 			}
 			break;
+
+			case CMD_STOP_MOVEMENT:
+			{
+				cmd_stop_movement();
+			}
+			break;
 			
 			default:
 			{

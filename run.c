@@ -139,6 +139,7 @@ void restart_voxmap()
 	vox_cnt++;
 	vox_ref_x = cur_pos.x>>16;
 	vox_ref_y = cur_pos.y>>16;
+
 }
 
 #define VOXMAP_SEND_INTERVAL 2
@@ -155,6 +156,11 @@ void run_cycle()
 	{
 		sidx = 0;
 		round_of_longer_exposure = ~round_of_longer_exposure;
+		extern int obstacle_front, obstacle_back, obstacle_left, obstacle_right;
+		obstacle_front = 0;
+		obstacle_back = 0;
+		obstacle_left = 0;
+		obstacle_right = 0;
 	}
 	if(!sensors_in_use[sidx])
 		return;

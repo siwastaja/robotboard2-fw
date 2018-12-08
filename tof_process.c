@@ -564,15 +564,15 @@ typedef struct
 sensor_mount_t sensor_mounts[N_SENSORS] =
 {          //      mountmode    x     y       hor ang           ver ang      height    
  /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 3),   0 },
- /*1:                */ { 1,   130,   103, DEGTOANG16(      23),    728,         300 },
- /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23),    273,         300  },
- /*3:                */ { 1,  -380,   215, DEGTOANG16(      90),    273,         300  },
- /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23),    546,         300  },
- /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ),   1092,         310  },
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23),    728,         300  },
- /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ),    273,         290  },
- /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23),    910,         280  },
- /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23),   65171,        300  }
+ /*1:                */ { 1,   130,   103, DEGTOANG16(      23),    728+500,         300 },
+ /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23),    273+500,         300  },
+ /*3:                */ { 1,  -380,   215, DEGTOANG16(      90),    273+500,         300  },
+ /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23),    546+500,         300  },
+ /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ),   1092+500,         310  },
+ /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23),    728+500,         300  },
+ /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ),    273+500,         290  },
+ /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23),    910+500,         280  },
+ /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23),   135,        300  }
 };
 
 void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
@@ -740,18 +740,25 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 	//           yr = x*sin(a) + y*cos(a)
 
 
-	uint16_t sensor_hor_ang = sensor_mounts[sidx].ang_rel_robot + robot_ang;
-	uint16_t sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
+	uint16_t global_sensor_hor_ang = sensor_mounts[sidx].ang_rel_robot + robot_ang;
+	uint16_t global_sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
 
+	uint16_t local_sensor_hor_ang = sensor_mounts[sidx].ang_rel_robot;
+	uint16_t local_sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
 
-	int32_t  sensor_x = robot_x - ref_x +
+	int32_t  global_sensor_x = robot_x - ref_x +
 			((lut_cos_from_u16(robot_ang)*sensor_mounts[sidx].x_rel_robot)>>SIN_LUT_RESULT_SHIFT) +
 			((lut_sin_from_u16(robot_ang)*-1*sensor_mounts[sidx].y_rel_robot)>>SIN_LUT_RESULT_SHIFT);
 
-	int32_t  sensor_y = robot_y - ref_y + 
+	int32_t  global_sensor_y = robot_y - ref_y + 
 			((lut_sin_from_u16(robot_ang)*sensor_mounts[sidx].x_rel_robot)>>SIN_LUT_RESULT_SHIFT) +
 			((lut_cos_from_u16(robot_ang)*sensor_mounts[sidx].y_rel_robot)>>SIN_LUT_RESULT_SHIFT);
-	int32_t  sensor_z = sensor_mounts[sidx].z_rel_ground;
+	int32_t  global_sensor_z = sensor_mounts[sidx].z_rel_ground;
+
+
+	int32_t  local_sensor_x = sensor_mounts[sidx].x_rel_robot;
+	int32_t  local_sensor_y = sensor_mounts[sidx].y_rel_robot;
+	int32_t  local_sensor_z = sensor_mounts[sidx].z_rel_ground;
 
 
 
@@ -761,14 +768,15 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 		DBG_PR_VAR_I32(robot_x);
 		DBG_PR_VAR_I32(robot_y);
 
-		DBG_PR_VAR_I32(sensor_hor_ang);
-		DBG_PR_VAR_I32(sensor_ver_ang);
-		DBG_PR_VAR_I32(sensor_x);
-		DBG_PR_VAR_I32(sensor_y);
-		DBG_PR_VAR_I32(sensor_z);
+		DBG_PR_VAR_I32(global_sensor_hor_ang);
+		DBG_PR_VAR_I32(global_sensor_ver_ang);
+		DBG_PR_VAR_I32(global_sensor_x);
+		DBG_PR_VAR_I32(global_sensor_y);
+		DBG_PR_VAR_I32(global_sensor_z);
 	#endif
 
 
+	extern int obstacle_front, obstacle_back, obstacle_left, obstacle_right;
 
 	int insertion_cnt = 0;
 	for(int py=1; py<TOF_YS-1; py++)
@@ -851,8 +859,8 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 
 				#endif
 
-				uint16_t comb_hor_ang = hor_ang + sensor_hor_ang;
-				uint16_t comb_ver_ang = ver_ang + sensor_ver_ang;
+				uint16_t comb_hor_ang = hor_ang + global_sensor_hor_ang;
+				uint16_t comb_ver_ang = ver_ang + global_sensor_ver_ang;
 
 				#ifdef DBGPR
 
@@ -861,9 +869,17 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 
 				#endif
 
-				int32_t x = (((int64_t)d * (int64_t)lut_cos_from_u16(comb_ver_ang) * (int64_t)lut_cos_from_u16(comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + sensor_x;
-				int32_t y = (((int64_t)d * (int64_t)lut_cos_from_u16(comb_ver_ang) * (int64_t)lut_sin_from_u16(comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + sensor_y;
-				int32_t z = (((int64_t)d * (int64_t)lut_sin_from_u16(comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + sensor_z;
+				int32_t x = (((int64_t)d * (int64_t)lut_cos_from_u16(comb_ver_ang) * (int64_t)lut_cos_from_u16(comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + global_sensor_x;
+				int32_t y = (((int64_t)d * (int64_t)lut_cos_from_u16(comb_ver_ang) * (int64_t)lut_sin_from_u16(comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + global_sensor_y;
+				int32_t z = (((int64_t)d * (int64_t)lut_sin_from_u16(comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + global_sensor_z;
+
+				uint16_t local_comb_hor_ang = hor_ang + local_sensor_hor_ang;
+				uint16_t local_comb_ver_ang = ver_ang + local_sensor_ver_ang;
+
+
+				int32_t local_x = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_cos_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_x;
+				int32_t local_y = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_sin_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_y;
+				int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
 
 
 				#ifdef DBGPR
@@ -872,6 +888,30 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 					DBG_PR_VAR_I32(y);
 					DBG_PR_VAR_I32(z);
 				#endif
+
+				#define OBST_AVOID_WIDTH 500
+
+				if(local_z > 250 && local_z < 1600)
+				{
+					if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
+					{
+						if(local_x > 300 && local_x < 500)
+							obstacle_front++;
+
+						if(local_x > -750 && local_x < -500)
+							obstacle_back++;
+					}
+
+					if(local_x > -500 && local_x < -200)
+					{
+						if(local_y > 250 && local_y < 400)
+							obstacle_left++;
+
+						if(local_y < -250 && local_y > -400)
+							obstacle_right++;
+
+					}
+				}
 
 				if(z > BASE_Z && z < MAX_Z)
 				{
