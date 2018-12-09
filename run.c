@@ -238,13 +238,10 @@ void run_cycle()
 	adjust();
 
 
-//	epc_enable_dll();  block_epc_i2c(4);
-//	epc_coarse_dll_steps(0); block_epc_i2c(4);
-//	epc_pll_steps(0); block_epc_i2c(4);
 
 	INIT_TOF_TS();
 
-	// Acquire compensation B/W with fixed intlen - temperature at the same time
+	// Acquire compensation B/W with fixed intlen - chip temperature at the same time
 	dcmi_crop_wide();
 	epc_greyscale(); block_epc_i2c(4);
 	epc_dis_leds(); block_epc_i2c(4);
@@ -258,14 +255,12 @@ void run_cycle()
 	int16_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
 
-
 	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp)*tof_calibs[sidx]->fine_steps_per_temp[0])>>8;
 	if(fine_steps < 0) fine_steps = 0;
 	else if(fine_steps > 799) fine_steps = 799;
 	//DBG_PR_VAR_U32(fine_steps);
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
 
-	adjust();
 
 
 	static uint8_t  wid_ampl[TOF_XS*TOF_YS];
@@ -274,30 +269,7 @@ void run_cycle()
 	static uint16_t nar_dist[TOF_XS_NARROW*TOF_YS_NARROW];
 
 
-	// SUPER SHORT WIDE
-
-	epc_4dcs(); block_epc_i2c(4);
-	delay_ms(1);
-	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
-	epc_clk_div(0); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(25)); block_epc_i2c(4);
-
-	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
-	epc_trig();
-
-	copy_cal_to_shadow(sidx, 0);
-
-
-	if(poll_capt_with_timeout_complete()) log_err();
-
-	uint8_t wid_ampl_max = 0;
-	uint8_t nar_ampl_max = 0;
-
-	compensated_tof_calc_dist_ampl(&wid_ampl_max, wid_ampl, wid_dist, &dcsa, &mono_comp);
-
-
-#if 0
-
+	// TEST: 6.66MHz 2dcs
 
 	epc_2dcs(); block_epc_i2c(4);
 	delay_ms(1);
@@ -310,89 +282,38 @@ void run_cycle()
 
 	copy_cal_to_shadow(sidx, 2);
 
-
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	uint8_t wid_ampl_max = 0;
-	uint8_t nar_ampl_max = 0;
-
-	compensated_tof_calc_dist_ampl_2dcs(wid_ampl, wid_dist, &dcsa, &mono_comp);
-
-#endif
+	compensated_2dcs_6mhz_ampl_dist(wid_ampl, wid_dist, &dcsa, &mono_comp);
 
 
 
+#if 0	// SUPER SHORT WIDE
 
-	// QUITE SHORT WIDE
-
-	epc_intlen(intlen_mults[0], INTUS(150)); block_epc_i2c(4);
+	epc_4dcs(); block_epc_i2c(4);
+	delay_ms(1);
+	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 	epc_clk_div(0); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(25)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
-	uint16_t wide_stray = measure_stray(); // blocks for 500us
 
 	copy_cal_to_shadow(sidx, 0);
 
-
-	adjust();
-
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	if(wid_ampl_max == 255)
-	{
-//		delay_ms(20);
-//		goto SKIP;
-	}
+
+	conv_4dcs_to_2dcs(dcs20[0], dcs31[0], &dcsa, &mono_comp);
+
+	uint8_t supershort_avg_ampl = calc_avg_ampl(dcs20[0], dcs31[0]);
 
 
-	// QUITE SHORT NARROW
-	delay_ms(1);
-	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(50)); block_epc_i2c(4);
-
-	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
-	rgb_update(0); // red led slightly distorts the stray meas
-	epc_trig();
-	uint16_t narrow_stray = measure_stray(); // blocks for 500us
-	update_led(sidx);
-
-	// calc quite short wide:
-	compensated_tof_calc_dist_ampl(&wid_ampl_max, wid_ampl, wid_dist, &dcsa, &mono_comp);
-	uint16_t inimage_stray_ampl_est;
-	uint16_t inimage_stray_dist_est;
-	calc_stray_estimate(wid_ampl, wid_dist, &inimage_stray_ampl_est, &inimage_stray_dist_est);
-
-	IFDBG
-	{
-		DBG_PR_VAR_U16(inimage_stray_ampl_est);
-		DBG_PR_VAR_U16(inimage_stray_dist_est);
-		DBG_PR_VAR_U16(wide_stray);
-		DBG_PR_VAR_U16(narrow_stray);
-	}
-
-	if(poll_capt_with_timeout_complete()) log_err();
-
-	adjust();
-
-	if(wid_ampl_max == 255)
-	{
-//		delay_ms(15);
-
-		// Quite short is already overexposed - not taking a longer shot, this is all we get
-//		tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 5, 254, vox_ref_x, vox_ref_y);
-
-//		goto SKIP;
-	}
-
-	// Let's use near-looking parts of the "quite short" - these can get overexposed on the next set.
-	// Don't use low-amplitude stuff, we'll get better stuff soon.
-//	tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 60, 254, vox_ref_x, vox_ref_y);
 
 
-	// Actual wide
-	// Previous inttime: 150 us
-	// Aim for max amplitude of 150
+
+
+
 
 //	int inttime_us = 4000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
 //	int inttime_us = 3000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
@@ -416,8 +337,6 @@ void run_cycle()
 	adjust();
 
 
-	static int tmpcnt = -1;
-	tmpcnt++;
 
 	// HDR test, wide
 
@@ -427,16 +346,6 @@ void run_cycle()
 
 	#define BASE_EXP 200
 	#define BASE_EXP_NAR 150
-
-	extern void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg);
-	extern void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg);
-
-	extern void compensated_hdr_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-	extern void compensated_hdr_tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-
-	extern void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-	extern void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-
 
 	static int16_t hdr20[2][9600];
 	static int16_t hdr31[2][9600];
@@ -527,8 +436,8 @@ void run_cycle()
 		compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(nar_ampl, nar_dist, hdr20_narrow[0], hdr31_narrow[0], hdr20_narrow[1], hdr31_narrow[1]);
 
 
-
 	adjust();
+#endif
 
 
 	// AUTOEXPOSED MIDLONG WIDE
@@ -622,16 +531,7 @@ void run_cycle()
 
 	if(gen_data && tof_raw_dist)
 	{
-		if(tmpcnt == 0)
-			tof_raw_dist->sensor_idx = 5;
-		else if(tmpcnt == 1)
-			tof_raw_dist->sensor_idx = 4;
-		else if(tmpcnt == 2)
-			tof_raw_dist->sensor_idx = 3;
-		else
-			tof_raw_dist->sensor_idx = 2;
-
-//		tof_raw_dist->sensor_idx = sidx;
+		tof_raw_dist->sensor_idx = sidx;
 		tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
 		memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
 		memcpy(tof_raw_dist->dist_narrow, nar_dist, sizeof tof_raw_dist->dist_narrow);
@@ -641,16 +541,7 @@ void run_cycle()
 
 	if(gen_data && tof_raw_ampl8)
 	{
-		if(tmpcnt == 0)
-			tof_raw_ampl8->sensor_idx = 5;
-		else if(tmpcnt == 1)
-			tof_raw_ampl8->sensor_idx = 4;
-		else if(tmpcnt == 2)
-			tof_raw_ampl8->sensor_idx = 3;
-		else
-			tof_raw_ampl8->sensor_idx = 2;
-
-//		tof_raw_ampl8->sensor_idx = sidx;
+		tof_raw_ampl8->sensor_idx = sidx;
 		memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
 		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
 	}
@@ -744,7 +635,7 @@ void run_cycle()
 //	test_cnt++;
 //	if(test_cnt >= 16) test_cnt = 0;
 
-	for(int i=0; i<20; i++)
+	for(int i=0; i<30; i++)
 	{
 		check_rx();
 		delay_ms(10);

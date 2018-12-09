@@ -94,8 +94,17 @@ int32_t calc_widnar_correction(int32_t* corr, uint8_t *wid_ampl, uint16_t *wid_d
 
 void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg);
 void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg);
+uint8_t calc_avg_ampl(int16_t* dcs20_in, int16_t* dcs31_in);
 void hdr_combine(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
 void hdr_combine_narrow(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
+void lens_model(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t* dcs20_in, int16_t* dcs31_in);
+void lens_model_narrow(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t* dcs20_in, int16_t* dcs31_in);
+void compensated_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in);
+void compensated_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in);
+void compensated_2dcs_6mhz_ampl_dist(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg);
+void compensated_2dcs_6mhz_ampl_dist_narrow(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_narrow_t *in, epc_img_t *bwimg);
+
+
 
 
 /*
@@ -125,7 +134,7 @@ typedef struct __attribute__((packed))
 {
 	/*
 		Full distance LUTs for two frequencies (20MHz and 10MHz).
-		16 pixel groups
+		Max 16 pixel groups (exact number WID_N_PIXGROUPS, NAR_N_PIXGROUPS)
 		8 segments of the compensated atan2 function (atan2(a,b) + correction), so that a>0, b>0, b>a, hence 8 segments with swapped polarities / order
 		The table reads the distance in mm directly.
 
