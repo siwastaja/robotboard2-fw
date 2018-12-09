@@ -158,6 +158,22 @@ void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, e
 		int16_t dcs31 = dcs3-dcs1;
 		int16_t dcs20 = dcs2-dcs0;
 
+
+		#ifdef DO_AMB_CORR
+			int16_t bw = ((bwimg->img[i]&0b0011111111111100)>>2)-2048;
+			if(bw<0) bw=0;
+			int corr_factor;
+			if(!(i&1)) // even
+				corr_factor = shadow_luts.hif.amb_corr[i/2] & 0x0f;
+			else
+				corr_factor = shadow_luts.hif.amb_corr[i/2]>>4;
+			int16_t comp = (bw*corr_factor)>>4;
+
+			dcs31 -= comp;
+			dcs20 -= comp;
+		#endif
+
+
 		dcs20_out[i] = dcs20;
 		dcs31_out[i] = dcs31;
 	}
@@ -166,150 +182,144 @@ void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, e
 void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg)  __attribute__((section(".text_itcm")));
 void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg)
 {
-	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
+	for(int yy=0; yy < TOF_YS_NARROW; yy++)
 	{
-		uint16_t dist;
-		int ampl;
+		for(int xx=0; xx < TOF_XS_NARROW; xx++)
+		{
+			int i = yy*TOF_XS_NARROW+xx;
+			int i_bw = (yy+TOF_NARROW_Y_START)*TOF_XS+(xx+TOF_NARROW_X_START);
 
-		int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
-		int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
-		int16_t dcs2 = ((in->dcs[2].img[i]&0b0011111111111100)>>2)-2048;
-		int16_t dcs3 = ((in->dcs[3].img[i]&0b0011111111111100)>>2)-2048;
+			uint16_t dist;
+			int ampl;
 
-		int16_t dcs31 = dcs3-dcs1;
-		int16_t dcs20 = dcs2-dcs0;
+			int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
+			int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
+			int16_t dcs2 = ((in->dcs[2].img[i]&0b0011111111111100)>>2)-2048;
+			int16_t dcs3 = ((in->dcs[3].img[i]&0b0011111111111100)>>2)-2048;
+
+			int16_t dcs31 = dcs3-dcs1;
+			int16_t dcs20 = dcs2-dcs0;
+
+
+			#ifdef DO_AMB_CORR
+				int16_t bw = ((bwimg->img[i_bw]&0b0011111111111100)>>2)-2048;
+				if(bw<0) bw=0;
+				int corr_factor;
+				if(!(i&1)) // even
+					corr_factor = shadow_luts.hif.amb_corr[i/2] & 0x0f;
+				else
+					corr_factor = shadow_luts.hif.amb_corr[i/2]>>4;
+				int16_t comp = (bw*corr_factor)>>4;
+
+				dcs31 -= comp;
+				dcs20 -= comp;
+			#endif
+
+
+			dcs20_out[i] = dcs20;
+			dcs31_out[i] = dcs31;
+		}
+	}
+}
+
+#define HDR_FACTOR 8
+
+void hdr_combine(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in) __attribute__((section(".text_itcm")));
+void hdr_combine(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
+{
+	for(int i=0; i < TOF_XS*TOF_YS; i++)
+	{
+		int16_t dcs20_lo = dcs20_lo_in[i];
+		int16_t dcs31_lo = dcs31_lo_in[i];
+		int16_t dcs20_hi = dcs20_hi_in[i];
+		int16_t dcs31_hi = dcs31_hi_in[i];
+
+		int16_t dcs20, dcs31;
+
+		if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
+		{
+			dcs20 = dcs20_lo*HDR_FACTOR;
+			dcs31 = dcs31_lo*HDR_FACTOR;
+		}
+		else
+		{
+			dcs20 = dcs20_hi;
+			dcs31 = dcs31_hi;
+		}
 
 		dcs20_out[i] = dcs20;
 		dcs31_out[i] = dcs31;
 	}
 }
 
-#define HDR_FACTOR 8
+void hdr_combine_narrow(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in) __attribute__((section(".text_itcm")));
+void hdr_combine_narrow(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
+{
+	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
+	{
+		int16_t dcs20_lo = dcs20_lo_in[i];
+		int16_t dcs31_lo = dcs31_lo_in[i];
+		int16_t dcs20_hi = dcs20_hi_in[i];
+		int16_t dcs31_hi = dcs31_hi_in[i];
 
-void compensated_hdr_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)   __attribute__((section(".text_itcm")));
-void compensated_hdr_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
+		int16_t dcs20, dcs31;
+
+		if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
+		{
+			dcs20 = dcs20_lo*HDR_FACTOR;
+			dcs31 = dcs31_lo*HDR_FACTOR;
+		}
+		else
+		{
+			dcs20 = dcs20_hi;
+			dcs31 = dcs31_hi;
+		}
+
+		dcs20_out[i] = dcs20;
+		dcs31_out[i] = dcs31;
+	}
+}
+
+void compensated_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in)   __attribute__((section(".text_itcm")));
+void compensated_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in)
 {
 	for(int i=0; i < TOF_XS*TOF_YS; i++)
 	{
 		uint16_t dist;
 		int ampl;
 
-		int16_t dcs20_lo = dcs20_lo_in[i];
-		int16_t dcs31_lo = dcs31_lo_in[i];
-		int16_t dcs20_hi = dcs20_hi_in[i];
-		int16_t dcs31_hi = dcs31_hi_in[i];
+		int16_t dcs20 = dcs20_in[i];
+		int16_t dcs31 = dcs31_in[i];
 
-
-		if(dcs20_lo < -4000 || dcs20_lo > 4000 || dcs31_lo < -4000 || dcs31_lo > 4000)
+		if(dcs20 < -4090 || dcs20 > 4090 || dcs31 < -4090 || dcs31 > 4090)
 		{
 			ampl = 255;
 			dist = 0;
 		}
 		else
 		{
-			int16_t dcs20, dcs31;
-
-			if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
-			{
-				dcs20 = dcs20_lo*HDR_FACTOR;
-				dcs31 = dcs31_lo*HDR_FACTOR;
-			}
-			else
-			{
-				dcs20 = dcs20_hi;
-				dcs31 = dcs31_hi;
-			}
-
 			#ifdef FAST_APPROX_AMPLITUDE
 				ampl = (abso(dcs20)+abso(dcs31))/(23);// if(ampl > 255) ampl = 255;
 			#else
 				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17);// if(ampl > 255) ampl = 255;
 			#endif
 
-			if(ampl<4)
-			{
-				dist=65534;
-			}
+			int pixgroup;
+			if(!(i&1)) // even
+				pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
 			else
-			{
-				int pixgroup;
-				if(!(i&1)) // even
-					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
-				else
-					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
+				pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
 
-				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
-			}
+			dist = lookup_dist(0, pixgroup, dcs31, dcs20);
 		}
 		ampl /= HDR_FACTOR; if(ampl>255) ampl=255;
 		ampl_out[i] = ampl;
 		dist_out[i] = dist;
 	}
 }
-void compensated_hdr_tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)   __attribute__((section(".text_itcm")));
-void compensated_hdr_tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
-{
-	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
-	{
-		uint16_t dist;
-		int ampl;
-
-		int16_t dcs20_lo = dcs20_lo_in[i];
-		int16_t dcs31_lo = dcs31_lo_in[i];
-		int16_t dcs20_hi = dcs20_hi_in[i];
-		int16_t dcs31_hi = dcs31_hi_in[i];
-
-
-		if(dcs20_lo < -4000 || dcs20_lo > 4000 || dcs31_lo < -4000 || dcs31_lo > 4000)
-		{
-			ampl = 255;
-			dist = 0;
-		}
-		else
-		{
-			int16_t dcs20, dcs31;
-
-			if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
-			{
-				dcs20 = dcs20_lo*HDR_FACTOR;
-				dcs31 = dcs31_lo*HDR_FACTOR;
-			}
-			else
-			{
-				dcs20 = dcs20_hi;
-				dcs31 = dcs31_hi;
-			}
-
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23);// if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17);// if(ampl > 255) ampl = 255;
-			#endif
-
-			if(ampl<4)
-			{
-				dist=65534;
-			}
-			else
-			{
-				int pixgroup;
-				if(!(i&1)) // even
-					pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2] & 0x0f;
-				else
-					pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2]>>4;
-
-				dist = lookup_dist(1, pixgroup, dcs31, dcs20);
-			}
-		}
-		ampl /= HDR_FACTOR; if(ampl>255) ampl=255;
-		ampl_out[i] = ampl;
-		dist_out[i] = dist;
-	}
-}
-
 
 int flare_factor = 11;
-int flare_factor_narrow = 11;
+int flare_factor_narrow = 8;
 
 void adjust()
 {
@@ -640,117 +650,6 @@ void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, ui
 	if(max_ampl_out != NULL)
 		*max_ampl_out = max_ampl;
 }
-
-#if 0
-void compensated_tof_calc_dist_ampl_2dcs(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
-void compensated_tof_calc_dist_ampl_2dcs(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg)
-{
-//	uint32_t avg_ampl = 0;
-	uint8_t max_ampl = 0;
-	for(int i=0; i < TOF_XS*TOF_YS; i++)
-	{
-		uint16_t dist;
-		int ampl;
-
-		int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
-		int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
-
-		#ifdef DBGPR
-			if(i == PIX)
-			{
-				DBG_PR_VAR_I16(dcs0);
-				DBG_PR_VAR_I16(dcs1);
-				DBG_PR_VAR_I16(dcs2);
-				DBG_PR_VAR_I16(dcs3);
-			}
-		#endif
-
-		if(dcs0 < -2047 || dcs0 > 2046 || dcs1 < -2047 || dcs1 > 2046)
-		{
-			ampl = 255;
-			dist = 0;
-		}
-		else
-		{
-			int16_t dcs31 = -1*dcs1;
-			int16_t dcs20 = -1*dcs0;
-
-			#ifdef DBGPR
-				if(i == PIX)
-				{
-					DBG_PR_VAR_I16(dcs31);
-					DBG_PR_VAR_I16(dcs20);
-				}
-			#endif
-			#ifdef DO_AMB_CORR
-				int16_t bw = ((bwimg->img[i]&0b0011111111111100)>>2)-2048;
-				if(bw<0) bw=0;
-				int corr_factor;
-				if(!(i&1)) // even
-					corr_factor = shadow_luts.hif.amb_corr[i/2] & 0x0f;
-				else
-					corr_factor = shadow_luts.hif.amb_corr[i/2]>>4;
-				int16_t comp = (bw*corr_factor)>>4;
-
-				#ifdef DBGPR
-						if(i == PIX)
-						{
-							DBG_PR_VAR_I16(bw);
-							DBG_PR_VAR_I16(corr_factor);
-							DBG_PR_VAR_I16(comp);
-						}
-				#endif
-
-				dcs31 -= comp;
-				dcs20 -= comp;
-			#endif
-
-
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/23; if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
-			#endif
-
-//			if(ampl<4)
-//			{
-//				dist = 65534;
-//			}
-//			else
-			{
-				int pixgroup;
-				if(!(i&1)) // even
-					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
-				else
-					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
-
-				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
-
-				#ifdef DBGPR
-
-					if(i == PIX)
-					{
-						DBG_PR_VAR_I16(pixgroup);
-						DBG_PR_VAR_U16(dist);
-					}
-
-				#endif
-
-			}
-		}
-		ampl_out[i] = ampl;
-		dist_out[i] = dist;
-//		avg_ampl += ampl;
-		if(ampl > max_ampl) max_ampl = ampl;
-	}
-
-//	if(avg_ampl_out != NULL)
-//		*avg_ampl_out = avg_ampl/(TOF_XS*TOF_YS);
-
-	if(max_ampl_out != NULL)
-		*max_ampl_out = max_ampl;
-}
-#endif
 
 
 void compensated_tof_calc_dist_ampl_narrow(uint8_t *max_ampl_out, uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg) __attribute__((section(".text_itcm")));
