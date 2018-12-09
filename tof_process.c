@@ -224,7 +224,7 @@ void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_n
 
 #define HDR_FACTOR 8
 
-uint8_t calc_avg_ampl(int16_t* dcs20_in, int16_t* dcs31_in);
+uint8_t calc_avg_ampl(int16_t* dcs20_in, int16_t* dcs31_in)
 {
 	uint32_t accum = 0;
 	for(int i=0; i < TOF_XS*TOF_YS; i++)
@@ -1454,6 +1454,8 @@ void compensated_2dcs_6mhz_ampl_dist(uint8_t *ampl_out, uint16_t *dist_out, epc_
 
 				dist_i += pix_offs;
 
+				dist_i += TOF_TBL_HALF_PERIOD;
+
 
 				if(dist_i < 0) dist_i += TOF_TBL_PERIOD;				
 				else if(dist_i >= TOF_TBL_PERIOD) dist_i -= TOF_TBL_PERIOD;
@@ -1564,7 +1566,7 @@ void compensated_2dcs_6mhz_ampl_dist_narrow(uint8_t *ampl_out, uint16_t *dist_ou
 
 					dist_i += pix_offs;
 
-
+					dist_i += TOF_TBL_HALF_PERIOD;
 					if(dist_i < 0) dist_i += TOF_TBL_PERIOD;				
 					else if(dist_i >= TOF_TBL_PERIOD) dist_i -= TOF_TBL_PERIOD;
 

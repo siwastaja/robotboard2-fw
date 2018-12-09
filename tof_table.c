@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include "tof_table.h"
 
-const int16_t tof_tbl[TOF_TBL_LEN] __attribute__((section(".tof_tbl"))) =
+const int16_t tof_tbl[TOF_TBL_LEN] =
 {
 /*i=   0*/     0,
 /*i=   1*/    14,

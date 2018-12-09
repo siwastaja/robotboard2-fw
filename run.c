@@ -35,6 +35,7 @@ uint8_t conv_bat_percent(int mv)
 
 epc_img_t mono_comp __attribute__((aligned(4)));
 epc_4dcs_t dcsa __attribute__((aligned(4)));
+epc_2dcs_t dcs2 __attribute__((aligned(4)));
 epc_4dcs_narrow_t dcsa_narrow __attribute__((aligned(4)));
 
 void soft_err()
@@ -275,16 +276,16 @@ void run_cycle()
 	delay_ms(1);
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 	epc_clk_div(2); block_epc_i2c(4);
-	epc_intlen(intlen_mults[2], INTUS(2000)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[2], INTUS(1000)); block_epc_i2c(4);
 
-	dcmi_start_dma(&dcsa, SIZEOF_2DCS);
+	dcmi_start_dma(&dcs2, SIZEOF_2DCS);
 	epc_trig();
 
 	copy_cal_to_shadow(sidx, 2);
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	compensated_2dcs_6mhz_ampl_dist(wid_ampl, wid_dist, &dcsa, &mono_comp);
+	compensated_2dcs_6mhz_ampl_dist(wid_ampl, wid_dist, &dcs2, &mono_comp);
 
 
 
@@ -535,8 +536,8 @@ void run_cycle()
 		tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
 		memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
 		memcpy(tof_raw_dist->dist_narrow, nar_dist, sizeof tof_raw_dist->dist_narrow);
-		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
-		tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
+//		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
+//		tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
 	}
 
 	if(gen_data && tof_raw_ampl8)
@@ -550,8 +551,6 @@ void run_cycle()
 	{
 		tof_diagnostics->temperature = chiptemp;
 	}
-
-	if(tmpcnt==3) tmpcnt = -1;
 
 	SKIP:;
 

@@ -12,6 +12,6 @@
 
 #define TOF_TBL_QUART_PERIOD 5621
 
-extern const int16_t tof_tbl[TOF_TBL_LEN] __attribute__((section(".tof_tbl")));
+extern const int16_t tof_tbl[TOF_TBL_LEN];
 
 #endif
