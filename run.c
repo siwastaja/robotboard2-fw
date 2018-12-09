@@ -419,21 +419,33 @@ void run_cycle()
 	static int tmpcnt = -1;
 	tmpcnt++;
 
-	// HDR test
+	// HDR test, wide
 
 	#ifndef HDR_FACTOR
 		#define HDR_FACTOR 8
 	#endif
+
+	#define BASE_EXP 200
+	#define BASE_EXP_NAR 150
+
 	extern void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg);
+	extern void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg);
+
 	extern void compensated_hdr_tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
+	extern void compensated_hdr_tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
+
 	extern void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
+	extern void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
 
 
 	static int16_t hdr20[2][9600];
 	static int16_t hdr31[2][9600];
 
+	static int16_t hdr20_narrow[2][TOF_XS_NARROW*TOF_YS_NARROW];
+	static int16_t hdr31_narrow[2][TOF_XS_NARROW*TOF_YS_NARROW];
+
 	epc_clk_div(0); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(600)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(BASE_EXP)); block_epc_i2c(4);
 	epc_4dcs(); block_epc_i2c(4);
 
 	delay_ms(1);
@@ -441,6 +453,7 @@ void run_cycle()
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
+	adjust();
 
 	copy_cal_to_shadow(sidx, 0);
 
@@ -452,10 +465,11 @@ void run_cycle()
 		conv_4dcs_to_2dcs(hdr20[0], hdr31[0], &dcsa, NULL);
 
 
-	epc_intlen(intlen_mults[0], INTUS(600*HDR_FACTOR)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(BASE_EXP*HDR_FACTOR)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
+	adjust();
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
@@ -474,7 +488,49 @@ void run_cycle()
 
 
 
+	// HDR test, narrow
+
+	delay_ms(1);
+	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(BASE_EXP_NAR)); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
+	epc_trig();
 	adjust();
+
+	if(poll_capt_with_timeout_complete()) log_err();
+
+	if(tmpcnt == 0)
+		compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
+	else if(tmpcnt >= 2)
+		conv_4dcs_to_2dcs_narrow(hdr20_narrow[0], hdr31_narrow[0], &dcsa_narrow, NULL);
+
+
+	epc_intlen(intlen_mults[0], INTUS(BASE_EXP_NAR*HDR_FACTOR)); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
+	epc_trig();
+	adjust();
+
+	if(poll_capt_with_timeout_complete()) log_err();
+
+	if(tmpcnt == 1)
+		compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
+	else if(tmpcnt >= 2)
+		conv_4dcs_to_2dcs_narrow(hdr20_narrow[1], hdr31_narrow[1], &dcsa_narrow, NULL);
+
+
+	if(tmpcnt == 2)
+		compensated_hdr_tof_calc_dist_ampl_narrow(nar_ampl, nar_dist, hdr20_narrow[0], hdr31_narrow[0], hdr20_narrow[1], hdr31_narrow[1]);
+
+	if(tmpcnt == 3)
+		compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(nar_ampl, nar_dist, hdr20_narrow[0], hdr31_narrow[0], hdr20_narrow[1], hdr31_narrow[1]);
+
+
+
+	adjust();
+
+
 	// AUTOEXPOSED MIDLONG WIDE
 
 #if 0
