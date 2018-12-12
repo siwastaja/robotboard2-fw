@@ -7,7 +7,7 @@ LD = arm-none-eabi-gcc
 SIZE = arm-none-eabi-size
 OBJCOPY = arm-none-eabi-objcopy
 
-OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o
+OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o ext_vacuum_boost.o
 #OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run.o ../robotboard2-fw-calibrator/tof_calibrator.o
 
 

@@ -29,6 +29,8 @@
 #include "../robotboard2-fw-calibrator/tof_calibrator.h"
 #endif
 
+#include "ext_vacuum_boost.h"
+
 #define DBG_UART
 
 #ifdef DBG_UART
@@ -521,6 +523,11 @@ void main()
 	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
 	init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
+
+
+	init_ext_vacuum_boost();
+
+
 	extern void adc_test();
 //	while(1)
 //		adc_test();
@@ -539,6 +546,7 @@ void main()
 	#ifdef CALIBRATOR
 		init_tofcal_ambient();
 	#endif
+
 
 	while(1)
 	{

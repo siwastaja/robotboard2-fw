@@ -34,12 +34,13 @@ void charger_safety_shutdown();
 void epc_safety_shutdown();
 void pwrswitch_safety_shutdown();
 void bldc_safety_shutdown();
+void ext_safety_shutdown();
 
 #ifdef CALIBRATOR
 	extern void tofcal_ambient_lvl(int);
-	#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); bldc_safety_shutdown(); epc_safety_shutdown(); pwrswitch_safety_shutdown(); tofcal_ambient_lvl(0);}while(0)
+	#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); bldc_safety_shutdown(); epc_safety_shutdown(); pwrswitch_safety_shutdown(); ext_safety_shutdown(); tofcal_ambient_lvl(0);}while(0)
 #else
-	#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); bldc_safety_shutdown(); epc_safety_shutdown(); pwrswitch_safety_shutdown();}while(0)
+	#define SAFETY_SHUTDOWN() do{charger_safety_shutdown(); bldc_safety_shutdown(); epc_safety_shutdown(); pwrswitch_safety_shutdown(); ext_safety_shutdown(); }while(0)
 #endif
 
 
@@ -77,8 +78,9 @@ void profile_cpu_blocking_20ms();
 #define INTPRIO_IMU_DMA      3
 #define INTPRIO_IMU_TIMER    4
 #define INTPRIO_BLDC         5
-#define INTPRIO_SBC_COMM     6
-#define INTPRIO_TOF_I2C      7
+#define INTPRIO_URGENT_APP   6
+#define INTPRIO_SBC_COMM     7
+#define INTPRIO_TOF_I2C      8
 
 // By having the timebase handler with the least priority, this means if any ISR in the system gets stuck, the timebase handler never gets
 // called, the power switch is not replenished and power is cut really quickly. A great watchdog. Note: in shutdown (error or safety), the priority
