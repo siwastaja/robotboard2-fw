@@ -9,7 +9,6 @@
 #include "../robotsoft/api_board_to_soft.h"
 #include "../robotsoft/api_soft_to_board.h"
 
-static char printbuf[128];
 
 #define G_DC_MOTDET_TH 250 // 100 generates false noise detections about every 2-3 seconds
 #define G_AC_MOTDET_TH (150*256) // threshold after DC offset correction

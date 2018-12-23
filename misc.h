@@ -109,4 +109,6 @@ void led_status(int sid, uint32_t val, int mode);
 #define LED_MODE_BLINK 2
 
 
+extern char printbuf[128];
+
 

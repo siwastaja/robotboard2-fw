@@ -22,7 +22,6 @@
 #include "own_std.h"
 #include "drive.h"
 
-static char printbuf[128];
 
 uint8_t conv_bat_percent(int mv)
 {
@@ -125,7 +124,7 @@ uint16_t measure_stray()
 	return stray;
 }
 
-#define IFDBG if(sidx == 999)
+#define IFDBG if(sidx == 5)
 
 
 static int round_of_longer_exposure;
@@ -151,9 +150,32 @@ static int lowbat_die_cnt = 0;
 void run_cycle()  __attribute__((section(".text_itcm")));
 void run_cycle()
 {
+
+	static int16_t wid_hdr20[2][TOF_XS*TOF_YS] __attribute__((section(".dtcm_bss")));
+	static int16_t wid_hdr31[2][TOF_XS*TOF_YS];
+
+	static int16_t nar_hdr20[2][TOF_XS_NARROW*TOF_YS_NARROW] __attribute__((section(".dtcm_bss")));
+	static int16_t nar_hdr31[2][TOF_XS_NARROW*TOF_YS_NARROW] __attribute__((section(".dtcm_bss")));
+
+	static uint16_t lofreq_wid_dist[TOF_XS*TOF_YS];
+
+	static uint8_t  wid_ampl[TOF_XS*TOF_YS];
+	static uint16_t wid_dist[TOF_XS*TOF_YS];
+	static uint8_t  nar_ampl[TOF_XS_NARROW*TOF_YS_NARROW];
+	static uint16_t nar_dist[TOF_XS_NARROW*TOF_YS_NARROW];
+
+
+
 	static int sidx = 0;
 //	sidx++;
 	sidx = 5;
+	static int test_cnt = -1;
+
+	test_cnt++;
+	if(test_cnt > 2)
+	{
+		test_cnt = 0;
+	}
 
 	if(sidx >= N_SENSORS)
 	{
@@ -264,19 +286,14 @@ void run_cycle()
 
 
 
-	static uint8_t  wid_ampl[TOF_XS*TOF_YS];
-	static uint16_t wid_dist[TOF_XS*TOF_YS];
-	static uint8_t  nar_ampl[TOF_XS_NARROW*TOF_YS_NARROW];
-	static uint16_t nar_dist[TOF_XS_NARROW*TOF_YS_NARROW];
 
-
-	// TEST: 6.66MHz 2dcs
+	// 6.66MHz 2dcs
 
 	epc_2dcs(); block_epc_i2c(4);
 	delay_ms(1);
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 	epc_clk_div(2); block_epc_i2c(4);
-	epc_intlen(intlen_mults[2], INTUS(1000)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[2], INTUS(4000)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcs2, SIZEOF_2DCS);
 	epc_trig();
@@ -285,17 +302,36 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	compensated_2dcs_6mhz_ampl_dist(wid_ampl, wid_dist, &dcs2, &mono_comp);
+	compensated_2dcs_6mhz_dist_masked(lofreq_wid_dist, &dcs2, &mono_comp);
+
+	if(test_cnt == 0)
+	{
+		if(gen_data && tof_raw_dist)
+		{
+			tof_raw_dist->sensor_idx = test_cnt;
+			tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
+			memcpy(tof_raw_dist->dist, lofreq_wid_dist, sizeof tof_raw_dist->dist);
+			memset(tof_raw_dist->dist_narrow, 0, sizeof tof_raw_dist->dist_narrow);
+		}
+
+		if(gen_data && tof_raw_ampl8)
+		{
+			tof_raw_ampl8->sensor_idx = test_cnt;
+			memset(tof_raw_ampl8->ampl, 0, sizeof tof_raw_ampl8->ampl);
+			memset(tof_raw_ampl8->ampl_narrow, 0, sizeof tof_raw_ampl8->ampl_narrow);
+		}
+	}
 
 
+	#define SUPERSHORT_US 25
 
-#if 0	// SUPER SHORT WIDE
+	// SUPER SHORT WIDE
 
 	epc_4dcs(); block_epc_i2c(4);
 	delay_ms(1);
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 	epc_clk_div(0); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(25)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(SUPERSHORT_US)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
@@ -305,17 +341,13 @@ void run_cycle()
 	if(poll_capt_with_timeout_complete()) log_err();
 
 
-	conv_4dcs_to_2dcs(dcs20[0], dcs31[0], &dcsa, &mono_comp);
+	conv_4dcs_to_2dcs(wid_hdr20[0], wid_hdr31[0], &dcsa, &mono_comp);
 
-	uint8_t supershort_avg_ampl = calc_avg_ampl(dcs20[0], dcs31[0]);
-
-
+	int supershort_avg_ampl_x256 = calc_avg_ampl_x256(wid_hdr20[0], wid_hdr31[0]);
 
 
 
-
-
-
+/*
 //	int inttime_us = 4000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
 //	int inttime_us = 3000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
 	int inttime_us = 150.0/(double)wid_ampl_max * 150.0;
@@ -334,6 +366,7 @@ void run_cycle()
 		DBG_PR_VAR_I32(wid_ampl_max);
 		DBG_PR_VAR_I32(inttime_us);
 	}
+*/
 
 	adjust();
 
@@ -345,17 +378,28 @@ void run_cycle()
 		#define HDR_FACTOR 8
 	#endif
 
-	#define BASE_EXP 200
-	#define BASE_EXP_NAR 150
 
-	static int16_t hdr20[2][9600];
-	static int16_t hdr31[2][9600];
+	/*
+	SSavg	new base
+	8+	25 (skip imaging the first, reuse supershort)
+	0	724
+	*/
 
-	static int16_t hdr20_narrow[2][TOF_XS_NARROW*TOF_YS_NARROW];
-	static int16_t hdr31_narrow[2][TOF_XS_NARROW*TOF_YS_NARROW];
+	int ss_saturated = (int)supershort_avg_ampl_x256;
+	if(ss_saturated > 8*256) ss_saturated = 8*256;
+	
+	int base_exp = SUPERSHORT_US + sq(8*256 - ss_saturated)/6000;
+
+	IFDBG
+	{
+		DBG_PR_VAR_I32(supershort_avg_ampl_x256);
+		DBG_PR_VAR_I32(base_exp);
+	}
+
+	int base_exp_nar = base_exp/3;
 
 	epc_clk_div(0); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(BASE_EXP)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(base_exp)); block_epc_i2c(4);
 	epc_4dcs(); block_epc_i2c(4);
 
 	delay_ms(1);
@@ -369,13 +413,9 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	if(tmpcnt == 0)
-		compensated_tof_calc_dist_ampl(NULL, wid_ampl, wid_dist, &dcsa, &mono_comp);
-	else if(tmpcnt >= 2)
-		conv_4dcs_to_2dcs(hdr20[0], hdr31[0], &dcsa, NULL);
+	conv_4dcs_to_2dcs(wid_hdr20[0], wid_hdr31[0], &dcsa, NULL);
 
-
-	epc_intlen(intlen_mults[0], INTUS(BASE_EXP*HDR_FACTOR)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(base_exp*HDR_FACTOR)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
@@ -383,17 +423,9 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	if(tmpcnt == 1)
-		compensated_tof_calc_dist_ampl(NULL, wid_ampl, wid_dist, &dcsa, &mono_comp);
-	else if(tmpcnt >= 2)
-		conv_4dcs_to_2dcs(hdr20[1], hdr31[1], &dcsa, NULL);
+	conv_4dcs_to_2dcs(wid_hdr20[1], wid_hdr31[1], &dcsa, NULL);
 
-
-	if(tmpcnt == 2)
-		compensated_hdr_tof_calc_dist_ampl(wid_ampl, wid_dist, hdr20[0], hdr31[0], hdr20[1], hdr31[1]);
-
-	if(tmpcnt == 3)
-		compensated_hdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, hdr20[0], hdr31[0], hdr20[1], hdr31[1]);
+	compensated_hdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, wid_hdr20[0], wid_hdr31[0], wid_hdr20[1], wid_hdr31[1]);
 
 
 
@@ -402,7 +434,7 @@ void run_cycle()
 
 	delay_ms(1);
 	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(BASE_EXP_NAR)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(base_exp_nar)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
 	epc_trig();
@@ -410,13 +442,9 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	if(tmpcnt == 0)
-		compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
-	else if(tmpcnt >= 2)
-		conv_4dcs_to_2dcs_narrow(hdr20_narrow[0], hdr31_narrow[0], &dcsa_narrow, NULL);
+	conv_4dcs_to_2dcs_narrow(nar_hdr20[0], nar_hdr31[0], &dcsa_narrow, NULL);
 
-
-	epc_intlen(intlen_mults[0], INTUS(BASE_EXP_NAR*HDR_FACTOR)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(base_exp_nar*HDR_FACTOR)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
 	epc_trig();
@@ -424,21 +452,55 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	if(tmpcnt == 1)
-		compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
-	else if(tmpcnt >= 2)
-		conv_4dcs_to_2dcs_narrow(hdr20_narrow[1], hdr31_narrow[1], &dcsa_narrow, NULL);
+	conv_4dcs_to_2dcs_narrow(nar_hdr20[1], nar_hdr31[1], &dcsa_narrow, NULL);
 
-
-	if(tmpcnt == 2)
-		compensated_hdr_tof_calc_dist_ampl_narrow(nar_ampl, nar_dist, hdr20_narrow[0], hdr31_narrow[0], hdr20_narrow[1], hdr31_narrow[1]);
-
-	if(tmpcnt == 3)
-		compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(nar_ampl, nar_dist, hdr20_narrow[0], hdr31_narrow[0], hdr20_narrow[1], hdr31_narrow[1]);
+	compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(nar_ampl, nar_dist, nar_hdr20[0], nar_hdr31[0], nar_hdr20[1], nar_hdr31[1]);
 
 
 	adjust();
-#endif
+
+	if(test_cnt == 1)
+	{
+		if(gen_data && tof_raw_dist)
+		{
+			tof_raw_dist->sensor_idx = test_cnt;
+			tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
+			memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
+			memcpy(tof_raw_dist->dist_narrow, nar_dist, sizeof tof_raw_dist->dist_narrow);
+		}
+
+		if(gen_data && tof_raw_ampl8)
+		{
+			tof_raw_ampl8->sensor_idx = test_cnt;
+			memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
+			memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
+		}
+	}
+
+
+	dealias_20mhz(wid_dist, lofreq_wid_dist);
+	dealias_20mhz_narrow(nar_dist, lofreq_wid_dist);
+
+	if(test_cnt == 2)
+	{
+		if(gen_data && tof_raw_dist)
+		{
+			tof_raw_dist->sensor_idx = test_cnt;
+			tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
+			memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
+			memcpy(tof_raw_dist->dist_narrow, nar_dist, sizeof tof_raw_dist->dist_narrow);
+		}
+
+		if(gen_data && tof_raw_ampl8)
+		{
+			tof_raw_ampl8->sensor_idx = test_cnt;
+			memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
+			memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
+		}
+	}
+
+
+
 
 
 	// AUTOEXPOSED MIDLONG WIDE
@@ -530,6 +592,7 @@ void run_cycle()
 
 #endif
 
+/*
 	if(gen_data && tof_raw_dist)
 	{
 		tof_raw_dist->sensor_idx = sidx;
@@ -546,7 +609,7 @@ void run_cycle()
 		memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
 		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
 	}
-
+*/
 	if(gen_data && tof_diagnostics)
 	{
 		tof_diagnostics->temperature = chiptemp;
@@ -634,7 +697,7 @@ void run_cycle()
 //	test_cnt++;
 //	if(test_cnt >= 16) test_cnt = 0;
 
-	for(int i=0; i<30; i++)
+	for(int i=0; i<100; i++)
 	{
 		check_rx();
 		delay_ms(10);

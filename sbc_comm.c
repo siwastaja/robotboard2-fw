@@ -23,8 +23,6 @@
 #endif
 
 
-static char printbuf[128];
-
 /*
 define SPI_DMA_1BYTE_AT_TIME to force the SPI communication peripheral & DMA use 8-bit transfers. 
 Bus bandwidth usage will be 4 times more, but transfer sizes not multiples of four will work
@@ -100,7 +98,6 @@ the commands shouldn't take a lot of time. Also, RX buffer are smaller so we can
 
 static volatile uint8_t tx_fifo[TX_FIFO_DEPTH][B2S_MAX_LEN] __attribute__((aligned(8))) __attribute__((section(".sram1_bss")));
 static volatile uint8_t rx_fifo[RX_FIFO_DEPTH][S2B_MAX_LEN] __attribute__((aligned(8))) __attribute__((section(".sram1_bss")));
-// Putting rxfifo to sram1_bss breaks everything in subtle and unbelievable ways. Need to debug.
 
 static volatile int tx_fifo_cpu = 0;
 static volatile int tx_fifo_spi = 0;

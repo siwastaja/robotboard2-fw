@@ -25,8 +25,6 @@
 
 #define DLED_ON() {}
 
-static char printbuf[128];
-
 
 int timing_shift = 5000*65536; // hall sensors are not exactly where you could think they are.
 

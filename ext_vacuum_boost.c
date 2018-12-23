@@ -10,7 +10,11 @@
 #define VACUUM_BOOST_GATE_DIS() do{ LO(GPIOF,7); }while(0)
 
 #define PERIOD 2000
+#define MAX_DUTY ((PERIOD*6)/10)
 #define DUTY_REG (TIM16->CCR1)
+
+static int target_duty = PERIOD/2;
+static int duty = 0;
 
 static volatile int intcnt;
 static void ext_vacuum_boost_inthandler()
@@ -18,10 +22,54 @@ static void ext_vacuum_boost_inthandler()
 	TIM16->SR = 0;
 	__DSB();
 
+	// 16384 ~ 3.3V ~ 66mV ~ 132A
+	// For some reason, -8A offset. Can't read down to zero.
+	int curr_a = 8+adc3.s.eb_analog2/124;
+
+	// 114k - 1.5k divider
+	// 16384 ~ 3.3V ~ 254V
+	int outvolt = adc3.s.eb_analog1>>6;
+
+	if(outvolt > 230)
+	{
+		VACUUM_BOOST_GATE_DIS();
+		error(210);
+	}
+
+	if(curr_a > 65)
+	{
+		VACUUM_BOOST_GATE_DIS();
+		error(211);
+	}
+	else if(curr_a > 60)
+	{
+		duty>>=2;
+	}
+	else if(curr_a > 55)
+	{
+		duty>>=1;
+	}
+	else if(curr_a > 50)
+	{
+		duty-=2;
+	}
+	else if(curr_a > 45)
+	{
+		duty--;
+	}
+	else
+	{
+		if(duty < target_duty)
+			duty++;
+	}
+
+
+	if(duty > MAX_DUTY) duty = MAX_DUTY;
+	else if(duty < 0) duty = 0;
+
 	intcnt++;
 }
 
-static char printbuf[128];
 
 static void vacuum_boost_test()
 {
@@ -50,7 +98,7 @@ static void vacuum_boost_test()
 	if(cmd >= '0' && cmd <= '9')
 	{
 		int val = cmd-'0';
-		val *= 40;
+		val *= 80;
 		DUTY_REG = val;
 	}
 	else if(cmd == 'o')

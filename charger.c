@@ -227,8 +227,6 @@ int is_running()
 }
 
 
-static char printbuf[128];
-
 void charger_safety_shutdown() __attribute__((section(".text_itcm")));
 void charger_safety_shutdown()
 {

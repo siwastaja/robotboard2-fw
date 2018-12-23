@@ -14,7 +14,6 @@
 
 volatile int packet_cnt;
 
-static char printbuf[128];
 
 #define IMU0_PRESENT
 #define IMU1_PRESENT

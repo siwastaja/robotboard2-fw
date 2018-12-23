@@ -56,7 +56,7 @@ uint8_t uart_input()
 #endif
 
 
-static char printbuf[128];
+char printbuf[128];
 
 
 void dump_scb()
@@ -525,7 +525,7 @@ void main()
 
 
 
-	init_ext_vacuum_boost();
+//	init_ext_vacuum_boost();
 
 
 	extern void adc_test();

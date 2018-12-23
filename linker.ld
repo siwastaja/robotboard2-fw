@@ -22,12 +22,13 @@ MEMORY
   ram_sram12 (rwx)      : ORIGIN = 0x30000000, LENGTH = 256K
   ram_sram3  (rwx)      : ORIGIN = 0x30040000, LENGTH = 32K
   ram_sram4  (rwx)      : ORIGIN = 0x38000000, LENGTH = 64K
-  ram_dtcm   (rwx)      : ORIGIN = 0x20000000, LENGTH = 128K
+  ram_dtcm   (rwx)      : ORIGIN = 0x20000000, LENGTH = 112K /* Leave 16k for stack*/
   ram_itcm   (rwx)      : ORIGIN = 0x00000000, LENGTH = 63K
   ram_vectors(rwx)      : ORIGIN = 0x0000FC00, LENGTH = 1K  /* last 1K of ITCM dedicated for relocated vector table*/
   ram_backup (rwx)      : ORIGIN = 0x38800000, LENGTH = 4K
 
-  stack(rwx)            : ORIGIN = 0x2407fff8, LENGTH = 0K /* In AXI SRAM*/
+/*  stack(rwx)            : ORIGIN = 0x2407fff8, LENGTH = 0K */ /* In AXI SRAM*/
+  stack(rwx)            : ORIGIN = 0x2001fff8, LENGTH = 0K /* In DTCM*/
 
   rom_b1s0 (rx)         : ORIGIN = 0x08000000, LENGTH = 128K
   rom_b1s1 (rx)         : ORIGIN = 0x08020000, LENGTH = 128K

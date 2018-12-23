@@ -37,8 +37,6 @@
 
 
 
-static char printbuf[128];
-
 
 /*
 	All sensors use a single I2C bus, with the multiplexer connecting one sensor at a time.

@@ -7,7 +7,6 @@
 #undef DEFINE_VARS
 #include "own_std.h"
 
-static char printbuf[128];
 
 volatile adc1_group_t adc1 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 //volatile adc2_group_t adc2 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));

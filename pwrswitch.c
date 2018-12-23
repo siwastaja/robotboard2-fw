@@ -288,8 +288,6 @@ PCB revision changes:
  (20.0V, 10mF elcap)
 */
 
-static char printbuf[128];
-
 int app_power_on()
 {
 	if(app_power_enabled)
