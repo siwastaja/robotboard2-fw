@@ -127,7 +127,7 @@ uint16_t measure_stray()
 #define IFDBG if(sidx == 5)
 
 
-static int round_of_longer_exposure;
+//static int round_of_longer_exposure;
 
 uint32_t vox_cnt;
 int32_t vox_ref_x = 0;
@@ -167,20 +167,20 @@ void run_cycle()
 
 
 	static int sidx = 0;
-//	sidx++;
-	sidx = 5;
-	static int test_cnt = -1;
+	sidx++;
+//	sidx = 5;
+//	static int test_cnt = -1;
 
-	test_cnt++;
-	if(test_cnt > 2)
-	{
-		test_cnt = 0;
-	}
+//	test_cnt++;
+//	if(test_cnt > 2)
+//	{
+//		test_cnt = 0;
+//	}
 
 	if(sidx >= N_SENSORS)
 	{
 		sidx = 0;
-		round_of_longer_exposure = ~round_of_longer_exposure;
+//		round_of_longer_exposure = ~round_of_longer_exposure;
 		extern int obstacle_front, obstacle_back, obstacle_left, obstacle_right;
 		obstacle_front = 0;
 		obstacle_back = 0;
@@ -205,7 +205,7 @@ void run_cycle()
 
 	static int voxmap_send_cnt;
 
-	if(sidx == 9 && round_of_longer_exposure)
+	if(sidx == 9) // && round_of_longer_exposure)
 	{
 		voxmap_send_cnt++;
 	}
@@ -261,12 +261,14 @@ void run_cycle()
 	adjust();
 
 
-
 	INIT_TOF_TS();
+
+	TOF_TS(0);
 
 	// Acquire compensation B/W with fixed intlen - chip temperature at the same time
 	dcmi_crop_wide();
 	epc_greyscale(); block_epc_i2c(4);
+	delay_ms(1);
 	epc_dis_leds(); block_epc_i2c(4);
 	epc_clk_div(1); block_epc_i2c(4);
 	epc_intlen(intlen_mults[1], INTUS(COMP_AMBIENT_INTLEN_US)); block_epc_i2c(4);
@@ -275,16 +277,27 @@ void run_cycle()
 	epc_trig();
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	int16_t chiptemp = epc_read_temperature(sidx);
+	int32_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
 
 	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp)*tof_calibs[sidx]->fine_steps_per_temp[0])>>8;
 	if(fine_steps < 0) fine_steps = 0;
 	else if(fine_steps > 799) fine_steps = 799;
-	//DBG_PR_VAR_U32(fine_steps);
+
+
+	update_led(sidx);
+/*
+	IFDBG
+	{
+		DBG_PR_VAR_I32(chiptemp);
+		DBG_PR_VAR_I32(fine_steps);
+	}
+*/
+
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
 
 
+	TOF_TS(1);
 
 
 	// 6.66MHz 2dcs
@@ -292,6 +305,7 @@ void run_cycle()
 	epc_2dcs(); block_epc_i2c(4);
 	delay_ms(1);
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
+
 	epc_clk_div(2); block_epc_i2c(4);
 	epc_intlen(intlen_mults[2], INTUS(4000)); block_epc_i2c(4);
 
@@ -302,8 +316,10 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
-	compensated_2dcs_6mhz_dist_masked(lofreq_wid_dist, &dcs2, &mono_comp);
+	TOF_TS(2);
 
+
+/*
 	if(test_cnt == 0)
 	{
 		if(gen_data && tof_raw_dist)
@@ -321,7 +337,7 @@ void run_cycle()
 			memset(tof_raw_ampl8->ampl_narrow, 0, sizeof tof_raw_ampl8->ampl_narrow);
 		}
 	}
-
+*/
 
 	#define SUPERSHORT_US 25
 
@@ -330,43 +346,30 @@ void run_cycle()
 	epc_4dcs(); block_epc_i2c(4);
 	delay_ms(1);
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
+
 	epc_clk_div(0); block_epc_i2c(4);
 	epc_intlen(intlen_mults[0], INTUS(SUPERSHORT_US)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
 
+	compensated_2dcs_6mhz_dist_masked(lofreq_wid_dist, &dcs2, &mono_comp); // Calc the prev
+
 	copy_cal_to_shadow(sidx, 0);
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
+	TOF_TS(3);
+
 
 	conv_4dcs_to_2dcs(wid_hdr20[0], wid_hdr31[0], &dcsa, &mono_comp);
 
+	TOF_TS(4);
+
 	int supershort_avg_ampl_x256 = calc_avg_ampl_x256(wid_hdr20[0], wid_hdr31[0]);
 
+	TOF_TS(5);
 
-
-/*
-//	int inttime_us = 4000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
-//	int inttime_us = 3000.0 -   sqrt(sqrt((double)wid_ampl_avg[1])) * 15.9*(4000.0-200.0)/40.0;
-	int inttime_us = 150.0/(double)wid_ampl_max * 150.0;
-	if(inttime_us < 150) inttime_us = 150;
-	else if(inttime_us > 3000) inttime_us = 3000;
-//	int inttime_us = 400;
-
-	if(round_of_longer_exposure)
-	{
-		inttime_us *= 4;
-		if(inttime_us > 8000) inttime_us = 8000;
-	}
-
-	IFDBG
-	{
-		DBG_PR_VAR_I32(wid_ampl_max);
-		DBG_PR_VAR_I32(inttime_us);
-	}
-*/
 
 	adjust();
 
@@ -405,15 +408,24 @@ void run_cycle()
 	delay_ms(1);
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 
+
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
 	adjust();
 
-	copy_cal_to_shadow(sidx, 0);
+	// Do the previous calc:
+	compensated_nonhdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, wid_hdr20[0], wid_hdr31[0]);
+	tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 15, 255, vox_ref_x, vox_ref_y);
+
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
+	TOF_TS(6);
+
+
 	conv_4dcs_to_2dcs(wid_hdr20[0], wid_hdr31[0], &dcsa, NULL);
+
+	TOF_TS(7);
 
 	epc_intlen(intlen_mults[0], INTUS(base_exp*HDR_FACTOR)); block_epc_i2c(4);
 
@@ -423,10 +435,15 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
+	TOF_TS(8);
+
 	conv_4dcs_to_2dcs(wid_hdr20[1], wid_hdr31[1], &dcsa, NULL);
+
+	TOF_TS(9);
 
 	compensated_hdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, wid_hdr20[0], wid_hdr31[0], wid_hdr20[1], wid_hdr31[1]);
 
+	TOF_TS(10);
 
 
 
@@ -434,6 +451,7 @@ void run_cycle()
 
 	delay_ms(1);
 	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
+
 	epc_intlen(intlen_mults[0], INTUS(base_exp_nar)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
@@ -442,7 +460,12 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
+	TOF_TS(11);
+
+
 	conv_4dcs_to_2dcs_narrow(nar_hdr20[0], nar_hdr31[0], &dcsa_narrow, NULL);
+
+	TOF_TS(12);
 
 	epc_intlen(intlen_mults[0], INTUS(base_exp_nar*HDR_FACTOR)); block_epc_i2c(4);
 
@@ -452,13 +475,19 @@ void run_cycle()
 
 	if(poll_capt_with_timeout_complete()) log_err();
 
+	TOF_TS(13);
+
 	conv_4dcs_to_2dcs_narrow(nar_hdr20[1], nar_hdr31[1], &dcsa_narrow, NULL);
+
+	TOF_TS(14);
 
 	compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(nar_ampl, nar_dist, nar_hdr20[0], nar_hdr31[0], nar_hdr20[1], nar_hdr31[1]);
 
+	TOF_TS(15);
 
 	adjust();
 
+/*
 	if(test_cnt == 1)
 	{
 		if(gen_data && tof_raw_dist)
@@ -476,11 +505,15 @@ void run_cycle()
 			memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
 		}
 	}
-
+*/
 
 	dealias_20mhz(wid_dist, lofreq_wid_dist);
 	dealias_20mhz_narrow(nar_dist, lofreq_wid_dist);
 
+	TOF_TS(16);
+
+
+/*
 	if(test_cnt == 2)
 	{
 		if(gen_data && tof_raw_dist)
@@ -498,55 +531,8 @@ void run_cycle()
 			memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
 		}
 	}
+*/
 
-
-
-
-
-	// AUTOEXPOSED MIDLONG WIDE
-
-#if 0
-	epc_clk_div(1); block_epc_i2c(4);
-	epc_intlen(intlen_mults[1], INTUS(inttime_us)); block_epc_i2c(4);
-	epc_4dcs(); block_epc_i2c(4);
-
-	delay_ms(1);
-	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
-
-	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
-	epc_trig();
-
-	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
-
-	copy_cal_to_shadow(sidx, 1);
-
-	if(poll_capt_with_timeout_complete()) log_err();
-
-
-
-	// AUTOEXPOSED MIDLONG NARROW
-
-	delay_ms(1);
-	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
-	epc_intlen(intlen_mults[1], INTUS(inttime_us/3)); block_epc_i2c(4);
-
-	dcmi_start_dma(&dcsa_narrow, SIZEOF_4DCS_NARROW);
-	epc_trig();
-//	delay_us(350);
-//	uint16_t narrow_stray = adc3.s.epc_stray_estimate;
-
-
-	// calc autoexposed midlong wide: reuse 0
-	TOF_TS(0);
-
-	compensated_tof_calc_dist_ampl(&wid_ampl_max, wid_ampl, wid_dist, &dcsa, &mono_comp);
-	TOF_TS(1);
-
-	adjust();
-
-	if(poll_capt_with_timeout_complete()) log_err();
-
-	compensated_tof_calc_dist_ampl_narrow(NULL, nar_ampl, nar_dist, &dcsa_narrow, &mono_comp);
 
 	int32_t widnar_corr = 0;
 	int widnar_ret;
@@ -565,15 +551,17 @@ void run_cycle()
 	}
 
 
+	TOF_TS(17);
+
 	IFDBG
 	{
 		DBG_PR_VAR_I32(widnar_ret);
 		DBG_PR_VAR_I32(widnar_corr);
 	}
 
-	TOF_TS(2);
-	uint8_t min_ampl;
-	uint8_t max_ampl;
+	uint8_t min_ampl = 3;
+	uint8_t max_ampl = 254;
+/*	
 	if(round_of_longer_exposure)
 	{
 		min_ampl = 6;
@@ -584,15 +572,15 @@ void run_cycle()
 		min_ampl = 12;
 		max_ampl = 254;
 	}
+*/
 	adjust();
 
-//	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, min_ampl, max_ampl, vox_ref_x, vox_ref_y);
-	TOF_TS(3);
+//	if(sidx == 5)
+	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, min_ampl, max_ampl, vox_ref_x, vox_ref_y);
+
+	TOF_TS(18);
 
 
-#endif
-
-/*
 	if(gen_data && tof_raw_dist)
 	{
 		tof_raw_dist->sensor_idx = sidx;
@@ -609,7 +597,8 @@ void run_cycle()
 		memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
 		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
 	}
-*/
+
+
 	if(gen_data && tof_diagnostics)
 	{
 		tof_diagnostics->temperature = chiptemp;
@@ -697,10 +686,10 @@ void run_cycle()
 //	test_cnt++;
 //	if(test_cnt >= 16) test_cnt = 0;
 
-	for(int i=0; i<100; i++)
+	for(int i=0; i<10; i++)
 	{
 		check_rx();
-		delay_ms(10);
+//		delay_ms(10);
 		adjust();
 	}	
 	

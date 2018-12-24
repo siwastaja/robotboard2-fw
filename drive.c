@@ -119,10 +119,34 @@ void drive_handler()
 	static int gyro_dc_y[6];
 	static int gyro_dc_z[6];
 
-	int32_t gx=0, gy=0, gz=0;
-//	int32_t ax=0, ay=0, az=0;
+	int32_t g_pitch=0, g_roll=0, g_yaw=0;
+	int32_t a_x=0, a_y=0, a_z=0; // in robot coordinate frame
+
 
 	static int ac_th_det_on = 0;
+
+	static const uint8_t x_is_pitch_y_is_roll[6] = {1,1,0,  0,0,0}; // Otherwise, x is roll, y is pitch
+	static const int8_t pitch_mult[6] = {-1, 1, 1,   -1, 1,-1};
+	static const int8_t roll_mult[6] =  {-1, 1,-1,    1,-1, 1};
+
+	static const int8_t x_mult[6] =  {-1, 1,-1,    1,-1, 1};
+	static const int8_t y_mult[6] =  { 1,-1,-1,    1,-1, 1};
+
+
+	/*
+
+	Roll:
+	"Left wing" rising: positive g_roll, positive a_y
+
+	Pitch:
+	Nose rising: positive g_pitch, positive a_x
+
+	Yaw:
+	Counter-clockwise = positive
+
+	a_z is -g when oriented normally
+
+	*/
 
 
 	for(int imu=0; imu<6; imu++)
@@ -163,9 +187,9 @@ void drive_handler()
 
 		if(is_robot_moving())
 		{
-	//		led_status(9, WHITE, LED_MODE_FADE);
-	//		led_status(0, WHITE, LED_MODE_FADE);
-	//		led_status(1, WHITE, LED_MODE_FADE);
+//			led_status(9, WHITE, LED_MODE_FADE);
+//			led_status(0, WHITE, LED_MODE_FADE);
+//			led_status(1, WHITE, LED_MODE_FADE);
 		}
 		else
 		{
@@ -178,18 +202,94 @@ void drive_handler()
 			gyro_dc_z[imu] = ((cur_gz<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_z[0])>>G_DC_FILT;
 		}
 
-		if(cur_gx_dccor < -GYRO_X_BLANKING_TH || cur_gx_dccor > GYRO_X_BLANKING_TH) gx += cur_gx_dccor;
-		if(cur_gy_dccor < -GYRO_Y_BLANKING_TH || cur_gy_dccor > GYRO_Y_BLANKING_TH) gy += cur_gy_dccor;
-		if(cur_gz_dccor < -GYRO_Z_BLANKING_TH || cur_gz_dccor > GYRO_Z_BLANKING_TH) gz += cur_gz_dccor;
+		if(cur_gx_dccor < -GYRO_X_BLANKING_TH || cur_gx_dccor > GYRO_X_BLANKING_TH)
+		{
+			if(x_is_pitch_y_is_roll[imu])
+			{
+				g_pitch += (int)pitch_mult[imu] * cur_gx_dccor;
+			}
+			else
+			{
+				g_roll += (int)roll_mult[imu] * cur_gx_dccor;
+			}
+		}
+
+		if(cur_gy_dccor < -GYRO_Y_BLANKING_TH || cur_gy_dccor > GYRO_Y_BLANKING_TH)
+		{
+			if(x_is_pitch_y_is_roll[imu])
+			{
+				g_roll += (int)roll_mult[imu] * cur_gy_dccor;
+			}
+			else
+			{
+				g_pitch += (int)pitch_mult[imu] * cur_gy_dccor;
+			}
+		}
+
+		// Yaw is easy, all IMUs are mounted on the PCB top layer.
+		if(cur_gz_dccor < -GYRO_Z_BLANKING_TH || cur_gz_dccor > GYRO_Z_BLANKING_TH)
+		{
+			g_yaw += cur_gz_dccor;
+		}
+
+
+		int32_t cur_ax=0, cur_ay=0, cur_az=0;
+
+		for(int n=0; n<imu_g[imu]->n; n++)
+		{
+			cur_ax += imu_a[imu]->xyz[n].x;
+			cur_ay += imu_a[imu]->xyz[n].y;
+			cur_az += imu_a[imu]->xyz[n].z;
+		}
+
+		cur_ax /= imu_g[imu]->n;
+		cur_ay /= imu_g[imu]->n;
+		cur_az /= imu_g[imu]->n;
+
+		if(x_is_pitch_y_is_roll[imu])
+		{
+			a_y += (int)y_mult[imu] * cur_ax;
+		}
+		else
+		{
+			a_x += (int)x_mult[imu] * cur_ax;
+		}
+
+		if(x_is_pitch_y_is_roll[imu])
+		{
+			a_x += (int)x_mult[imu] * cur_ay;
+		}
+		else
+		{
+			a_y += (int)y_mult[imu] * cur_ay;
+		}
+
+		// Z is easy, all IMUs point the same way.
+		a_z += -1*cur_az;
 	}
 
-	gx /= 6;
-	gy /= 6;
-	gz /= 6;
+	g_pitch /= 6;
+	g_roll /= 6;
+	g_yaw /= 6;
 
-	if(ac_th_det_on>5000)
+	a_x /= 6;
+	a_y /= 6;
+	a_z /= 6;
+
+	if(ac_th_det_on>1000)
 	{
-		cur_pos.ang += (97495LL*(int64_t)gz)>>16;
+		cur_pos.ang += (97495LL*(int64_t)g_yaw)>>16;
+		cur_pos.pitch += (97495LL*(int64_t)g_pitch)>>16;
+		cur_pos.roll += (97495LL*(int64_t)g_roll)>>16;
+
+		int32_t pitch_by_acc = (uint32_t) (4294967296.0 * (M_PI + -1*atan2(a_x, a_z)) / (2.0*M_PI));
+		int32_t roll_by_acc  = (uint32_t) (4294967296.0 * (M_PI + -1*atan2(a_y, a_z)) / (2.0*M_PI));
+
+		int32_t pitch_err = pitch_by_acc - cur_pos.pitch;
+		int32_t roll_err = roll_by_acc - cur_pos.roll;
+
+		cur_pos.pitch += pitch_err/2048;
+		cur_pos.roll += roll_err/2048;
 	}
 	else
 	{
@@ -242,6 +342,8 @@ void drive_handler()
 	if(hw_pose)
 	{
 		hw_pose->ang = cur_pos.ang;
+		hw_pose->pitch = cur_pos.pitch;
+		hw_pose->roll = cur_pos.roll;
 		hw_pose->x = cur_pos.x>>16;
 		hw_pose->y = cur_pos.y>>16;
 	}
@@ -361,31 +463,31 @@ void drive_handler()
 	{
 		micronavi_status |= 1UL<<0;
 		stop();
-		led_status(9, RED, LED_MODE_FADE);
-		led_status(0, RED, LED_MODE_FADE);
-		led_status(1, RED, LED_MODE_FADE);
+//		led_status(9, RED, LED_MODE_FADE);
+//		led_status(0, RED, LED_MODE_FADE);
+//		led_status(1, RED, LED_MODE_FADE);
 	}
 	else if(lin_err < -100 && obstacle_back > 20)
 	{
 		micronavi_status |= 1UL<<0;
 		stop();
-		led_status(4, RED, LED_MODE_FADE);
-		led_status(5, RED, LED_MODE_FADE);
-		led_status(6, RED, LED_MODE_FADE);
+//		led_status(4, RED, LED_MODE_FADE);
+//		led_status(5, RED, LED_MODE_FADE);
+//		led_status(6, RED, LED_MODE_FADE);
 	}
 	else if(ang_err > 10*ANG_1_DEG && obstacle_left > 20)
 	{
 		micronavi_status |= 1UL<<2;
 //		stop();
-		led_status(2, RED, LED_MODE_FADE);
-		led_status(3, RED, LED_MODE_FADE);
+//		led_status(2, RED, LED_MODE_FADE);
+//		led_status(3, RED, LED_MODE_FADE);
 	}
 	else if(ang_err < -10*ANG_1_DEG && obstacle_right > 20)
 	{
 		micronavi_status |= 1UL<<2;
 //		stop();
-		led_status(7, RED, LED_MODE_FADE);
-		led_status(8, RED, LED_MODE_FADE);
+//		led_status(7, RED, LED_MODE_FADE);
+//		led_status(8, RED, LED_MODE_FADE);
 	}
 
 

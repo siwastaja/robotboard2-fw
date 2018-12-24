@@ -20,6 +20,8 @@
 typedef struct
 {
 	uint32_t ang; // uint32_t range --> 0..+360 deg; let it overflow freely. 1 unit = 83.81903171539 ndeg
+	int32_t pitch;
+	int32_t roll;
 	int64_t x;   // 1/65536 mm
 	int64_t y;   // 1/65536 mm
 } hires_pos_t;

@@ -556,7 +556,7 @@ void epc_temperature_magic_mode_off(int idx)
 
 static uint16_t epc_read_temperature_regs()
 {
-	uint8_t hi, lo;
+	static uint8_t hi, lo; // Not in stack! Stack in DTCM isn't accessible by DMA.
 	epc_i2c_read(i2c_addr, 0x60, &hi, 1);
 	block_epc_i2c(5);
 	delay_us(50); // see the comment about i2c read bug in top_init
@@ -577,7 +577,7 @@ int32_t epc_read_temperature(int idx)
 
 uint8_t epc_reg_read(uint8_t addr)
 {
-	uint8_t val;
+	static uint8_t val; // Not in stack! Stack in DTCM isn't accessible by DMA.
 	epc_i2c_read(i2c_addr, addr, &val, 1);
 	block_epc_i2c(7);
 	delay_us(50); // see the comment about i2c read bug in top_init
@@ -979,7 +979,7 @@ void init_sensors()
 			block_epc_i2c(1);
 			delay_us(50);
 
-			uint8_t temp_offset;
+			static uint8_t temp_offset; // Not in stack! Stack in DTCM isn't accessible by DMA.
 			epc_i2c_read(i2c_addr, 0xe8, &temp_offset, 1);
 			block_epc_i2c(1);
 			__DSB(); __ISB();
