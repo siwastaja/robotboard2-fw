@@ -1130,16 +1130,17 @@ typedef struct
 // const
 sensor_mount_t sensor_mounts[N_SENSORS] =
 {          //      mountmode    x     y       hor ang           ver ang      height    
- /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 3),   0 },
- /*1:                */ { 1,   130,   103, DEGTOANG16(      23),    728+500,         300 },
- /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23),    273+500,         300  },
- /*3:                */ { 1,  -380,   215, DEGTOANG16(      90),    273+500,         300  },
- /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23),    546+500,         300  },
- /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ),   1092+500,         310  },
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23),    728+500,         300  },
- /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ),    273+500,         290  },
- /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23),    910+500,         280  },
- /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23),   135,        300  }
+ /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 2),         300 },
+
+ /*1:                */ { 1,   130,   103, DEGTOANG16(      23), DEGTOANG16( 2),         300 },
+ /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23), DEGTOANG16( 2),         300  },
+ /*3:                */ { 1,  -380,   215, DEGTOANG16(      90), DEGTOANG16( 2),         300  },
+ /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23), DEGTOANG16( 2),         300  },
+ /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ), DEGTOANG16( 2),         300  },
+ /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23), DEGTOANG16( 2),         300  },
+ /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ), DEGTOANG16( 2),         300  },
+ /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23), DEGTOANG16( 2),         300  },
+ /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23), DEGTOANG16( 2),         300  }
 };
 
 void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
@@ -1309,7 +1310,51 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 
 
 	uint16_t global_sensor_hor_ang = sensor_mounts[sidx].ang_rel_robot + robot_ang;
-	uint16_t global_sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
+//	uint16_t global_sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
+
+	/*
+		TODO: Implement proper full 3D transformation to each pixel, taking into account the robot pitch and roll.
+
+		For now, we only correct the sensor vertical angle by robot pitch and roll, which works well for the usual
+		case of small pitch/roll angles, which mostly causes massive shifts in sensor vertical angle. Sensors do
+		rotate as well, and this isn't currently taken into account.
+
+		Positive pitch = nose goes up:
+			sensor with ang=0deg   increments directly by pitch
+			sensor with ang=180deg increments directly by -1*pitch
+			sensors with ang=90deg, 270 deg are not affected
+
+			-->
+			ver_ang += cos(sensor_mount_ang)*pitch
+
+		Positive roll = "left wing" rises:
+			sensor with ang=90deg, increments directly by roll
+			sensor with ang=270deg, increments directly by -1*roll
+			0 deg, 180 deg not affected
+
+			-->
+			ver_ang += sin(sensor_mount_ang)*roll
+	*/
+
+	int16_t pitch_ang = cur_pos.pitch>>16;
+	int16_t roll_ang = cur_pos.roll>>16;
+
+	uint16_t global_sensor_ver_ang = 
+		(int32_t)((int16_t)sensor_mounts[sidx].vert_ang_rel_ground) +
+		((lut_cos_from_u16(sensor_mounts[sidx].ang_rel_robot)*pitch_ang)>>SIN_LUT_RESULT_SHIFT) +
+		((lut_sin_from_u16(sensor_mounts[sidx].ang_rel_robot)*roll_ang)>>SIN_LUT_RESULT_SHIFT);
+
+
+	#define IN_01_DEG (ANG_0_1_DEG/65536)
+
+	DBG_PR_VAR_U16(sidx);
+	DBG_PR_VAR_I16((int16_t)sensor_mounts[sidx].vert_ang_rel_ground/IN_01_DEG);
+	DBG_PR_VAR_I16(pitch_ang/IN_01_DEG);
+	DBG_PR_VAR_I16(roll_ang/IN_01_DEG);
+	DBG_PR_VAR_I16((int16_t)global_sensor_ver_ang/IN_01_DEG);
+
+
+
 
 	uint16_t local_sensor_hor_ang = sensor_mounts[sidx].ang_rel_robot;
 	uint16_t local_sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
