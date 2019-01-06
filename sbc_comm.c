@@ -12,6 +12,7 @@
 #undef DEFINE_API_VARIABLES
 
 #include "drive.h"
+#include "ext_vacuum_boost.h"
 
 // 1 or 0:
 #define CRC_EN 1
@@ -475,7 +476,7 @@ void sbc_spi_cs_end_inthandler()
 		crc_err = 1;
 	}
 
-	uint32_t rxcrc = SPI1->RXCRC;
+//	uint32_t rxcrc = SPI1->RXCRC;
 
 
 	// Silicon Errata: Hard reset is needed if CRC is used and if RX OVR happens. Otherwise, all
@@ -741,7 +742,7 @@ void parse_rx_packet()
 			case CMD_MOTORS:
 			{
 				if(((s2b_motors_t*)p_data)->enabled)
-					cmd_motors(250*4);
+					cmd_motors(250*8);
 				else
 					cmd_motors(0);
 			}
@@ -757,6 +758,13 @@ void parse_rx_packet()
 			case CMD_STOP_MOVEMENT:
 			{
 				cmd_stop_movement();
+			}
+			break;
+
+
+			case CMD_EXT_VACUUM:
+			{
+				ext_vacuum_cmd(((s2b_ext_vacuum_t*)p_data)->power, ((s2b_ext_vacuum_t*)p_data)->nozzle);
 			}
 			break;
 			
@@ -776,9 +784,9 @@ void check_rx()
 {
 	if(rx_fifo_spi != rx_fifo_cpu)
 	{
-		uart_print_string_blocking("rx pop:"); o_utoa32_hex(*(uint32_t*)rx_fifo[rx_fifo_cpu], printbuf); uart_print_string_blocking(printbuf); 
-		o_utoa32_hex(*(uint32_t*)&rx_fifo[rx_fifo_cpu][4], printbuf); uart_print_string_blocking(printbuf); 
-		o_utoa32_hex(*(uint32_t*)&rx_fifo[rx_fifo_cpu][8], printbuf); uart_print_string_blocking(printbuf);  uart_print_string_blocking("...\r\n");
+//		uart_print_string_blocking("rx pop:"); o_utoa32_hex(*(uint32_t*)rx_fifo[rx_fifo_cpu], printbuf); uart_print_string_blocking(printbuf); 
+//		o_utoa32_hex(*(uint32_t*)&rx_fifo[rx_fifo_cpu][4], printbuf); uart_print_string_blocking(printbuf); 
+//		o_utoa32_hex(*(uint32_t*)&rx_fifo[rx_fifo_cpu][8], printbuf); uart_print_string_blocking(printbuf);  uart_print_string_blocking("...\r\n");
 
 		parse_rx_packet();
 
@@ -789,6 +797,7 @@ void check_rx()
 	__DSB();
 }
 
+#if 0
 void sbc_comm_test()
 {
 	uint8_t data = 0x42;
@@ -847,7 +856,7 @@ void sbc_comm_test()
 		
 	}
 }
-
+#endif
 
 uint64_t initial_subs[B2S_SUBS_U64_ITEMS] = {1UL<<4, 0};
 

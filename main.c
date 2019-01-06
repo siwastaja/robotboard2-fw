@@ -525,7 +525,7 @@ void main()
 
 
 
-//	init_ext_vacuum_boost();
+	init_ext_vacuum_boost();
 
 
 	extern void adc_test();

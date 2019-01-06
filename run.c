@@ -54,12 +54,12 @@ uint32_t timestamp_initial;
 
 
 int err_cnt;
-static void log_err()
+static void log_err(int sidx)
 {
 	err_cnt += 10;
 	if(err_cnt > 30)
 	{
-		error(101);
+		error(100+sidx);
 	}
 }
 
@@ -124,7 +124,7 @@ uint16_t measure_stray()
 	return stray;
 }
 
-#define IFDBG if(sidx == 5)
+#define IFDBG if(sidx == 999)
 
 
 //static int round_of_longer_exposure;
@@ -135,14 +135,23 @@ int32_t vox_ref_y = 0;
 
 void restart_voxmap()
 {
+//	static int tmp_y = 50;
+//	static int cnt = 0;
+//	cnt++;
+//	if(cnt > 5)
+//	{
+//		cnt = 0;
+//		tmp_y++;
+//	}
 	memset(&voxmap, 0, sizeof(voxmap));
+//	voxmap.segs[0][tmp_y*100+80] = 0b0111011001111111;
 	vox_cnt++;
 	vox_ref_x = cur_pos.x>>16;
 	vox_ref_y = cur_pos.y>>16;
 
 }
 
-#define VOXMAP_SEND_INTERVAL 2
+#define VOXMAP_SEND_INTERVAL 5
 
 extern void adjust();
 
@@ -275,7 +284,7 @@ void run_cycle()
 	epc_temperature_magic_mode(sidx);
 	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
 	epc_trig();
-	if(poll_capt_with_timeout_complete()) log_err();
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 	int32_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
@@ -314,7 +323,7 @@ void run_cycle()
 
 	copy_cal_to_shadow(sidx, 2);
 
-	if(poll_capt_with_timeout_complete()) log_err();
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 	TOF_TS(2);
 
@@ -357,7 +366,7 @@ void run_cycle()
 
 	copy_cal_to_shadow(sidx, 0);
 
-	if(poll_capt_with_timeout_complete()) log_err();
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 	TOF_TS(3);
 
@@ -384,14 +393,16 @@ void run_cycle()
 
 	/*
 	SSavg	new base
-	8+	25 (skip imaging the first, reuse supershort)
-	0	724
+	6+	25 (todo: skip imaging the first, reuse supershort)
+	0	614
+
+
 	*/
 
 	int ss_saturated = (int)supershort_avg_ampl_x256;
-	if(ss_saturated > 8*256) ss_saturated = 8*256;
+	if(ss_saturated > 6*256) ss_saturated = 6*256;
 	
-	int base_exp = SUPERSHORT_US + sq(8*256 - ss_saturated)/6000;
+	int base_exp = SUPERSHORT_US + sq(6*256 - ss_saturated)/4000;
 
 	IFDBG
 	{
@@ -418,7 +429,7 @@ void run_cycle()
 	tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 15, 255, vox_ref_x, vox_ref_y);
 
 
-	if(poll_capt_with_timeout_complete()) log_err();
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 	TOF_TS(6);
 
@@ -433,7 +444,7 @@ void run_cycle()
 	epc_trig();
 	adjust();
 
-	if(poll_capt_with_timeout_complete()) log_err();
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 	TOF_TS(8);
 
@@ -458,7 +469,7 @@ void run_cycle()
 	epc_trig();
 	adjust();
 
-	if(poll_capt_with_timeout_complete()) log_err();
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 	TOF_TS(11);
 
@@ -473,7 +484,7 @@ void run_cycle()
 	epc_trig();
 	adjust();
 
-	if(poll_capt_with_timeout_complete()) log_err();
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 	TOF_TS(13);
 

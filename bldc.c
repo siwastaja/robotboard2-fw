@@ -238,9 +238,7 @@ void bldc0_inthandler()
 	static uint32_t cnt = 0;
 	static int expected_fwd_hall_pos;  // for step counting only
 	static int expected_back_hall_pos; // for step counting only
-	static uint32_t cnt_at_prev_hall;
 	static int prev_hall_pos;
-	static int pid_set;
 	static int64_t pid_integral = 0;
 
 	static int pid_prev_err = 0;
@@ -446,9 +444,7 @@ void bldc1_inthandler()
 	static uint32_t cnt = 0;
 	static int expected_fwd_hall_pos;  // for step counting only
 	static int expected_back_hall_pos; // for step counting only
-	static uint32_t cnt_at_prev_hall;
 	static int prev_hall_pos;
-	static int pid_set;
 	static int64_t pid_integral = 0;
 
 	static int pid_prev_err = 0;

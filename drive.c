@@ -53,6 +53,10 @@ uint32_t micronavi_status;
 
 int new_direction;
 int backmode;
+
+static int run;
+static int do_start;
+
 void cmd_go_to(s2b_move_abs_t* m)
 {
 	target_pos.x = (int64_t)m->x<<16;
@@ -65,6 +69,8 @@ void cmd_go_to(s2b_move_abs_t* m)
 	obstacle_back = 0;
 	obstacle_left = 0;
 	obstacle_right = 0;
+
+	do_start = 1;
 }
 
 void cmd_motors(int enabled)
@@ -74,6 +80,7 @@ void cmd_motors(int enabled)
 
 void cmd_corr_pos(s2b_corr_pos_t* cmd)
 {
+	int32_t da = cmd->da;
 	int64_t dx = cmd->dx;
 	int64_t dy = cmd->dy;
 
@@ -83,14 +90,14 @@ void cmd_corr_pos(s2b_corr_pos_t* cmd)
 	// Divide by 4 by only shifting 14 places instead of 16.
 	dx<<=14;
 	dy<<=14;
+	da/=4;
 
 	cur_pos.x += dx;
 	cur_pos.y += dy;
+	cur_pos.ang += (uint32_t)da;
 	target_pos.x += dx;
 	target_pos.y += dy;
 }
-
-static int run;
 
 void cmd_stop_movement()
 {
@@ -449,13 +456,16 @@ void drive_handler()
 
 	if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_err > 60LL*65536LL || lin_err < -60LL*65536LL)
 	{
-//		if(motors_enabled)
-//			run = 1;
+		if(motors_enabled)
+			run = 1;
 	}
 	else if(ang_err > -5*ANG_1_DEG && ang_err < 5*ANG_1_DEG && lin_err < 30LL*65536LL && lin_err > -30LL*65536LL)
 	{
 		run = 0;
 	}
+
+	if(!motors_enabled)
+		run = 0;
 
 
 
@@ -463,31 +473,31 @@ void drive_handler()
 	{
 		micronavi_status |= 1UL<<0;
 		stop();
-//		led_status(9, RED, LED_MODE_FADE);
-//		led_status(0, RED, LED_MODE_FADE);
-//		led_status(1, RED, LED_MODE_FADE);
+		led_status(9, RED, LED_MODE_FADE);
+		led_status(0, RED, LED_MODE_FADE);
+		led_status(1, RED, LED_MODE_FADE);
 	}
 	else if(lin_err < -100 && obstacle_back > 20)
 	{
 		micronavi_status |= 1UL<<0;
 		stop();
-//		led_status(4, RED, LED_MODE_FADE);
-//		led_status(5, RED, LED_MODE_FADE);
-//		led_status(6, RED, LED_MODE_FADE);
+		led_status(4, RED, LED_MODE_FADE);
+		led_status(5, RED, LED_MODE_FADE);
+		led_status(6, RED, LED_MODE_FADE);
 	}
 	else if(ang_err > 10*ANG_1_DEG && obstacle_left > 20)
 	{
 		micronavi_status |= 1UL<<2;
-//		stop();
-//		led_status(2, RED, LED_MODE_FADE);
-//		led_status(3, RED, LED_MODE_FADE);
+		stop();
+		led_status(2, RED, LED_MODE_FADE);
+		led_status(3, RED, LED_MODE_FADE);
 	}
 	else if(ang_err < -10*ANG_1_DEG && obstacle_right > 20)
 	{
 		micronavi_status |= 1UL<<2;
-//		stop();
-//		led_status(7, RED, LED_MODE_FADE);
-//		led_status(8, RED, LED_MODE_FADE);
+		stop();
+		led_status(7, RED, LED_MODE_FADE);
+		led_status(8, RED, LED_MODE_FADE);
 	}
 
 
@@ -524,7 +534,6 @@ void drive_handler()
 	int max_mpos_err = 5*256;
 	static int max_pos_err_cnt;
 	// We know the target wheel positions, but limit the rate of change
-	int dbg1=0, dbg2=0;
 	for(int m=0; m<2; m++)
 	{
 		int ang_speed_i = (int)ang_speed;
@@ -542,7 +551,6 @@ void drive_handler()
 		int increment = d_ang + d_lin;
 		uint32_t new_pos = bldc_pos_set[m] + (uint32_t)increment;
 		int new_pos_err = mpos[m] - new_pos;
-		if(m==0){ dbg1 = delta_mpos_lin[m]; dbg2 = increment;}
 		if(new_pos_err > max_mpos_err || new_pos_err < -1*max_mpos_err)
 		{
 			max_pos_err_cnt++;
@@ -558,23 +566,27 @@ void drive_handler()
 	if(drive_diag)
 	{
 		drive_diag->ang_err = ang_err;
-		drive_diag->x = dbg1; //bldc_pos_set[0] - bldc_pos[0]; //ang_speed; // mpos[1];
-		drive_diag->y = dbg2; //bldc_pos_set[1] - bldc_pos[1]; //lin_speed; //target_mpos[1];
+		drive_diag->lin_err = lin_err>>16;
+		drive_diag->cur_x = cur_pos.x>>16;
+		drive_diag->cur_y = cur_pos.y>>16;
+		drive_diag->target_x = target_pos.x>>16;
+		drive_diag->target_y = target_pos.y>>16;
 		drive_diag->id = cur_id;
 		drive_diag->remaining = abso((lin_err>>16));
 		drive_diag->micronavi_stop_flags = micronavi_status;
 	}
 
-	if(prev_run != run)
+	if(prev_run != run || do_start)
 	{
-		if(run)
+		if(do_start || run)
 		{
-			motor_torque_lim(0, 30);
-			motor_torque_lim(1, 30);
+			motor_torque_lim(0, 50);
+			motor_torque_lim(1, 50);
 			motor_run(0);
 			motor_run(1);
 			ang_speed = min_ang_speed;
 			lin_speed = min_lin_speed;
+			do_start = 0;
 		}
 		else
 		{
@@ -606,24 +618,4 @@ void drive_handler()
 	if(motors_enabled > 0) motors_enabled--;
 
 }
-
-/*
-void motor_run(int m);
-
-// Changes the state so that the motor goes into stop state once the position error has been corrected
-void motor_let_stop(int m);
-
-// Instantly stops the motor, and sets the error to zero by changing bldc_pos_set
-void motor_stop_now(int m);
-
-// Sets the motor current limit, torque between 0-100%
-void motor_torque_lim(int m, int percent);
-
-// Returns measured current converted to torque 0-100%
-int get_motor_torque(int m);
-
-// Completely frees the motor by floating the windings. Also does what motor_stop_now does.
-void motor_release(int m);
-
-*/
 

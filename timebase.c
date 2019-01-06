@@ -11,6 +11,7 @@ Timebase: 10kHz handler
 #include "charger.h"
 #include "pwrswitch.h"
 #include "adcs.h"
+#include "ext_vacuum_boost.h"
 
 volatile uint32_t cnt_100us;
 
@@ -52,7 +53,11 @@ void timebase_inthandler()
 	// See test report in pwrswitch.c - (250us HI, 500us LO) provided the highest Vgs. We'll round that up to 300us HI, 700us LO
 
 	extern volatile int app_power_enabled;
-	if(cnt == 7)
+	if(cnt == 6)
+	{
+		ext_vacuum_fsm();
+	}
+	else if(cnt == 7)
 	{
 		extern int main_power_enabled;
 		if(main_power_enabled) 

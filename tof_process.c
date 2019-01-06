@@ -145,9 +145,6 @@ void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, e
 {
 	for(int i=0; i < TOF_XS*TOF_YS; i++)
 	{
-		uint16_t dist;
-		int ampl;
-
 		int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
 		int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
 		int16_t dcs2 = ((in->dcs[2].img[i]&0b0011111111111100)>>2)-2048;
@@ -185,10 +182,6 @@ void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_n
 		for(int xx=0; xx < TOF_XS_NARROW; xx++)
 		{
 			int i = yy*TOF_XS_NARROW+xx;
-			int i_bw = (yy+TOF_NARROW_Y_START)*TOF_XS+(xx+TOF_NARROW_X_START);
-
-			uint16_t dist;
-			int ampl;
 
 			int16_t dcs0 = ((in->dcs[0].img[i]&0b0011111111111100)>>2)-2048;
 			int16_t dcs1 = ((in->dcs[1].img[i]&0b0011111111111100)>>2)-2048;
@@ -200,6 +193,7 @@ void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_n
 
 
 			#ifdef DO_AMB_CORR
+				int i_bw = (yy+TOF_NARROW_Y_START)*TOF_XS+(xx+TOF_NARROW_X_START);
 				int16_t bw = ((bwimg->img[i_bw]&0b0011111111111100)>>2)-2048;
 				if(bw<0) bw=0;
 				int corr_factor;
@@ -432,6 +426,7 @@ void compensated_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t
 int flare_factor = 10;
 int flare_factor_narrow = 6;
 
+#if 0
 void adjust()
 {
 	uint8_t cmd = uart_input();
@@ -460,6 +455,7 @@ void adjust()
 
 
 }
+#endif
 
 void dealias_20mhz(uint16_t *hf_dist, uint16_t *lf_dist) __attribute__((section(".text_itcm")));
 void dealias_20mhz(uint16_t *hf_dist, uint16_t *lf_dist)
@@ -1132,15 +1128,15 @@ sensor_mount_t sensor_mounts[N_SENSORS] =
 {          //      mountmode    x     y       hor ang           ver ang      height    
  /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 2),         300 },
 
- /*1:                */ { 1,   130,   103, DEGTOANG16(      23), DEGTOANG16( 2),         300 },
- /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23), DEGTOANG16( 2),         300  },
- /*3:                */ { 1,  -380,   215, DEGTOANG16(      90), DEGTOANG16( 2),         300  },
- /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23), DEGTOANG16( 2),         300  },
- /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ), DEGTOANG16( 2),         300  },
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23), DEGTOANG16( 2),         300  },
- /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ), DEGTOANG16( 2),         300  },
- /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23), DEGTOANG16( 2),         300  },
- /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23), DEGTOANG16( 2),         300  }
+ /*1:                */ { 1,   130,   103, DEGTOANG16(      23), DEGTOANG16( 5.4),       310  },
+ /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23), DEGTOANG16( 2.4),       310  },
+ /*3:                */ { 1,  -380,   215, DEGTOANG16(      90), DEGTOANG16( 2.9),       310  },
+ /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23), DEGTOANG16( 4.9),       280  },
+ /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ), DEGTOANG16( 7.9),       290  },
+ /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23), DEGTOANG16( 5.4),       300  },
+ /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ), DEGTOANG16( 4.4),       280  },
+ /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23), DEGTOANG16( 5.4),       300  },
+ /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23), DEGTOANG16( -0.9),      320  }
 };
 
 void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
@@ -1150,19 +1146,26 @@ void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
 	sensor_mounts[idx].z_rel_ground += d_z;
 
 	DBG_PR_VAR_I32(idx);
-	DBG_PR_VAR_U16(sensor_mounts[idx].ang_rel_robot);
-	DBG_PR_VAR_U16(sensor_mounts[idx].vert_ang_rel_ground);
-	DBG_PR_VAR_I32(sensor_mounts[idx].z_rel_ground);
+	uint32_t ang_rel_robot = (uint32_t)sensor_mounts[idx].ang_rel_robot*65536;
+	int32_t vert_ang_rel_robot = (int32_t)((int16_t)sensor_mounts[idx].vert_ang_rel_ground)*65536;
+	int z_rel_ground = sensor_mounts[idx].z_rel_ground;
+
+	DBG_PR_VAR_U32(ang_rel_robot/ANG_0_1_DEG);
+	DBG_PR_VAR_I32(vert_ang_rel_robot/ANG_0_1_DEG);
+	DBG_PR_VAR_I32(z_rel_ground);
 }
 
 int adjustings = 0;
-#if 0
+#if 1
 void adjust()
 {
 	uint8_t cmd = uart_input();
 
 	if(cmd >= '0' && cmd <= '9')
+	{
 		adjustings = cmd-'0';
+		recalc_sensor_mounts(adjustings, 0, 0, 0);
+	}
 	else if(cmd == 'a')
 	{
 		recalc_sensor_mounts(adjustings, 0, 91, 0);
@@ -1345,13 +1348,12 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 		((lut_sin_from_u16(sensor_mounts[sidx].ang_rel_robot)*roll_ang)>>SIN_LUT_RESULT_SHIFT);
 
 
-	#define IN_01_DEG (ANG_0_1_DEG/65536)
-
-	DBG_PR_VAR_U16(sidx);
-	DBG_PR_VAR_I16((int16_t)sensor_mounts[sidx].vert_ang_rel_ground/IN_01_DEG);
-	DBG_PR_VAR_I16(pitch_ang/IN_01_DEG);
-	DBG_PR_VAR_I16(roll_ang/IN_01_DEG);
-	DBG_PR_VAR_I16((int16_t)global_sensor_ver_ang/IN_01_DEG);
+//	#define IN_01_DEG (ANG_0_1_DEG/65536)
+//	DBG_PR_VAR_U16(sidx);
+//	DBG_PR_VAR_I16((int16_t)sensor_mounts[sidx].vert_ang_rel_ground/IN_01_DEG);
+//	DBG_PR_VAR_I16(pitch_ang/IN_01_DEG);
+//	DBG_PR_VAR_I16(roll_ang/IN_01_DEG);
+//	DBG_PR_VAR_I16((int16_t)global_sensor_ver_ang/IN_01_DEG);
 
 
 
@@ -1427,7 +1429,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 				}
 			}
 
-			if(n_conform >= 3)
+			if(n_conform >= 5)
 			{
 				int32_t d = conform_avg / n_conform;
 
@@ -1807,7 +1809,6 @@ void compensated_2dcs_6mhz_ampl_dist_narrow(uint8_t *ampl_out, uint16_t *dist_ou
 		for(int xx=0; xx < TOF_XS_NARROW; xx++)
 		{
 			int i = yy*TOF_XS_NARROW+xx;
-			int i_bw = (yy+TOF_NARROW_Y_START)*TOF_XS+(xx+TOF_NARROW_X_START);
 			uint16_t dist;
 			int ampl;
 
@@ -1826,6 +1827,7 @@ void compensated_2dcs_6mhz_ampl_dist_narrow(uint8_t *ampl_out, uint16_t *dist_ou
 
 
 				#ifdef DO_AMB_CORR
+					int i_bw = (yy+TOF_NARROW_Y_START)*TOF_XS+(xx+TOF_NARROW_X_START);
 					int16_t bw = ((bwimg->img[i_bw]&0b0011111111111100)>>2)-2048;
 					if(bw<0) bw=0;
 					int corr_factor;

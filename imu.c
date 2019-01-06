@@ -1198,7 +1198,7 @@ static void inthandler14()
 	__DSB();
 }
 
-
+#if 0
 static void printings()
 {
 //	int ax[6], ay[6], az[6];
@@ -1412,6 +1412,7 @@ static void printings()
 	delay_ms(200);
 
 }
+#endif
 
 #define XCEL_RANGE_2G  0b0011
 #define XCEL_RANGE_4G  0b0101
@@ -1851,7 +1852,7 @@ void init_imu()
 	set_timer(50000);
 }
 
-
+#if 0
 void timer_test()
 {
 //	int cnt = 0;
@@ -1870,6 +1871,7 @@ void timer_test()
 		printings();
 	}
 }
+#endif
 
 
 void deinit_imu()
