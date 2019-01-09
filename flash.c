@@ -26,6 +26,7 @@
 #include "audio.h"
 #include "backup_ram.h"
 #include "tof_ctrl.h"
+#include "pwrswitch.h"
 
 #define SECTOR_LEN (128*1024)
 #if (SECTOR_LEN%32 != 0)
@@ -354,6 +355,8 @@ static uint8_t do_program(int bank, int sector, uint8_t expected_crc)
 	#error "Sorry, SBC_AUTODETECT mode not implemented in flasher"
 #endif
 
+extern volatile int main_power_enabled;
+
 void flasher() __attribute__((section(".text_itcm")));
 void flasher()
 {
@@ -455,6 +458,10 @@ void flasher()
 						delay_ms(1000);
 					}
 				}
+				else if(type==56)
+				{
+					shutdown();
+				}
 				else
 				{
 					LED_OFF();
@@ -473,6 +480,8 @@ void flasher()
 
 	}
 }
+
+
 //static char printbuf[128];
 void run_flasher()
 {
@@ -481,7 +490,6 @@ void run_flasher()
 	// run_flasher() was called from (normally something fairly high; or when in error context, 1).
 	NVIC_SetPriority(TIM5_IRQn, 0);
 
-	extern int main_power_enabled;
 	main_power_enabled = 2;
 	SET_TIMEBASE_VECTOR_TO_KEEPON();
 

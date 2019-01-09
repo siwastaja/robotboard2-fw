@@ -1285,6 +1285,18 @@ const seg_limits_t seg_lims[12] =
 
 };
 
+static int chafind_enabled = 0;
+
+void tof_enable_chafind_datapoints()
+{
+	chafind_enabled = 1;
+}
+
+void tof_disable_chafind_datapoints()
+{
+	chafind_enabled = 1;
+}
+
 
 void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max, int32_t ref_x, int32_t ref_y) __attribute__((section(".text_itcm")));
 void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max, int32_t ref_x, int32_t ref_y)
@@ -1301,7 +1313,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 	DBG_PR_VAR_I32(robot_x);
 	DBG_PR_VAR_I32(robot_y);
 */
-	if(abso(robot_x-ref_x) > 3000 || abso(robot_y-ref_y) > 3000) error(151);
+	if(abso(robot_x-ref_x) > 4000 || abso(robot_y-ref_y) > 4000) error(151);
 
 	uint16_t robot_ang = cur_pos.ang>>16;
 
@@ -1506,11 +1518,11 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 
 				#define OBST_AVOID_WIDTH 500
 
-				if(local_z > 250 && local_z < 1600)
+				if(local_z > 200 && local_z < 1200)
 				{
 					if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
 					{
-						if(local_x > 300 && local_x < 500)
+						if(local_x > 300 && local_x < 550)
 							obstacle_front++;
 
 						if(local_x > -750 && local_x < -500)
@@ -1519,13 +1531,18 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 
 					if(local_x > -500 && local_x < -200)
 					{
-						if(local_y > 250 && local_y < 400)
+						if(local_y > 200 && local_y < 450)
 							obstacle_left++;
 
-						if(local_y < -250 && local_y > -400)
+						if(local_y < -200 && local_y > -450)
 							obstacle_right++;
 
 					}
+				}
+
+				if(chafind_enabled && local_z > 150 && local_z < 300)
+				{
+					micronavi_point_in_chafind(local_x, local_y, local_z, 0, 0);
 				}
 
 				if(z > BASE_Z && z < MAX_Z)

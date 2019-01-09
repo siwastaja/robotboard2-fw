@@ -220,10 +220,16 @@ void stop_phab();
 volatile int run_pump = 0;
 
 static int running = 0;
+static int battery_full;
 
-int is_running()
+int charger_is_running()
 {
 	return running;
+}
+
+int charger_is_full()
+{
+	return battery_full;
 }
 
 
@@ -574,7 +580,7 @@ static inline int calc_check_offtime(int finetune)
 //		SAFETY_SHUTDOWN();
 
 		charger_safety_shutdown();
-		uart_print_string_blocking("\r\nSTOPPED: calculated offtime = "); o_itoa32(new_offtime, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+//		uart_print_string_blocking("\r\nSTOP: calc Toff = "); o_itoa32(new_offtime, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 		stop_phab();
 
 //		error(12);
@@ -639,7 +645,7 @@ int charger_get_latest_cur_pha()
 
 int charger_get_latest_cur_phb()
 {
-	return ADC_TO_MA(latest_cur_pha);
+	return ADC_TO_MA(latest_cur_phb);
 }
 
 #ifdef ENABLE_TRACE
@@ -659,8 +665,8 @@ int charger_get_latest_cur_phb()
 */
 
 
-int pha_lowcurr_fail_cnt;
-int phb_lowcurr_fail_cnt;
+volatile int pha_lowcurr_fail_cnt;
+volatile int phb_lowcurr_fail_cnt;
 
 #define INITIAL_FINETUNE (-150)
 #define INITIAL_ERR_INTEGRAL (-15*256)
@@ -735,8 +741,8 @@ void charger_adc2_pha_inthandler()
 	{
 //		SAFETY_SHUTDOWN();
 		charger_safety_shutdown();
-		uart_print_string_blocking("\r\nCharger PID integral windup 1\r\n");
-		DBG_PR_VAR_I32(pha_err_integral);
+//		uart_print_string_blocking("\r\nCha PID windup 1\r\n");
+//		DBG_PR_VAR_I32(pha_err_integral);
 		stop_phab();
 //		charger_safety_errhandler();
 	}
@@ -808,10 +814,9 @@ void charger_adc2_phb_inthandler()
 	phb_err_integral += err;
 	if(phb_err_integral < ERR_INTEGRAL_MIN || phb_err_integral > ERR_INTEGRAL_MAX)
 	{
-//		SAFETY_SHUTDOWN();
 		charger_safety_shutdown();
-		uart_print_string_blocking("\r\nCharger PID integral windup 2\r\n");
-		DBG_PR_VAR_I32(phb_err_integral);
+//		uart_print_string_blocking("\r\nCha PID windup 2\r\n");
+//		DBG_PR_VAR_I32(phb_err_integral);
 		stop_phab();
 //		charger_safety_errhandler();
 	}
@@ -839,6 +844,7 @@ void charger_adc2_phb_inthandler()
 //uint32_t dead_rising = 10;
 //uint32_t dead_falling = 10;
 
+#if 0
 void charger_test()
 {
 	static int cnt;
@@ -999,7 +1005,7 @@ void charger_test()
 
 	delay_ms(99);
 }
-
+#endif
 
 // cur setpoint=1200mA
 // in 30.5V    0.97A
@@ -1080,7 +1086,7 @@ void charger_test()
 // Vin=28.0V, Vbat=19.9V -> starts and runs fine
 
 
-
+#if 0
 void charger_test2()
 {
 	init_cpu_profiler();
@@ -1093,10 +1099,10 @@ void charger_test2()
 	while(1)
 	{
 
-		if(!is_running())
+		if(!charger_is_running())
 		{
 			start_phab(1);
-			if(!is_running())
+			if(!charger_is_running())
 			{
 				uart_print_string_blocking("*** FAILED TO START ***\r\n");
 			}
@@ -1126,19 +1132,21 @@ void charger_test2()
 		delay_ms(500);
 	}
 }
+#endif
 
 int combined_current_setpoint;
 int combined_max_output_current; // mA - use this to limit the output current to the batteries
 int combined_max_output_power; // mW - use this to limit power from the charger (remember to account for losses)
 #define CV_VOLTAGE 25190
 
+static volatile int was_running_cnt;
 
 void charger_1khz() __attribute__((section(".text_itcm")));
 void charger_1khz()
 {
-	int vin = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
+//	int vin = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
 	int vbat = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
-	if(is_running())
+	if(charger_is_running())
 	{
 		// I = P/U
 		// 1000*mW per mV = mA
@@ -1161,27 +1169,51 @@ void charger_1khz()
 
 		set_current(combined_current_setpoint>>1);
 
-		if(vbat > CV_VOLTAGE-10 && combined_current_setpoint < 2000)
+		if( (vbat > CV_VOLTAGE-10 && combined_current_setpoint < 2000) ||  // Normal end-of-charge
+		    (vbat > CV_VOLTAGE+200)) // Battery disconnect peak, try to react softly before the analog watchdog
 		{
 			stop_phab();
+			battery_full = 1;
 		}
+
+		was_running_cnt = 500;
 	}
-	else 
+	else if(was_running_cnt > 0)
+		was_running_cnt--;
+}
+
+// Run this whenever you have time, and are allowed to block (for a few milliseconds, max).
+// This does:
+// * Tries to start charger, if battery not full, and if mounted to a powered station
+// * Updates battery_full to zero, if the battery isn't full anymore
+void charger_freerunning_fsm()
+{
+	int vin = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
+	int vbat = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
+	if(!charger_is_running())
 	{
-		if(vin > 33000)
+		if(vbat >= CV_VOLTAGE-600) // >4.1V per cell -> don't start
 		{
-			combined_current_setpoint = 2000;
-			combined_max_output_power = 200000.0*0.93; // 186000
-			combined_max_output_current = 20000;
-			start_phab(1);
-			if(!is_running())
+		}
+		else // Battery not full - allow starting
+		{
+			battery_full = 0;
+			if(vin > 33000 && was_running_cnt == 0) // mounted to charger - actually try starting
 			{
-				uart_print_string_blocking("CHARGER START FAILED\r\n");
-			}
-			else
-			{
-//				delay_us(100);
-//				set_current(5000);
+				combined_current_setpoint = 2000;
+				combined_max_output_power = 200000.0*0.93; // 186000
+				combined_max_output_current = 20000;
+				start_phab(1);
+
+				if(!charger_is_running())
+				{
+					uart_print_string_blocking("CHARGER START FAILED\r\n");
+				}
+				else
+				{
+				}
+
+				was_running_cnt = 1000;
 			}
 		}
 	}
@@ -1208,6 +1240,8 @@ void init_charger()
 void start_phab(int start_b) __attribute__((section(".text_itcm")));
 void start_phab(int start_b)
 {
+//	uart_print_string_blocking("#");
+
 	if(running)
 	{
 		error(13);
@@ -1422,6 +1456,8 @@ void start_phab(int start_b)
 	{
 		// We cannot start. Bail out...
 		stop_phab();
+//		uart_print_string_blocking("@");
+
 		return;
 	}	
 	int actual_first_offtime, actual_second_offtime;
@@ -1477,12 +1513,16 @@ void start_phab(int start_b)
 		trace_at = 0;
 	#endif
 
+//	uart_print_string_blocking("£");
+
 }
 
 
 void stop_phab() __attribute__((section(".text_itcm")));
 void stop_phab()
 {
+//	uart_print_string_blocking("[");
+
 	running = 0;
 	HRTIM_OUTDIS_PHA();
 	HRTIM_OUTDIS_PHB();
@@ -1522,6 +1562,7 @@ void stop_phab()
 	latest_cur_pha = 0;
 	latest_cur_phb = 0;
 
+//	uart_print_string_blocking("]");
 }
 
 void stop_b()  __attribute__((section(".text_itcm")));

@@ -87,10 +87,10 @@ void cmd_corr_pos(s2b_corr_pos_t* cmd)
 	if(dx > 2000LL || dx < -2000LL || dy > 2000LL || dy < -2000LL)
 		error(167);
 
-	// Divide by 4 by only shifting 14 places instead of 16.
-	dx<<=14;
-	dy<<=14;
-	da/=4;
+	// Divide by 2 by only shifting 15 places instead of 16.
+	dx<<=15;
+	dy<<=15;
+	da/=2;
 
 	cur_pos.x += dx;
 	cur_pos.y += dy;
@@ -117,6 +117,15 @@ static void stop()
 	new_direction = 0;
 	run = 0;
 	ang_to_target = cur_pos.ang;
+}
+
+static int err_cnt;
+static void log_err()  __attribute__((section(".text_itcm")));
+static void log_err()
+{
+	err_cnt+=1000;
+	if(err_cnt > 3000)
+		error(130);
 }
 
 void drive_handler() __attribute__((section(".text_itcm")));
@@ -158,10 +167,11 @@ void drive_handler()
 
 	for(int imu=0; imu<6; imu++)
 	{
-		if(imu_a[imu]->n < 4 || imu_a[imu]->n > 7)
-			error(130);
-		if(imu_g[imu]->n < 4 || imu_g[imu]->n > 7)
-			error(131);
+		if(imu_a[imu]->n < 4 || imu_a[imu]->n > 7 || imu_g[imu]->n < 4 || imu_g[imu]->n > 7)
+		{
+			log_err();
+			// Just use the old values!
+		}
 
 		int32_t cur_gx=0, cur_gy=0, cur_gz=0;
 		//int32_t cur_ax=0, cur_ay=0, cur_az=0;
@@ -412,13 +422,13 @@ void drive_handler()
 	static double ang_speed;
 	double max_ang_speed_by_ang_err = 1.0 + 0.10*abso(ang_err)/ANG_1_DEG; // was 0.25*
 	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
-	double max_ang_speed = 15.0; // steps per cycle // was 20.0
+	double max_ang_speed = 10.0; // steps per cycle // was 15.0 -> 10.0
 	double min_ang_speed = 2.0;
 
 	static double lin_speed;
 	double max_lin_speed_by_lin_err = 5.0 + 0.05*(double)abso((lin_err>>16)); // 400mm error -> speed unit 20
 	double max_lin_speed_by_ang_err = 100.0 / (abso(ang_err)/ANG_1_DEG); // 10 deg error -> max lin speed 10 units.
-	double max_lin_speed = 30.0;
+	double max_lin_speed = 15.0; // was 30.0 -> 15.0
 	double min_lin_speed = 5.0;
 
 
@@ -616,6 +626,8 @@ void drive_handler()
 	}
 
 	if(motors_enabled > 0) motors_enabled--;
+
+	if(err_cnt > 0) err_cnt--;
 
 }
 

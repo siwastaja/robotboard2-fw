@@ -632,6 +632,7 @@ void motor_run(int m)
 	else
 		MC1_EN_GATE();
 
+	bldc_pos_set[m] = bldc_pos[m];
 	run[m] = 1;
 	wanna_stop[m] = 0;
 }

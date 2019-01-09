@@ -151,7 +151,7 @@ void restart_voxmap()
 
 }
 
-#define VOXMAP_SEND_INTERVAL 5
+#define VOXMAP_SEND_INTERVAL 7
 
 extern void adjust();
 
@@ -198,6 +198,9 @@ void run_cycle()
 	}
 	if(!sensors_in_use[sidx])
 		return;
+
+	charger_freerunning_fsm();
+
 
 
 	adjust();
@@ -250,6 +253,14 @@ void run_cycle()
 
 	if(gen_data && pwr_status)
 	{
+		pwr_status->flags = 0;
+
+		if(charger_is_running())
+			pwr_status->flags |= PWR_STATUS_FLAG_CHARGING;
+
+		if(charger_is_full())
+			pwr_status->flags |= PWR_STATUS_FLAG_FULL;
+
 		pwr_status->bat_mv = bat_mv; //filtered_bat_mv_x256>>8;
 		pwr_status->bat_percent = conv_bat_percent(bat_mv);
 		pwr_status->charger_input_mv = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);

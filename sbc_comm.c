@@ -742,7 +742,7 @@ void parse_rx_packet()
 			case CMD_MOTORS:
 			{
 				if(((s2b_motors_t*)p_data)->enabled)
-					cmd_motors(250*8);
+					cmd_motors(250*12);
 				else
 					cmd_motors(0);
 			}

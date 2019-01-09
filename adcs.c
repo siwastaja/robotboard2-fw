@@ -30,6 +30,7 @@ uint32_t vbat_per_vinbus_mult = 2967;
 
 void adc12_inthandler()
 {
+	SAFETY_SHUTDOWN();
 	if(ADC1->ISR & (1UL<<7)) // ADC1 AWD1
 	{
 		uart_print_string_blocking("\r\nADC1 AWD1: Vbat out of range\r\n");
@@ -93,14 +94,14 @@ void adc12_inthandler()
 
 
 		uart_print_string_blocking("\r\n");
-		error(20);
-
 	}
+	error(20);
 }
 
 
 void adc3_inthandler()
 {
+	SAFETY_SHUTDOWN();
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
@@ -118,6 +119,8 @@ void adc3_inthandler()
 
 void adc1_dma_errhandler()
 {
+	SAFETY_SHUTDOWN();
+
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
@@ -130,6 +133,8 @@ void adc1_dma_errhandler()
 
 void adc2_dma_errhandler()
 {
+	SAFETY_SHUTDOWN();
+
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
@@ -141,6 +146,8 @@ void adc2_dma_errhandler()
 
 void adc3_dma_errhandler()
 {
+	SAFETY_SHUTDOWN();
+
 	uart_print_string_blocking("\r\n\r\nSTOPPED: ");
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
@@ -217,6 +224,7 @@ static void init_calib_adc(ADC_TypeDef *adc)
 
 #define ADSTART (1UL<<2)
 
+#if 0
 void adc_test()
 {
 
@@ -263,6 +271,8 @@ void adc_test()
 
 }
 
+#endif
+
 // assuming init_adcs() has been done
 void init_adc2()
 {
@@ -299,7 +309,6 @@ void init_adc2()
 	__DSB();
 	ADC2->CR |= ADSTART;
 }
-
 
 void deinit_adc2()
 {

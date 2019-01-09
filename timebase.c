@@ -17,6 +17,7 @@ volatile uint32_t cnt_100us;
 
 static int cnt;
 
+extern volatile int main_power_enabled;
 
 void timebase_alternative_inthandler() __attribute__((section(".text_itcm")));
 void timebase_alternative_inthandler()
@@ -28,7 +29,6 @@ void timebase_alternative_inthandler()
 
 	if(cnt == 7)
 	{
-		extern int main_power_enabled;
 		if(main_power_enabled) 
 			PLAT_CP_HI();
 		pwrswitch_1khz();
@@ -59,7 +59,6 @@ void timebase_inthandler()
 	}
 	else if(cnt == 7)
 	{
-		extern int main_power_enabled;
 		if(main_power_enabled) 
 			PLAT_CP_HI();
 

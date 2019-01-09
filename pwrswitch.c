@@ -186,7 +186,7 @@ void chargepump_pulsetrain_low_power(uint32_t del_ms)
 	}
 }
 
-int main_power_enabled = 1;
+volatile int main_power_enabled = 1;
 volatile int app_power_enabled = 0;
 
 
