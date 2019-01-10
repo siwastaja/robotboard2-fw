@@ -1182,6 +1182,12 @@ void charger_1khz()
 		was_running_cnt--;
 }
 
+int charger_is_mounted()
+{
+	int vin = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
+	return (vin>33000);
+}
+
 // Run this whenever you have time, and are allowed to block (for a few milliseconds, max).
 // This does:
 // * Tries to start charger, if battery not full, and if mounted to a powered station

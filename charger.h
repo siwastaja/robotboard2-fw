@@ -34,3 +34,5 @@ int charger_get_latest_cur_pha();
 int charger_get_latest_cur_phb();
 int charger_is_running();
 int charger_is_full();
+int charger_is_mounted();
+

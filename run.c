@@ -151,7 +151,7 @@ void restart_voxmap()
 
 }
 
-#define VOXMAP_SEND_INTERVAL 7
+#define VOXMAP_SEND_INTERVAL 3
 
 extern void adjust();
 
@@ -201,6 +201,10 @@ void run_cycle()
 
 	charger_freerunning_fsm();
 
+	// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
+	int bubblegum = 1;
+	if(sidx == 6 || sidx==9)
+		bubblegum = 2;
 
 
 	adjust();
@@ -327,7 +331,7 @@ void run_cycle()
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 
 	epc_clk_div(2); block_epc_i2c(4);
-	epc_intlen(intlen_mults[2], INTUS(4000)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[2], INTUS(4000*bubblegum)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcs2, SIZEOF_2DCS);
 	epc_trig();
@@ -368,7 +372,7 @@ void run_cycle()
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 
 	epc_clk_div(0); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(SUPERSHORT_US)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(SUPERSHORT_US*bubblegum)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
@@ -424,7 +428,7 @@ void run_cycle()
 	int base_exp_nar = base_exp/3;
 
 	epc_clk_div(0); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(base_exp)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(base_exp*bubblegum)); block_epc_i2c(4);
 	epc_4dcs(); block_epc_i2c(4);
 
 	delay_ms(1);
@@ -449,7 +453,7 @@ void run_cycle()
 
 	TOF_TS(7);
 
-	epc_intlen(intlen_mults[0], INTUS(base_exp*HDR_FACTOR)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(base_exp*HDR_FACTOR*bubblegum)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
@@ -657,6 +661,7 @@ void run_cycle()
 			{
 				//uart_print_string_blocking("restart\r\n"); 
 				bl = 0;
+				execute_corr_pos();
 				restart_voxmap();
 				voxmap_send_cnt = 0;
 				do_restore_subs = 1;

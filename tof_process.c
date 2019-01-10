@@ -16,8 +16,10 @@
 #include "geotables.h"
 
 #include "drive.h"
+#include "micronavi.h"
 
 #include "../robotsoft/api_board_to_soft.h"
+
 
 #define FLASH_SENSOR0  (FLASH_OFFSET + (0*8+2)*128*1024)  // bank1 sector2
 #define FLASH_SENSOR5  (FLASH_OFFSET + (1*8+2)*128*1024)  // bank2 sector2
@@ -1128,15 +1130,15 @@ sensor_mount_t sensor_mounts[N_SENSORS] =
 {          //      mountmode    x     y       hor ang           ver ang      height    
  /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 2),         300 },
 
- /*1:                */ { 1,   130,   103, DEGTOANG16(      23), DEGTOANG16( 5.4),       310  },
- /*2:                */ { 2,  -235,   215, DEGTOANG16(   90-23), DEGTOANG16( 2.4),       310  },
- /*3:                */ { 1,  -380,   215, DEGTOANG16(      90), DEGTOANG16( 2.9),       310  },
- /*4:                */ { 2,  -522,   103, DEGTOANG16(  180-23), DEGTOANG16( 4.9),       280  },
- /*5:                */ { 1,  -522,    35, DEGTOANG16(    180 ), DEGTOANG16( 7.9),       290  },
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(  180+23), DEGTOANG16( 5.4),       300  },
- /*7:                */ { 2,  -380,  -215, DEGTOANG16(   270  ), DEGTOANG16( 4.4),       280  },
- /*8:                */ { 1,  -235,  -215, DEGTOANG16(  270+23), DEGTOANG16( 5.4),       300  },
- /*9:                */ { 2,   130,  -103, DEGTOANG16(  360-23), DEGTOANG16( -0.9),      320  }
+ /*1:                */ { 1,   130,   103, DEGTOANG16(    24.4), DEGTOANG16( 5.4),       310  },
+ /*2:                */ { 2,  -235,   215, DEGTOANG16(    66.4), DEGTOANG16( 2.4),       310  },
+ /*3:                */ { 1,  -380,   215, DEGTOANG16(    86.5), DEGTOANG16( 2.9),       310  },
+ /*4:                */ { 2,  -522,   103, DEGTOANG16(   157.4), DEGTOANG16( 4.9),       280  },
+ /*5:                */ { 1,  -522,    35, DEGTOANG16(   183.4), DEGTOANG16( 7.9),       290  },
+ /*6:                */ { 1,  -522,  -103, DEGTOANG16(   206.8), DEGTOANG16( 5.4),       300  },
+ /*7:                */ { 2,  -380,  -215, DEGTOANG16(   268.5), DEGTOANG16( 4.4),       280  },
+ /*8:                */ { 1,  -235,  -215, DEGTOANG16(   294.9), DEGTOANG16( 5.4),       300  },
+ /*9:                */ { 2,   130,  -103, DEGTOANG16(   334.9), DEGTOANG16( -0.9),      320  }
 };
 
 void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)

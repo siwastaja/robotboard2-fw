@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #include "drive.h"
 #include "misc.h"
 #include "imu.h"
@@ -57,6 +58,31 @@ int backmode;
 static int run;
 static int do_start;
 
+int is_driving()
+{
+	return run;
+}
+
+static double max_ang_speed = 12.0; // steps per cycle // was 15.0 -> 10.0
+static double min_ang_speed = 2.0;
+static double max_lin_speed = 20.0; // was 30.0 -> 15.0
+static double min_lin_speed = 5.0;
+
+void set_top_speed_max(int old_style_value)
+{
+	max_ang_speed = (double)old_style_value / 4.0;
+	max_lin_speed = (double)old_style_value / 2.0;
+
+	if(max_ang_speed < min_ang_speed) max_ang_speed = min_ang_speed;
+	if(max_lin_speed < min_lin_speed) max_lin_speed = min_lin_speed;
+	if(max_ang_speed > 13.0) max_ang_speed = 13.0;
+	if(max_lin_speed > 25.0) max_lin_speed = 25.0;
+}
+
+static int mode_xy;
+static uint32_t ang_to_target;
+
+
 void cmd_go_to(s2b_move_abs_t* m)
 {
 	target_pos.x = (int64_t)m->x<<16;
@@ -70,6 +96,51 @@ void cmd_go_to(s2b_move_abs_t* m)
 	obstacle_left = 0;
 	obstacle_right = 0;
 
+	mode_xy = 1;
+	do_start = 1;
+}
+
+#if 0
+// Started implementing function taking straight distance and calculating x,y once
+void straight_rel(int32_t mm)
+{ 
+	uint32_t ang = cur_pos.ang;
+
+	if(mm < 0)
+	{
+		ang += (uint32_t)(ANG_180_DEG);
+		mm *= -1;
+	}
+
+	int64_t x = (((int64_t)lut_cos_from_u32(ang) * (int64_t)mm)>>SIN_LUT_RESULT_SHIFT)<<16;
+	int64_t y = (((int64_t)lut_sin_from_u32(ang) * (int64_t)mm)>>SIN_LUT_RESULT_SHIFT)<<16;
+
+}
+#endif
+
+static int64_t store_lin_err;
+
+void straight_rel(int32_t mm)
+{
+	ang_to_target = cur_pos.ang;
+	store_lin_err = (int64_t)mm<<16;
+	mode_xy = 0;
+	do_start = 1;
+}
+
+void rotate_rel(int32_t ang32)
+{
+	ang_to_target = cur_pos.ang + (uint32_t)ang32;
+	store_lin_err = 0;
+	mode_xy = 0;
+	do_start = 1;
+}
+
+void rotate_and_straight_rel(int32_t ang32, int32_t mm)
+{
+	ang_to_target = cur_pos.ang + (uint32_t)ang32;
+	store_lin_err = (int64_t)mm<<16;
+	mode_xy = 0;
 	do_start = 1;
 }
 
@@ -78,11 +149,23 @@ void cmd_motors(int enabled)
 	motors_enabled = enabled;
 }
 
+static s2b_corr_pos_t stored_corrpos;
+static int corrpos_in_queue;
+
 void cmd_corr_pos(s2b_corr_pos_t* cmd)
 {
-	int32_t da = cmd->da;
-	int64_t dx = cmd->dx;
-	int64_t dy = cmd->dy;
+	memcpy(&stored_corrpos, cmd, sizeof(s2b_corr_pos_t));
+	corrpos_in_queue = 1;
+}
+
+void execute_corr_pos()
+{
+	if(!corrpos_in_queue)
+		return;
+
+	int32_t da = stored_corrpos.da;
+	int64_t dx = stored_corrpos.dx;
+	int64_t dy = stored_corrpos.dy;
 
 	if(dx > 2000LL || dx < -2000LL || dy > 2000LL || dy < -2000LL)
 		error(167);
@@ -97,6 +180,8 @@ void cmd_corr_pos(s2b_corr_pos_t* cmd)
 	cur_pos.ang += (uint32_t)da;
 	target_pos.x += dx;
 	target_pos.y += dy;
+
+	corrpos_in_queue = 0;
 }
 
 void cmd_stop_movement()
@@ -367,20 +452,42 @@ void drive_handler()
 
 
 
-	int64_t dx = cur_pos.x - target_pos.x;
-	int64_t dy = cur_pos.y - target_pos.y;
+	int64_t lin_err;
 
-	static uint32_t ang_to_target;
+	int reverse = 0;
 
-	int64_t lin_err = sqrt(sq((double)dx) + sq((double)dy));
 
-	if(lin_err > 150LL*65536LL || new_direction)
-		ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2*M_PI));
+	if(mode_xy)
+	{
+		int64_t dx = cur_pos.x - target_pos.x;
+		int64_t dy = cur_pos.y - target_pos.y;
+		lin_err = sqrt(sq((double)dx) + sq((double)dy));
+
+		if(lin_err > 150LL*65536LL || new_direction)
+			ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2*M_PI));
+	}
+	else
+	{
+		store_lin_err -= fwd;
+
+		if(store_lin_err < 0)
+		{
+			lin_err = -1*store_lin_err;
+			reverse = 1;
+		}
+		else
+		{
+			lin_err = store_lin_err;
+			reverse = 0;
+		}
+
+	}
+
+
 	new_direction = 0;
 
 	int32_t ang_err = cur_pos.ang - ang_to_target;
 
-	int reverse = 0;
 	if(backmode==1 || (backmode==2 && (ang_err > 110*ANG_1_DEG || ang_err < -110*ANG_1_DEG)))
 	{
 		reverse = 1;
@@ -418,18 +525,13 @@ void drive_handler()
 	// Over 100 meters is an error.
 	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(133);
 
-
 	static double ang_speed;
 	double max_ang_speed_by_ang_err = 1.0 + 0.10*abso(ang_err)/ANG_1_DEG; // was 0.25*
 	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
-	double max_ang_speed = 10.0; // steps per cycle // was 15.0 -> 10.0
-	double min_ang_speed = 2.0;
 
 	static double lin_speed;
 	double max_lin_speed_by_lin_err = 5.0 + 0.05*(double)abso((lin_err>>16)); // 400mm error -> speed unit 20
 	double max_lin_speed_by_ang_err = 100.0 / (abso(ang_err)/ANG_1_DEG); // 10 deg error -> max lin speed 10 units.
-	double max_lin_speed = 15.0; // was 30.0 -> 15.0
-	double min_lin_speed = 5.0;
 
 
 	// Calculate the target wheel positions to correct the measured angular error

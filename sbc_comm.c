@@ -13,6 +13,7 @@
 
 #include "drive.h"
 #include "ext_vacuum_boost.h"
+#include "micronavi.h"
 
 // 1 or 0:
 #define CRC_EN 1
@@ -767,6 +768,13 @@ void parse_rx_packet()
 				ext_vacuum_cmd(((s2b_ext_vacuum_t*)p_data)->power, ((s2b_ext_vacuum_t*)p_data)->nozzle);
 			}
 			break;
+
+			case CMD_MOUNT_CHARGER:
+			{
+				find_charger();
+			}
+			break;
+
 			
 			default:
 			{
