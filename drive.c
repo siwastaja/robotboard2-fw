@@ -10,6 +10,7 @@
 #include "../robotsoft/api_board_to_soft.h"
 #include "../robotsoft/api_soft_to_board.h"
 
+//#define LEDS_ON
 
 #define G_DC_MOTDET_TH 250 // 100 generates false noise detections about every 2-3 seconds
 #define G_AC_MOTDET_TH (150*256) // threshold after DC offset correction
@@ -70,7 +71,7 @@ static double min_lin_speed = 5.0;
 
 void set_top_speed_max(int old_style_value)
 {
-	max_ang_speed = (double)old_style_value / 4.0;
+	max_ang_speed = (double)old_style_value / 5.0;
 	max_lin_speed = (double)old_style_value / 2.0;
 
 	if(max_ang_speed < min_ang_speed) max_ang_speed = min_ang_speed;
@@ -184,13 +185,6 @@ void execute_corr_pos()
 	corrpos_in_queue = 0;
 }
 
-void cmd_stop_movement()
-{
-	target_pos = cur_pos;
-	new_direction = 0;
-	micronavi_status = 0;
-	run = 0;
-}
 
 
 
@@ -202,6 +196,13 @@ static void stop()
 	new_direction = 0;
 	run = 0;
 	ang_to_target = cur_pos.ang;
+	backmode = 0;
+}
+
+void cmd_stop_movement()
+{
+	stop();
+	micronavi_status = 0;
 }
 
 static int err_cnt;
@@ -463,7 +464,7 @@ void drive_handler()
 		int64_t dy = cur_pos.y - target_pos.y;
 		lin_err = sqrt(sq((double)dx) + sq((double)dy));
 
-		if(lin_err > 150LL*65536LL || new_direction)
+		if(lin_err > 200LL*65536LL || new_direction)
 			ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2*M_PI));
 	}
 	else
@@ -501,24 +502,32 @@ void drive_handler()
 		lin_err *= -1;
 		if(run)
 		{
+#ifdef LEDS_ON
 			led_status(4, WHITE, LED_MODE_FADE);
 			led_status(5, WHITE, LED_MODE_FADE);
 			led_status(6, WHITE, LED_MODE_FADE);
+#endif
 		}
+#ifdef LEDS_ON
 		led_status(9, BLACK, LED_MODE_FADE);
 		led_status(0, BLACK, LED_MODE_FADE);
 		led_status(1, BLACK, LED_MODE_FADE);
+#endif
 	}
 	else
 	{
+#ifdef LEDS_ON
 		led_status(4, BLACK, LED_MODE_FADE);
 		led_status(5, BLACK, LED_MODE_FADE);
 		led_status(6, BLACK, LED_MODE_FADE);
+#endif
 		if(run)
 		{
+#ifdef LEDS_ON
 			led_status(9, WHITE, LED_MODE_FADE);
 			led_status(0, WHITE, LED_MODE_FADE);
 			led_status(1, WHITE, LED_MODE_FADE);
+#endif
 		}
 	}
 
@@ -526,7 +535,7 @@ void drive_handler()
 	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(133);
 
 	static double ang_speed;
-	double max_ang_speed_by_ang_err = 1.0 + 0.10*abso(ang_err)/ANG_1_DEG; // was 0.25*
+	double max_ang_speed_by_ang_err = 1.0 + 0.16*abso(ang_err)/ANG_1_DEG; // was 0.10*
 	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
 
 	static double lin_speed;
@@ -565,54 +574,6 @@ void drive_handler()
 
 	delta_mpos_lin[0] = lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
 	delta_mpos_lin[1] = -1*lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
-
-	if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_err > 60LL*65536LL || lin_err < -60LL*65536LL)
-	{
-		if(motors_enabled)
-			run = 1;
-	}
-	else if(ang_err > -5*ANG_1_DEG && ang_err < 5*ANG_1_DEG && lin_err < 30LL*65536LL && lin_err > -30LL*65536LL)
-	{
-		run = 0;
-	}
-
-	if(!motors_enabled)
-		run = 0;
-
-
-
-	if(lin_err > 100 && obstacle_front > 20)
-	{
-		micronavi_status |= 1UL<<0;
-		stop();
-		led_status(9, RED, LED_MODE_FADE);
-		led_status(0, RED, LED_MODE_FADE);
-		led_status(1, RED, LED_MODE_FADE);
-	}
-	else if(lin_err < -100 && obstacle_back > 20)
-	{
-		micronavi_status |= 1UL<<0;
-		stop();
-		led_status(4, RED, LED_MODE_FADE);
-		led_status(5, RED, LED_MODE_FADE);
-		led_status(6, RED, LED_MODE_FADE);
-	}
-	else if(ang_err > 10*ANG_1_DEG && obstacle_left > 20)
-	{
-		micronavi_status |= 1UL<<2;
-		stop();
-		led_status(2, RED, LED_MODE_FADE);
-		led_status(3, RED, LED_MODE_FADE);
-	}
-	else if(ang_err < -10*ANG_1_DEG && obstacle_right > 20)
-	{
-		micronavi_status |= 1UL<<2;
-		stop();
-		led_status(7, RED, LED_MODE_FADE);
-		led_status(8, RED, LED_MODE_FADE);
-	}
-
-
 
 
 	if(correcting_angle)
@@ -675,23 +636,82 @@ void drive_handler()
 
 
 
-	if(drive_diag)
+	// All stopping conditions first:
+	if(ang_err > -5*ANG_1_DEG && ang_err < 5*ANG_1_DEG && lin_err < 30LL*65536LL && lin_err > -30LL*65536LL)
 	{
-		drive_diag->ang_err = ang_err;
-		drive_diag->lin_err = lin_err>>16;
-		drive_diag->cur_x = cur_pos.x>>16;
-		drive_diag->cur_y = cur_pos.y>>16;
-		drive_diag->target_x = target_pos.x>>16;
-		drive_diag->target_y = target_pos.y>>16;
-		drive_diag->id = cur_id;
-		drive_diag->remaining = abso((lin_err>>16));
-		drive_diag->micronavi_stop_flags = micronavi_status;
+//		run = 0;
+		stop();
 	}
+
+	if(!motors_enabled)
+	{
+//		run = 0;
+		stop();
+	}
+
+
+
+	if(lin_err > 100 && obstacle_front > 20)
+	{
+		micronavi_status |= 1UL<<0;
+		stop();
+#ifdef LEDS_ON
+		led_status(9, RED, LED_MODE_FADE);
+		led_status(0, RED, LED_MODE_FADE);
+		led_status(1, RED, LED_MODE_FADE);
+#endif
+	}
+	else if(lin_err < -100 && obstacle_back > 20)
+	{
+		micronavi_status |= 1UL<<0;
+		stop();
+#ifdef LEDS_ON
+		led_status(4, RED, LED_MODE_FADE);
+		led_status(5, RED, LED_MODE_FADE);
+		led_status(6, RED, LED_MODE_FADE);
+#endif
+	}
+	else if(ang_err > 10*ANG_1_DEG && obstacle_left > 20)
+	{
+		micronavi_status |= 1UL<<2;
+		stop();
+#ifdef LEDS_ON
+		led_status(2, RED, LED_MODE_FADE);
+		led_status(3, RED, LED_MODE_FADE);
+#endif
+	}
+	else if(ang_err < -10*ANG_1_DEG && obstacle_right > 20)
+	{
+		micronavi_status |= 1UL<<2;
+		stop();
+#ifdef LEDS_ON
+		led_status(7, RED, LED_MODE_FADE);
+		led_status(8, RED, LED_MODE_FADE);
+#endif
+	}
+
+
+
+	// Then, starting conditions:
+	if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_err > 60LL*65536LL || lin_err < -60LL*65536LL)
+	{
+		if(motors_enabled)
+		{
+			if(run == 0)
+				do_start = 1;
+
+			run = 1;
+		}
+	}
+
 
 	if(prev_run != run || do_start)
 	{
 		if(do_start || run)
 		{
+			for(int i=1; i<10; i++)
+				led_status(i, RED, LED_MODE_FADE);
+
 			motor_torque_lim(0, 50);
 			motor_torque_lim(1, 50);
 			motor_run(0);
@@ -702,9 +722,16 @@ void drive_handler()
 		}
 		else
 		{
+			for(int i=1; i<10; i++)
+				led_status(i, GREEN, LED_MODE_FADE);
 			motor_let_stop(0);
 			motor_let_stop(1);
 		}
+	}
+	else
+	{
+//		for(int i=1; i<10; i++)
+//			led_status(i, YELLOW, LED_MODE_FADE);
 	}
 	prev_run = run;
 
@@ -730,6 +757,22 @@ void drive_handler()
 	if(motors_enabled > 0) motors_enabled--;
 
 	if(err_cnt > 0) err_cnt--;
+
+	if(drive_diag)
+	{
+		drive_diag->ang_err = ang_err;
+		drive_diag->lin_err = lin_err>>16;
+		drive_diag->cur_x = cur_pos.x>>16;
+		drive_diag->cur_y = cur_pos.y>>16;
+		drive_diag->target_x = target_pos.x>>16;
+		drive_diag->target_y = target_pos.y>>16;
+		drive_diag->id = cur_id;
+		drive_diag->remaining = abso((lin_err>>16));
+		drive_diag->micronavi_stop_flags = micronavi_status;
+		drive_diag->run = run;
+	}
+
+
 
 }
 

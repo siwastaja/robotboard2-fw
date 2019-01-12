@@ -104,6 +104,7 @@ void led_status(int sid, uint32_t val, int mode);
 #define WHITE  0x01ffe090
 #define YELLOW 0x01ff8000
 #define RED    0x04ff0000
+#define GREEN  0x0400ff00
 #define LED_MODE_FADE  0
 #define LED_MODE_KEEP  1
 #define LED_MODE_BLINK 2
