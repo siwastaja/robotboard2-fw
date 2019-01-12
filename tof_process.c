@@ -1518,7 +1518,13 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 					DBG_PR_VAR_I32(z);
 				#endif
 
-				#define OBST_AVOID_WIDTH 500
+
+				// VACUUM APP: Ignore the nozzle
+				#define NOZZLE_WIDTH 630
+				if(local_z < 150 && local_x < 300 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+					continue;
+
+				#define OBST_AVOID_WIDTH 600
 
 				if(local_z > 200 && local_z < 1200)
 				{
