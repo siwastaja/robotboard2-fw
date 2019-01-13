@@ -25,4 +25,7 @@ void init_audio();
 
 void beep_blocking(int pulses, int us, int volume);
 
+void beep(int len_ms, int hz_start, int sweep, int volume); // len milliseconds, hz initial freq, sweep: positive sweeps down, negative sweeps up, volume 0-100
+
+
 

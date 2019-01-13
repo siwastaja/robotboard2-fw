@@ -12,6 +12,7 @@ Timebase: 10kHz handler
 #include "pwrswitch.h"
 #include "adcs.h"
 #include "ext_vacuum_boost.h"
+#include "audio.h"
 
 volatile uint32_t cnt_100us;
 
@@ -67,10 +68,8 @@ void timebase_inthandler()
 
 		pwrswitch_1khz();
 	}
-	else if(cnt ==8)
+	else if(cnt == 8)
 	{
-		extern void bldc_1khz();
-		bldc_1khz();
 	}
 	else if(cnt == 9)
 	{
@@ -99,6 +98,7 @@ void timebase_inthandler()
 
 	// Keep all 10kHz functions in ITCM!
 	charger_10khz();
+	audio_10khz();
 }
 
 void init_timebase()
