@@ -21,6 +21,7 @@
 #include "run.h"
 #include "own_std.h"
 #include "drive.h"
+#include "micronavi.h"
 
 
 uint8_t conv_bat_percent(int mv)
@@ -35,7 +36,10 @@ uint8_t conv_bat_percent(int mv)
 epc_img_t mono_comp __attribute__((aligned(4)));
 epc_4dcs_t dcsa __attribute__((aligned(4)));
 epc_2dcs_t dcs2 __attribute__((aligned(4)));
+
+#ifdef USE_NARROW
 epc_4dcs_narrow_t dcsa_narrow __attribute__((aligned(4)));
+#endif
 
 void soft_err()
 {
@@ -95,9 +99,9 @@ void update_led(int sidx)
 			int g = (led_colors[sidx]&0x00ff00)>>8;
 			int b = (led_colors[sidx]&0x0000ff)>>0;
 	
-			r = (r*3)>>2;
-			g = (g*3)>>2;
-			b = (b*3)>>2;
+			r = (r*7)>>3;
+			g = (g*7)>>3;
+			b = (b*7)>>3;
 			if(r < 2 && g < 2 && b < 2)
 				led_colors[sidx] = 0;
 			else
@@ -124,7 +128,7 @@ uint16_t measure_stray()
 	return stray;
 }
 
-#define IFDBG if(sidx == 999)
+#define IFDBG if(sidx == 7)
 
 
 //static int round_of_longer_exposure;
@@ -163,15 +167,30 @@ void run_cycle()
 	static int16_t wid_hdr20[2][TOF_XS*TOF_YS] __attribute__((section(".dtcm_bss")));
 	static int16_t wid_hdr31[2][TOF_XS*TOF_YS];
 
+#ifdef USE_NARROW
 	static int16_t nar_hdr20[2][TOF_XS_NARROW*TOF_YS_NARROW] __attribute__((section(".dtcm_bss")));
 	static int16_t nar_hdr31[2][TOF_XS_NARROW*TOF_YS_NARROW] __attribute__((section(".dtcm_bss")));
+#endif
 
 	static uint16_t lofreq_wid_dist[TOF_XS*TOF_YS];
 
 	static uint8_t  wid_ampl[TOF_XS*TOF_YS];
 	static uint16_t wid_dist[TOF_XS*TOF_YS];
+
+#ifdef USE_NARROW
 	static uint8_t  nar_ampl[TOF_XS_NARROW*TOF_YS_NARROW];
 	static uint16_t nar_dist[TOF_XS_NARROW*TOF_YS_NARROW];
+#endif
+
+
+	for(int i=0; i<10; i++)
+	{
+		if(!sensors_in_use[i])
+			continue;
+
+		tof_mux_select(i);
+		update_led(i);
+	}
 
 
 
@@ -190,11 +209,16 @@ void run_cycle()
 	{
 		sidx = 0;
 //		round_of_longer_exposure = ~round_of_longer_exposure;
-		extern int obstacle_front, obstacle_back, obstacle_left, obstacle_right;
-		obstacle_front = 0;
-		obstacle_back = 0;
-		obstacle_left = 0;
-		obstacle_right = 0;
+		extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
+		extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
+		obstacle_front_near = 0;
+		obstacle_back_near = 0;
+		obstacle_left_near = 0;
+		obstacle_right_near = 0;
+		obstacle_front_far = 0;
+		obstacle_back_far = 0;
+		obstacle_left_far = 0;
+		obstacle_right_far = 0;
 	}
 	if(!sensors_in_use[sidx])
 		return;
@@ -209,9 +233,10 @@ void run_cycle()
 
 	adjust();
 
-	int gen_data = 0;
+	int gen_data = 1;
 
-	gen_data = 1;
+//	if(sidx&1)
+//		gen_data = 1;
 
 	if(is_tx_overrun())
 	{
@@ -281,6 +306,7 @@ void run_cycle()
 
 	const int intlen_mults[4] = {12, 6, 4, 3}; // with these, unit is always 0.6us.
 
+
 	tof_mux_select(sidx);
 	adjust();
 
@@ -309,7 +335,6 @@ void run_cycle()
 	else if(fine_steps > 799) fine_steps = 799;
 
 
-	update_led(sidx);
 /*
 	IFDBG
 	{
@@ -343,27 +368,12 @@ void run_cycle()
 	TOF_TS(2);
 
 
-/*
-	if(test_cnt == 0)
-	{
-		if(gen_data && tof_raw_dist)
-		{
-			tof_raw_dist->sensor_idx = test_cnt;
-			tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
-			memcpy(tof_raw_dist->dist, lofreq_wid_dist, sizeof tof_raw_dist->dist);
-			memset(tof_raw_dist->dist_narrow, 0, sizeof tof_raw_dist->dist_narrow);
-		}
+	#ifndef HDR_FACTOR
+		#define HDR_FACTOR 8
+	#endif
 
-		if(gen_data && tof_raw_ampl8)
-		{
-			tof_raw_ampl8->sensor_idx = test_cnt;
-			memset(tof_raw_ampl8->ampl, 0, sizeof tof_raw_ampl8->ampl);
-			memset(tof_raw_ampl8->ampl_narrow, 0, sizeof tof_raw_ampl8->ampl_narrow);
-		}
-	}
-*/
-
-	#define SUPERSHORT_US 25
+	#define SUPERSHORT1_US 12
+	#define SUPERSHORT2_US (SUPERSHORT1_US*HDR_FACTOR)
 
 	// SUPER SHORT WIDE
 
@@ -372,7 +382,7 @@ void run_cycle()
 	epc_ena_wide_leds(); dcmi_crop_wide(); block_epc_i2c(4);
 
 	epc_clk_div(0); block_epc_i2c(4);
-	epc_intlen(intlen_mults[0], INTUS(SUPERSHORT_US*bubblegum)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(SUPERSHORT1_US*bubblegum)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
@@ -385,12 +395,42 @@ void run_cycle()
 
 	TOF_TS(3);
 
-
 	conv_4dcs_to_2dcs(wid_hdr20[0], wid_hdr31[0], &dcsa, &mono_comp);
+
+	epc_intlen(intlen_mults[0], INTUS(SUPERSHORT2_US*bubblegum)); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
+	epc_trig();
+
+
+	int supershort_avg_ampl_x256 = calc_avg_ampl_x256(wid_hdr20[0], wid_hdr31[0]);
+
+	IFDBG
+	{
+//		DBG_PR_VAR_I32(supershort_avg_ampl_x256);
+//		DBG_PR_VAR_I32(base_exp);
+	}
+
+
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
+
+	conv_4dcs_to_2dcs(wid_hdr20[1], wid_hdr31[1], &dcsa, &mono_comp);
+
 
 	TOF_TS(4);
 
-	int supershort_avg_ampl_x256 = calc_avg_ampl_x256(wid_hdr20[0], wid_hdr31[0]);
+
+	int ss_saturated = (int)supershort_avg_ampl_x256;
+	ss_saturated *= 4;
+	if(ss_saturated > 6*256) ss_saturated = 6*256;
+	
+	int base_exp = SUPERSHORT1_US + sq(6*256 - ss_saturated)/4000;
+
+
+
+
+
+
 
 	TOF_TS(5);
 
@@ -401,29 +441,8 @@ void run_cycle()
 
 	// HDR test, wide
 
-	#ifndef HDR_FACTOR
-		#define HDR_FACTOR 8
-	#endif
 
 
-	/*
-	SSavg	new base
-	6+	25 (todo: skip imaging the first, reuse supershort)
-	0	614
-
-
-	*/
-
-	int ss_saturated = (int)supershort_avg_ampl_x256;
-	if(ss_saturated > 6*256) ss_saturated = 6*256;
-	
-	int base_exp = SUPERSHORT_US + sq(6*256 - ss_saturated)/4000;
-
-	IFDBG
-	{
-		DBG_PR_VAR_I32(supershort_avg_ampl_x256);
-		DBG_PR_VAR_I32(base_exp);
-	}
 
 	int base_exp_nar = base_exp/3;
 
@@ -440,9 +459,38 @@ void run_cycle()
 	adjust();
 
 	// Do the previous calc:
-	compensated_nonhdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, wid_hdr20[0], wid_hdr31[0]);
-	tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 15, 255, vox_ref_x, vox_ref_y);
+//	compensated_nonhdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, wid_hdr20[0], wid_hdr31[0]);
+	compensated_hdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, wid_hdr20[0], wid_hdr31[0], wid_hdr20[1], wid_hdr31[1]);
 
+//	if(sidx==5)
+		tof_to_voxmap(wid_ampl, wid_dist, 0, sidx, 5, 255, vox_ref_x, vox_ref_y);
+
+#if 0
+	if(gen_data && tof_raw_dist)
+	{
+		tof_raw_dist->sensor_idx = sidx;
+		tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
+		memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
+		#ifdef USE_NARROW
+		memcpy(tof_raw_dist->dist_narrow, nar_dist, sizeof tof_raw_dist->dist_narrow);
+		#else
+		memset(tof_raw_dist->dist_narrow, 0, sizeof tof_raw_dist->dist_narrow);
+		#endif
+//		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
+//		tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
+	}
+
+	if(gen_data && tof_raw_ampl8)
+	{
+		tof_raw_ampl8->sensor_idx = sidx;
+		memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
+		#ifdef USE_NARROW
+		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
+		#else
+		memset(tof_raw_ampl8->ampl_narrow, 0, sizeof tof_raw_ampl8->ampl_narrow);
+		#endif
+	}
+#endif
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
@@ -472,6 +520,7 @@ void run_cycle()
 	TOF_TS(10);
 
 
+#ifdef USE_NARROW
 
 	// HDR test, narrow
 
@@ -511,30 +560,16 @@ void run_cycle()
 
 	TOF_TS(15);
 
+#endif
+
 	adjust();
 
-/*
-	if(test_cnt == 1)
-	{
-		if(gen_data && tof_raw_dist)
-		{
-			tof_raw_dist->sensor_idx = test_cnt;
-			tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
-			memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
-			memcpy(tof_raw_dist->dist_narrow, nar_dist, sizeof tof_raw_dist->dist_narrow);
-		}
-
-		if(gen_data && tof_raw_ampl8)
-		{
-			tof_raw_ampl8->sensor_idx = test_cnt;
-			memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
-			memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
-		}
-	}
-*/
 
 	dealias_20mhz(wid_dist, lofreq_wid_dist);
+
+#ifdef USE_NARROW
 	dealias_20mhz_narrow(nar_dist, lofreq_wid_dist);
+#endif
 
 	TOF_TS(16);
 
@@ -561,6 +596,9 @@ void run_cycle()
 
 
 	int32_t widnar_corr = 0;
+
+#ifdef USE_NARROW
+
 	int widnar_ret;
 	widnar_ret = calc_widnar_correction(&widnar_corr, wid_ampl, wid_dist, nar_ampl, nar_dist);
 
@@ -576,43 +614,43 @@ void run_cycle()
 			widnar_corr = (widnar_corr*3)/4;
 	}
 
-
-	TOF_TS(17);
-
 	IFDBG
 	{
 		DBG_PR_VAR_I32(widnar_ret);
 		DBG_PR_VAR_I32(widnar_corr);
 	}
 
-	uint8_t min_ampl = 3;
-	uint8_t max_ampl = 254;
-/*	
-	if(round_of_longer_exposure)
-	{
-		min_ampl = 6;
-		max_ampl = 128;
-	}
-	else
-	{
-		min_ampl = 12;
-		max_ampl = 254;
-	}
-*/
+#endif
+
+
+//	if(widnar_corr < -100 || widnar_corr > 100)
+//	{
+//		DBG_PR_VAR_I32(widnar_ret);
+//		DBG_PR_VAR_I32(widnar_corr);
+//	}
+
+	TOF_TS(17);
+
+
 	adjust();
 
 //	if(sidx == 5)
-	tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, min_ampl, max_ampl, vox_ref_x, vox_ref_y);
+		tof_to_voxmap(wid_ampl, wid_dist, widnar_corr, sidx, 3, 254, vox_ref_x, vox_ref_y);
 
 	TOF_TS(18);
 
 
+#if 1
 	if(gen_data && tof_raw_dist)
 	{
 		tof_raw_dist->sensor_idx = sidx;
 		tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
 		memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
+		#ifdef USE_NARROW
 		memcpy(tof_raw_dist->dist_narrow, nar_dist, sizeof tof_raw_dist->dist_narrow);
+		#else
+		memset(tof_raw_dist->dist_narrow, 0, sizeof tof_raw_dist->dist_narrow);
+		#endif
 //		tof_raw_dist->wide_stray_estimate_adc = wide_stray;
 //		tof_raw_dist->narrow_stray_estimate_adc = narrow_stray;
 	}
@@ -621,9 +659,13 @@ void run_cycle()
 	{
 		tof_raw_ampl8->sensor_idx = sidx;
 		memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
+		#ifdef USE_NARROW
 		memcpy(tof_raw_ampl8->ampl_narrow, nar_ampl, sizeof tof_raw_ampl8->ampl_narrow);
+		#else
+		memset(tof_raw_ampl8->ampl_narrow, 0, sizeof tof_raw_ampl8->ampl_narrow);
+		#endif
 	}
-
+#endif
 
 	if(gen_data && tof_diagnostics)
 	{
@@ -690,6 +732,8 @@ void run_cycle()
 
 	adjust();
 
+	micronavi_fsm();
+
 
 
 //	SKIP_TOF:;
@@ -719,7 +763,13 @@ void run_cycle()
 //		delay_ms(10);
 		adjust();
 	}	
-	
+/*	
+	if(sidx==9)
+	{
+		extern void bldc_print_debug();
+		bldc_print_debug();
+	}
+*/
 	//profile_cpu_blocking_20ms();
 
 	err_cnt -= 1;

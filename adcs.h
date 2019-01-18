@@ -146,8 +146,8 @@ extern uint32_t vbat_per_vinbus_mult;
 
 #define AWD_VBAT_LO    MV_TO_VBAT_MEAS(15600) // 15.6V = 2.6 V/cell
 //#define AWD_VBAT_LO    (0)
-#define AWD_VBAT_HI    MV_TO_VBAT_MEAS(26000) // 26.0V = 4.33 V/cell -> 16165 LSBs
-//#define AWD_VBAT_HI    (16383)
+//#define AWD_VBAT_HI    MV_TO_VBAT_MEAS(26000) // 26.0V = 4.33 V/cell -> 16165 LSBs  -- seems to trig at 24.68V due to noise??
+#define AWD_VBAT_HI    (16383)
 
 #define AWD_CHA_VINBUS_LO   MV_TO_CHA_VINBUS_MEAS(14800) // 14.8V -> more than diode drop less from VBAT low limit
 

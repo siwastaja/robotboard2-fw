@@ -115,6 +115,7 @@
 #include "charger.h"
 #include "adcs.h"
 #include "own_std.h"
+#include "audio.h"
 
 
 #define HRTIM_MASTER HRTIM1->sMasterRegs
@@ -258,6 +259,7 @@ void charger_safety_errhandler()
 	uart_print_string_blocking(__func__);
 	uart_print_string_blocking("\r\n");
 
+/*
 	uart_print_string_blocking("MASTER ISR = ");
 	o_utoa32_hex(HRTIM_MASTER.MISR, printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
@@ -281,6 +283,7 @@ void charger_safety_errhandler()
 	uart_print_string_blocking("TIME ISR = ");
 	o_utoa32_hex(HRTIM_CHE.TIMxISR, printbuf); uart_print_string_blocking(printbuf);
 	uart_print_string_blocking("\r\n");
+*/
 
 	if(ADC1->ISR & (1UL<<7)) // ADC1 AWD1
 		uart_print_string_blocking("\r\nADC1 AWD1: Vbat out of range\r\n");
@@ -301,6 +304,7 @@ void charger_safety_errhandler()
 	uart_print_string_blocking("\r\nADC1 DR = "); o_utoa16_fixed(ADC1->DR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 	uart_print_string_blocking("\r\nADC2 DR = "); o_utoa16_fixed(ADC2->DR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 
+/*
 	uart_print_string_blocking("DMA for ADC1: ");
 
 	if(ADC1_DMA_STREAM->CR & 1) uart_print_string_blocking("STREAM ON"); else uart_print_string_blocking("STREAM OFF"); 
@@ -311,9 +315,8 @@ void charger_safety_errhandler()
 	if(ADC2_DMA_STREAM->CR & 1) uart_print_string_blocking("STREAM ON"); else uart_print_string_blocking("STREAM OFF"); 
 	uart_print_string_blocking("\r\nintflags = "); o_btoa8_fixed(DMA_INTFLAGS(ADC2_DMA, ADC2_DMA_STREAM_NUM), printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
 	uart_print_string_blocking("NDTR  = "); o_utoa16(ADC2_DMA_STREAM->NDTR, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-
-
 	uart_print_string_blocking("\r\n");
+*/
 
 	error(11);
 }
@@ -1176,6 +1179,14 @@ void charger_1khz()
 			battery_full = 1;
 		}
 
+		static int beep_cnt;
+		beep_cnt++;
+		if(beep_cnt >= 1000)
+		{
+			beep_cnt = 0;
+			beep(30, 1000, -800, 20);
+		}
+
 		was_running_cnt = 500;
 	}
 	else if(was_running_cnt > 0)
@@ -1210,6 +1221,8 @@ void charger_freerunning_fsm()
 				combined_max_output_power = 200000.0*0.93; // 186000
 				combined_max_output_current = 20000;
 				start_phab(1);
+				beep(100, 800, -400, 100);
+
 
 				if(!charger_is_running())
 				{

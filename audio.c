@@ -25,6 +25,7 @@ void init_audio()
 static int state;
 static int vol;
 static int len_100us;
+static int cnt_100us;
 static int cur_interval;
 static int interval_step;
 
@@ -32,13 +33,13 @@ void audio_10khz() __attribute__((section(".text_itcm")));
 void audio_10khz()
 {
 	static int interval_cnt;
-	static int cnt_100us;
 	static int dir;
 	if(state == 1)
 	{
 		HI(GPIOH, 12);
 		interval_cnt = 0;
 		dir = 0;
+		AUDIO_DAC = 2048;
 		state++;
 	}
 	else if(state > 1 && state < 100)
@@ -55,7 +56,7 @@ void audio_10khz()
 		}
 		else
 		{
-			int cur_interval_cmp = cur_interval>>8;
+			int cur_interval_cmp = cur_interval>>16;
 			if(cur_interval_cmp < 1) cur_interval_cmp = 1;
 
 			interval_cnt++;
@@ -86,9 +87,10 @@ void beep(int len_ms, int hz_start, int sweep, int volume) // len milliseconds, 
 	state = 1;
 
 	vol = volume;
-	cur_interval = (5000*256)/hz_start;
+	cur_interval = (5000*65536)/hz_start;
 	len_100us = len_ms*10;
 	interval_step = sweep;
+	cnt_100us = 0;
 }
 
 
@@ -96,39 +98,39 @@ void beep_test()
 {
 	while(1)
 	{
-		beep(500, 200, 0, 1000);
+		beep(500, 200, 0, 600);
 		delay_ms(1000);
-		beep(500, 200, 0, 1000);
+		beep(500, 200, 0, 600);
 		delay_ms(1000);
-		beep(500, 200, +1, 1000);
+		beep(500, 200, +20, 600);
 		delay_ms(1000);
-		beep(500, 200, -1, 1000);
+		beep(500, 200, -20, 600);
 		delay_ms(1000);
-		beep(500, 200, +4, 1000);
+		beep(500, 200, +80, 600);
 		delay_ms(1000);
-		beep(500, 200, -4, 1000);
+		beep(500, 200, -80, 600);
 		delay_ms(1000);
-		beep(500, 200, +16, 1000);
+		beep(500, 200, +320, 600);
 		delay_ms(1000);
-		beep(500, 200, -16, 1000);
+		beep(500, 200, -320, 600);
 
 		delay_ms(1000);
 
-		beep(500, 800, 0, 1000);
+		beep(500, 800, 0, 600);
 		delay_ms(1000);
-		beep(500, 800, 0, 1000);
+		beep(500, 800, 0, 600);
 		delay_ms(1000);
-		beep(500, 800, +1, 1000);
+		beep(500, 800, +20, 600);
 		delay_ms(1000);
-		beep(500, 800, -1, 1000);
+		beep(500, 800, -20, 600);
 		delay_ms(1000);
-		beep(500, 800, +4, 1000);
+		beep(500, 800, +80, 600);
 		delay_ms(1000);
-		beep(500, 800, -4, 1000);
+		beep(500, 800, -80, 600);
 		delay_ms(1000);
-		beep(500, 800, +16, 1000);
+		beep(500, 800, +320, 600);
 		delay_ms(1000);
-		beep(500, 800, -16, 1000);
+		beep(500, 800, -320, 600);
 		delay_ms(1000);
 	}
 }

@@ -45,7 +45,9 @@ void set_top_speed_max(int old_style_value);
 
 void straight_rel(int32_t mm);
 void rotate_rel(int32_t ang32);
-void rotate_and_straight_rel(int32_t ang32, int32_t mm);
+void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_first);
+void obstacle_avoidance_ignore(int dir, int ms);
 
+int32_t get_remaining_lin();
 
 

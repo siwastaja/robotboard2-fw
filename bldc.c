@@ -207,7 +207,7 @@ void bldc_1khz()
 #define STOP_LEN 6000 // approx half a second.
 #define STOP_THRESHOLD (SUBSTEPS*3/2)
 
-volatile int dbg_err, dbg_sin_mult, dbg_m;
+volatile int dbg_err0, dbg_err1, dbg_sin_mult, dbg_m;
 
 volatile int stop_state_dbg[2];
 void bldc0_inthandler() __attribute__((section(".text_itcm")));
@@ -266,6 +266,8 @@ void bldc0_inthandler()
 
 
 	int32_t err = bldc_pos_set[0] - bldc_pos[0];
+	dbg_err0 = err;
+
 
 	if(err < 0 ) reverse = 1; else reverse = 0;
 
@@ -298,7 +300,6 @@ void bldc0_inthandler()
 		{
 			if(!(cnt & 63))
 			{
-				dbg_err = err;
 				if(err > ERR_SAT) err = ERR_SAT;
 				else if(err < -ERR_SAT) err = -ERR_SAT;
 
@@ -355,14 +356,18 @@ void bldc0_inthandler()
 		int32_t phshift = PH90SHIFT/STOP_LEN * (STOP_LEN-stop_state);
 		loc = base_hall_aims[stop_initial_hall_pos] + timing_shift + (stop_reverse?(-1*phshift):(phshift));
 		sin_mult = 40;
-		if(--stop_state == 0)
-			run[0] = 0;
 
 		// Went out of spec, don't stop
-		if(err < -STOP_THRESHOLD || err > STOP_THRESHOLD)
+		if(err < -STOP_THRESHOLD || err > STOP_THRESHOLD || !wanna_stop[0])
 		{
 			sin_mult = 0;
 			stop_state = 0;
+		}
+		else
+		{
+			if(--stop_state == 0)
+				run[0] = 0;
+
 		}
 	}
 
@@ -471,6 +476,8 @@ void bldc1_inthandler()
 
 
 	int32_t err = bldc_pos_set[1] - bldc_pos[1];
+	dbg_err1 = err;
+
 
 	if(err < 0 ) reverse = 1; else reverse = 0;
 
@@ -556,13 +563,17 @@ void bldc1_inthandler()
 		int32_t phshift = PH90SHIFT/STOP_LEN * (STOP_LEN-stop_state);
 		loc = base_hall_aims[stop_initial_hall_pos] + timing_shift + (stop_reverse?(-1*phshift):(phshift));
 		sin_mult = 40;
-		if(--stop_state == 0)
-			run[1] = 0;
-
-		if(err < -STOP_THRESHOLD || err > STOP_THRESHOLD)
+		// Went out of spec, don't stop
+		if(err < -STOP_THRESHOLD || err > STOP_THRESHOLD || !wanna_stop[1])
 		{
 			sin_mult = 0;
 			stop_state = 0;
+		}
+		else
+		{
+			if(--stop_state == 0)
+				run[1] = 0;
+
 		}
 	}
 
@@ -632,9 +643,11 @@ void motor_run(int m)
 	else
 		MC1_EN_GATE();
 
+	DIS_IRQ();
 	bldc_pos_set[m] = bldc_pos[m];
 	run[m] = 1;
 	wanna_stop[m] = 0;
+	ENA_IRQ();
 }
 
 void motor_let_stop(int m) __attribute__((section(".text_itcm")));
@@ -648,8 +661,10 @@ void motor_stop_now(int m) __attribute__((section(".text_itcm")));
 void motor_stop_now(int m)
 {
 	if(m < 0 || m > 1) error(122);
+	DIS_IRQ();
 	run[m] = 0;
 	bldc_pos_set[m] = bldc_pos[m];
+	ENA_IRQ();
 }
 
 void motor_torque_lim(int m, int percent) __attribute__((section(".text_itcm")));
@@ -688,6 +703,22 @@ int get_motor_torque(int m)
 	return (curr_info_ma[m]*100)/25000;
 }
 
+void bldc_print_debug()
+{
+	uart_print_string_blocking("\r\n");
+	DBG_PR_VAR_I32(run[0]);
+	DBG_PR_VAR_I32(run[1]);
+	DBG_PR_VAR_I32(wanna_stop[0]);
+	DBG_PR_VAR_I32(wanna_stop[1]);
+	DBG_PR_VAR_I32(bldc_pos_set[0]);
+	DBG_PR_VAR_I32(bldc_pos[0]);
+	DBG_PR_VAR_I32(dbg_err0);
+	DBG_PR_VAR_I32(bldc_pos_set[1]);
+	DBG_PR_VAR_I32(bldc_pos[1]);
+	DBG_PR_VAR_I32(dbg_err1);
+}
+
+#if 0
 void bldc_test()
 {
 	init_cpu_profiler();
@@ -874,7 +905,7 @@ void bldc_test()
 
 	}
 }
-
+#endif
 /*
 
 ADC1 is dedicated to motor phase current measurements (see adc.h)

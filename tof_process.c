@@ -140,7 +140,8 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 //#define DO_AMB_CORR
 
 //#define DBGPR
-//#define PIX (30*160+80)
+//#define DBGPRVOX
+#define PIX (30*160+80)
 
 void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg)  __attribute__((section(".text_itcm")));
 void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg)
@@ -1134,8 +1135,8 @@ sensor_mount_t sensor_mounts[N_SENSORS] =
  /*2:                */ { 2,  -235,   215, DEGTOANG16(    66.4), DEGTOANG16( 2.4),       310  },
  /*3:                */ { 1,  -380,   215, DEGTOANG16(    86.5), DEGTOANG16( 2.9),       310  },
  /*4:                */ { 2,  -522,   103, DEGTOANG16(   157.4), DEGTOANG16( 4.9),       280  },
- /*5:                */ { 1,  -522,    35, DEGTOANG16(   183.4), DEGTOANG16( 7.9),       290  },
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(   206.8), DEGTOANG16( 5.4),       300  },
+ /*5:                */ { 1,  -522,    35, DEGTOANG16(   183.4), DEGTOANG16( 7.9),       260  },
+ /*6:                */ { 1,  -522,  -103, DEGTOANG16(   206.8), DEGTOANG16( 5.4),       290  },
  /*7:                */ { 2,  -380,  -215, DEGTOANG16(   268.5), DEGTOANG16( 4.4),       280  },
  /*8:                */ { 1,  -235,  -215, DEGTOANG16(   294.9), DEGTOANG16( 5.4),       300  },
  /*9:                */ { 2,   130,  -103, DEGTOANG16(   334.9), DEGTOANG16( -0.9),      320  }
@@ -1296,7 +1297,7 @@ void tof_enable_chafind_datapoints()
 
 void tof_disable_chafind_datapoints()
 {
-	chafind_enabled = 1;
+	chafind_enabled = 0;
 }
 
 
@@ -1361,14 +1362,15 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 		((lut_cos_from_u16(sensor_mounts[sidx].ang_rel_robot)*pitch_ang)>>SIN_LUT_RESULT_SHIFT) +
 		((lut_sin_from_u16(sensor_mounts[sidx].ang_rel_robot)*roll_ang)>>SIN_LUT_RESULT_SHIFT);
 
+	#ifdef DBGPRVOX
 
-//	#define IN_01_DEG (ANG_0_1_DEG/65536)
-//	DBG_PR_VAR_U16(sidx);
-//	DBG_PR_VAR_I16((int16_t)sensor_mounts[sidx].vert_ang_rel_ground/IN_01_DEG);
-//	DBG_PR_VAR_I16(pitch_ang/IN_01_DEG);
-//	DBG_PR_VAR_I16(roll_ang/IN_01_DEG);
-//	DBG_PR_VAR_I16((int16_t)global_sensor_ver_ang/IN_01_DEG);
-
+		#define IN_01_DEG (ANG_0_1_DEG/65536)
+		DBG_PR_VAR_U16(sidx);
+		DBG_PR_VAR_I16((int16_t)sensor_mounts[sidx].vert_ang_rel_ground/IN_01_DEG);
+		DBG_PR_VAR_I16(pitch_ang/IN_01_DEG);
+		DBG_PR_VAR_I16(roll_ang/IN_01_DEG);
+		DBG_PR_VAR_I16((int16_t)global_sensor_ver_ang/IN_01_DEG);
+	#endif
 
 
 
@@ -1391,7 +1393,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 
 
 
-	#ifdef DBGPR
+	#ifdef DBGPRVOX
 
 		DBG_PR_VAR_I32(robot_ang);
 		DBG_PR_VAR_I32(robot_x);
@@ -1405,7 +1407,8 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 	#endif
 
 
-	extern int obstacle_front, obstacle_back, obstacle_left, obstacle_right;
+	extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
+	extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
 
 	int insertion_cnt = 0;
 	for(int py=1; py<TOF_YS-1; py++)
@@ -1449,9 +1452,10 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 
 				uint16_t hor_ang, ver_ang;
 
-				#ifdef DBGPR
+				#ifdef DBGPRVOX
 
-					DBG_PR_VAR_I32(d);
+					if(py*TOF_XS+px == PIX)
+						DBG_PR_VAR_I32(d);
 				#endif
 
 				// TODO: This optimizes out once we have sensor-by-sensor geometric tables;
@@ -1481,21 +1485,25 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 					default: error(145); while(1); // to tell the compiler we always set hor_ang, ver_ang
 				}
 
-				#ifdef DBGPR
+				#ifdef DBGPRVOX
 
-					DBG_PR_VAR_U16(hor_ang);
-					DBG_PR_VAR_U16(ver_ang);
-
+					if(py*TOF_XS+px == PIX)
+					{
+						DBG_PR_VAR_U16(hor_ang);
+						DBG_PR_VAR_U16(ver_ang);
+					}
 				#endif
 
 				uint16_t comb_hor_ang = hor_ang + global_sensor_hor_ang;
 				uint16_t comb_ver_ang = ver_ang + global_sensor_ver_ang;
 
-				#ifdef DBGPR
+				#ifdef DBGPRVOX
 
-					DBG_PR_VAR_U16(comb_hor_ang);
-					DBG_PR_VAR_U16(comb_ver_ang);
-
+					if(py*TOF_XS+px == PIX)
+					{
+						DBG_PR_VAR_U16(comb_hor_ang);
+						DBG_PR_VAR_U16(comb_ver_ang);
+					}
 				#endif
 
 				int32_t x = (((int64_t)d * (int64_t)lut_cos_from_u16(comb_ver_ang) * (int64_t)lut_cos_from_u16(comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + global_sensor_x;
@@ -1511,44 +1519,66 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 				int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
 
 
-				#ifdef DBGPR
+				#ifdef DBGPRVOX
 
-					DBG_PR_VAR_I32(x);
-					DBG_PR_VAR_I32(y);
-					DBG_PR_VAR_I32(z);
+					if(py*TOF_XS+px == PIX)
+					{
+						DBG_PR_VAR_I32(x);
+						DBG_PR_VAR_I32(y);
+						DBG_PR_VAR_I32(z);
+					}
 				#endif
 
 
 				// VACUUM APP: Ignore the nozzle
-				#define NOZZLE_WIDTH 630
-				if(local_z < 150 && local_x < 300 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+				#define NOZZLE_WIDTH 760
+				if(local_z < 150 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
 					continue;
 
 				#define OBST_AVOID_WIDTH 600
 
-				if(local_z > 200 && local_z < 1200)
+				if(local_z > 120 && local_z < 1200)
 				{
 					if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
 					{
-						if(local_x > 300 && local_x < 550)
-							obstacle_front++;
+						if(local_x >= 350 && local_x < 450)
+							obstacle_front_near++;
+						if(local_x >= 450 && local_x < 550)
+							obstacle_front_far++;
 
-						if(local_x > -750 && local_x < -500)
-							obstacle_back++;
+						if(local_x <= -550 && local_x > -700)
+							obstacle_back_near++;
+						if(local_x <= -700 && local_x > -800)
+							obstacle_back_far++;
 					}
 
-					if(local_x > -500 && local_x < -200)
+					if(local_x > -490 && local_x < -200)
 					{
-						if(local_y > 200 && local_y < 450)
-							obstacle_left++;
+						if(local_y >= 200 && local_y < 400)
+							obstacle_left_near++;
 
-						if(local_y < -200 && local_y > -450)
-							obstacle_right++;
+						if(local_y >= 400 && local_y < 500)
+							obstacle_left_far++;
+					}
+
+
+					if(local_x > -440 && local_x < -200)
+					{
+						if(local_y <= -200 && local_y > -400)
+							obstacle_right_near++;
+
+						if(local_y <= -400 && local_y > -500)
+							obstacle_right_far++;
+
 
 					}
 				}
 
-				if(chafind_enabled && local_z > 150 && local_z < 300)
+				// Completely ignore nozzle area obstacles for mapping, but give the floor if visible!
+				if(local_z > 100 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+					continue;
+
+				if(chafind_enabled && local_z > 120 && local_z < 240)
 				{
 					micronavi_point_in_chafind(local_x, local_y, local_z, 0, 0);
 				}
@@ -1572,7 +1602,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 							x /= reso;
 							y /= reso;
 
-							#ifdef DBGPR
+							#ifdef DBGPRVOX
 
 								DBG_PR_VAR_I32(seg);
 								DBG_PR_VAR_I32(x);
@@ -1599,7 +1629,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int32_t widnar_corr, i
 		}
 	}
 
-	#ifdef DBGPR
+	#ifdef DBGPRVOX
 		DBG_PR_VAR_I32(insertion_cnt);
 	#endif
 }

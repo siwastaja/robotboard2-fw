@@ -547,8 +547,8 @@ void main()
 		init_tofcal_ambient();
 	#endif
 
-	extern void beep_test();
-	beep_test();
+//	extern void beep_test();
+//	beep_test();
 
 	while(1)
 	{

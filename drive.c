@@ -9,8 +9,9 @@
 #include "math.h"
 #include "../robotsoft/api_board_to_soft.h"
 #include "../robotsoft/api_soft_to_board.h"
+#include "audio.h"
 
-//#define LEDS_ON
+#define LEDS_ON
 
 #define G_DC_MOTDET_TH 250 // 100 generates false noise detections about every 2-3 seconds
 #define G_AC_MOTDET_TH (150*256) // threshold after DC offset correction
@@ -46,7 +47,8 @@ void new_target(hires_pos_t pos)
 	target_pos = pos;
 }
 
-int obstacle_front, obstacle_back, obstacle_right, obstacle_left; // Written to in tof_process.c
+int obstacle_front_near, obstacle_back_near, obstacle_right_near, obstacle_left_near; // Written to in tof_process.c
+int obstacle_front_far, obstacle_back_far, obstacle_right_far, obstacle_left_far; // Written to in tof_process.c
 
 int motors_enabled = 0;
 
@@ -57,16 +59,15 @@ int new_direction;
 int backmode;
 
 static int run;
-static int do_start;
 
 int is_driving()
 {
 	return run;
 }
 
-static double max_ang_speed = 12.0; // steps per cycle // was 15.0 -> 10.0
-static double min_ang_speed = 2.0;
-static double max_lin_speed = 20.0; // was 30.0 -> 15.0
+static double max_ang_speed = 10.0; // steps per cycle // 8.0
+static double min_ang_speed = 3.0;
+static double max_lin_speed = 40.0;
 static double min_lin_speed = 5.0;
 
 void set_top_speed_max(int old_style_value)
@@ -83,22 +84,32 @@ void set_top_speed_max(int old_style_value)
 static int mode_xy;
 static uint32_t ang_to_target;
 
+volatile int lock_processing;
+
+static int stop_indicators;
+
+static int accurot;
+
 
 void cmd_go_to(s2b_move_abs_t* m)
 {
+	lock_processing = 1;
 	target_pos.x = (int64_t)m->x<<16;
 	target_pos.y = (int64_t)m->y<<16;
 	backmode = m->backmode;
 	new_direction = 1;
 	cur_id = m->id;
 	micronavi_status = 0;
-	obstacle_front = 0;
-	obstacle_back = 0;
-	obstacle_left = 0;
-	obstacle_right = 0;
 
+	accurot = 0;
 	mode_xy = 1;
-	do_start = 1;
+//	do_start = 1;
+
+	lock_processing = 0;
+
+	if(stop_indicators == 0)
+		beep(75, 800, -600, 30);
+
 }
 
 #if 0
@@ -121,12 +132,23 @@ void straight_rel(int32_t mm)
 
 static int64_t store_lin_err;
 
+int32_t get_remaining_lin()
+{
+	return store_lin_err>>16;
+}
+
 void straight_rel(int32_t mm)
 {
 	ang_to_target = cur_pos.ang;
 	store_lin_err = (int64_t)mm<<16;
 	mode_xy = 0;
-	do_start = 1;
+
+	if(stop_indicators == 0)
+		beep(75, 800, -600, 30);
+
+	accurot = 1;
+
+//	do_start = 1;
 }
 
 void rotate_rel(int32_t ang32)
@@ -134,15 +156,27 @@ void rotate_rel(int32_t ang32)
 	ang_to_target = cur_pos.ang + (uint32_t)ang32;
 	store_lin_err = 0;
 	mode_xy = 0;
-	do_start = 1;
+
+	if(stop_indicators == 0)
+		beep(75, 800, -600, 30);
+
+	accurot = 1;
+
+//	do_start = 1;
 }
 
-void rotate_and_straight_rel(int32_t ang32, int32_t mm)
+void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_first)
 {
 	ang_to_target = cur_pos.ang + (uint32_t)ang32;
 	store_lin_err = (int64_t)mm<<16;
 	mode_xy = 0;
-	do_start = 1;
+
+	if(stop_indicators == 0)
+		beep(75, 800, -600, 30);
+
+	accurot = accurate_rotation_first;
+
+//	do_start = 1;
 }
 
 void cmd_motors(int enabled)
@@ -195,14 +229,33 @@ static void stop()
 	target_pos = cur_pos;
 	new_direction = 0;
 	run = 0;
+	store_lin_err = 0;
+//	do_start = 0;
 	ang_to_target = cur_pos.ang;
 	backmode = 0;
 }
 
 void cmd_stop_movement()
 {
+	lock_processing = 1;
 	stop();
 	micronavi_status = 0;
+	lock_processing = 0;
+}
+
+static int ignore_front, ignore_left, ignore_back, ignore_right;
+
+void obstacle_avoidance_ignore(int dir, int ms)
+{
+	ms *= 4;
+	if(dir==0)
+		ignore_front = ms;
+	else if(dir==1)
+		ignore_left = ms;
+	else if(dir==2)
+		ignore_back = ms;
+	else if(dir==3)
+		ignore_right = ms;
 }
 
 static int err_cnt;
@@ -453,6 +506,17 @@ void drive_handler()
 
 
 
+
+
+
+
+	if(lock_processing)
+		return;
+
+	
+
+
+
 	int64_t lin_err;
 
 	int reverse = 0;
@@ -465,7 +529,7 @@ void drive_handler()
 		lin_err = sqrt(sq((double)dx) + sq((double)dy));
 
 		if(lin_err > 200LL*65536LL || new_direction)
-			ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2*M_PI));
+			ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2.0*M_PI));
 	}
 	else
 	{
@@ -489,7 +553,13 @@ void drive_handler()
 
 	int32_t ang_err = cur_pos.ang - ang_to_target;
 
-	if(backmode==1 || (backmode==2 && (ang_err > 110*ANG_1_DEG || ang_err < -110*ANG_1_DEG)))
+	int auto_decision = 0;
+	if((lin_err < 300*65536 && lin_err > -300*65536) || backmode==2)
+	{
+		auto_decision = 1;
+	}
+
+	if((auto_decision && (ang_err > 90*ANG_1_DEG || ang_err < -90*ANG_1_DEG)) || (backmode==1 && !auto_decision))
 	{
 		reverse = 1;
 		ang_err = (uint32_t)ang_err + (uint32_t)(ANG_180_DEG);
@@ -497,51 +567,86 @@ void drive_handler()
 
 	static int prev_run;
 
+
 	if(reverse)
 	{
 		lin_err *= -1;
-		if(run)
-		{
-#ifdef LEDS_ON
-			led_status(4, WHITE, LED_MODE_FADE);
-			led_status(5, WHITE, LED_MODE_FADE);
-			led_status(6, WHITE, LED_MODE_FADE);
-#endif
-		}
-#ifdef LEDS_ON
-		led_status(9, BLACK, LED_MODE_FADE);
-		led_status(0, BLACK, LED_MODE_FADE);
-		led_status(1, BLACK, LED_MODE_FADE);
-#endif
 	}
-	else
+
+#ifdef LEDS_ON
+	if(stop_indicators == 0)
 	{
-#ifdef LEDS_ON
-		led_status(4, BLACK, LED_MODE_FADE);
-		led_status(5, BLACK, LED_MODE_FADE);
-		led_status(6, BLACK, LED_MODE_FADE);
-#endif
-		if(run)
+		if(reverse)
 		{
-#ifdef LEDS_ON
-			led_status(9, WHITE, LED_MODE_FADE);
-			led_status(0, WHITE, LED_MODE_FADE);
-			led_status(1, WHITE, LED_MODE_FADE);
-#endif
+			if(run)
+			{
+				led_status(4, WHITE, LED_MODE_FADE);
+				led_status(5, WHITE, LED_MODE_FADE);
+				led_status(6, WHITE, LED_MODE_FADE);
+			}
+			led_status(9, BLACK, LED_MODE_FADE);
+			led_status(0, BLACK, LED_MODE_FADE);
+			led_status(1, BLACK, LED_MODE_FADE);
+		}
+		else
+		{
+			led_status(4, BLACK, LED_MODE_FADE);
+			led_status(5, BLACK, LED_MODE_FADE);
+			led_status(6, BLACK, LED_MODE_FADE);
+			if(run)
+			{
+				led_status(9, WHITE, LED_MODE_FADE);
+				led_status(0, WHITE, LED_MODE_FADE);
+				led_status(1, WHITE, LED_MODE_FADE);
+			}
 		}
 	}
+#endif
 
 	// Over 100 meters is an error.
 	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(133);
 
+
+	static int correcting_angle = 1;
+	static int correcting_linear = 0;
+
+
+	if(accurot)
+	{
+		if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG)
+			correcting_linear = 0;
+		else if(ang_err > -3*ANG_1_DEG && ang_err < 3*ANG_1_DEG)
+			correcting_linear = 1;
+	}
+	else
+	{
+		if(ang_err < -25*ANG_1_DEG || ang_err > 25*ANG_1_DEG)
+			correcting_linear = 0;
+		else if(ang_err > -8*ANG_1_DEG && ang_err < 8*ANG_1_DEG)
+			correcting_linear = 1;
+	}
+
+
+
 	static double ang_speed;
-	double max_ang_speed_by_ang_err = 1.0 + 0.16*abso(ang_err)/ANG_1_DEG; // was 0.10*
+	double max_ang_speed_by_ang_err;
+
+	if(correcting_linear && abso(lin_err) > 100*65536)
+		max_ang_speed_by_ang_err =       0.000000040*(double)abso(ang_err);
+	else
+		max_ang_speed_by_ang_err = 1.0 + 0.000000040*(double)abso(ang_err);
+
+
 	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
 
 	static double lin_speed;
 	double max_lin_speed_by_lin_err = 5.0 + 0.05*(double)abso((lin_err>>16)); // 400mm error -> speed unit 20
-	double max_lin_speed_by_ang_err = 100.0 / (abso(ang_err)/ANG_1_DEG); // 10 deg error -> max lin speed 10 units.
+	double max_lin_speed_by_ang_err;
 
+	if(accurot)
+		max_lin_speed_by_ang_err = ((double)ANG_1_DEG*50.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 5 units.
+	else
+		max_lin_speed_by_ang_err = ((double)ANG_1_DEG*200.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 20 units.
 
 	// Calculate the target wheel positions to correct the measured angular error
 	// In theory, this movement produces the "correct" end result automatically
@@ -555,22 +660,8 @@ void drive_handler()
 	int32_t delta_mpos_ang[2];
 	int32_t delta_mpos_lin[2];
 
-	int correcting_angle = 0;
-	int correcting_linear = 0;
-
-	if(ang_err < -10*ANG_1_DEG || ang_err > 10*ANG_1_DEG)
-	{
-		correcting_angle = 1;
-		correcting_linear = 0;
-	}
-	else
-	{
-		correcting_angle = 1;
-		correcting_linear = 1;
-	}
-
-	delta_mpos_ang[0] = 100*(ang_err/ANG_1_DEG);
-	delta_mpos_ang[1] = 100*(ang_err/ANG_1_DEG);
+	delta_mpos_ang[0] = (ang_err/ANG_0_01_DEG);
+	delta_mpos_ang[1] = (ang_err/ANG_0_01_DEG);
 
 	delta_mpos_lin[0] = lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
 	delta_mpos_lin[1] = -1*lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
@@ -580,38 +671,26 @@ void drive_handler()
 	{	
 		if(ang_speed < max_ang_speed) ang_speed *= 1.004;
 	}
-	else
-	{
-		if(ang_speed > min_ang_speed) ang_speed *= 1.0/1.004;
-	}
 
-	if(ang_speed > max_ang_speed_by_ang_err)
-		ang_speed = max_ang_speed_by_ang_err;
-	if(ang_speed > max_ang_speed_by_lin_err)
-		ang_speed = max_ang_speed_by_lin_err;
+	if(ang_speed > max_ang_speed || ang_speed > max_ang_speed_by_ang_err || ang_speed > max_ang_speed_by_lin_err)
+		ang_speed *= 0.985;
 
 	if(correcting_linear)
 	{	
-		if(lin_speed < max_lin_speed) lin_speed *= 1.005;
-	}
-	else
-	{
-		if(lin_speed > min_lin_speed) lin_speed *= 1.0/1.005;
+		if(lin_speed < max_lin_speed) lin_speed *= 1.010;
 	}
 
-	if(lin_speed > max_lin_speed_by_lin_err)
-		lin_speed = max_lin_speed_by_lin_err;
-	if(lin_speed > max_lin_speed_by_ang_err)
-		lin_speed = max_lin_speed_by_ang_err;
+	if(lin_speed > max_lin_speed || lin_speed > max_lin_speed_by_lin_err || lin_speed > max_lin_speed_by_ang_err)
+		lin_speed *= 0.985;
 
-	int max_mpos_err = 5*256;
+	static const int max_mpos_err = 4*256;
 	static int max_pos_err_cnt;
 	// We know the target wheel positions, but limit the rate of change
+	int ang_speed_i = (int)ang_speed;
+	int lin_speed_i = (int)lin_speed;
+	int dbg5, dbg6;
 	for(int m=0; m<2; m++)
 	{
-		int ang_speed_i = (int)ang_speed;
-		int lin_speed_i = (int)lin_speed;
-
 		int d_ang = delta_mpos_ang[m];
 		int d_lin = delta_mpos_lin[m];
 
@@ -622,9 +701,16 @@ void drive_handler()
 		else if(d_lin < -1*lin_speed_i) d_lin = -1*lin_speed_i;
 
 		int increment = d_ang + d_lin;
+		if(m==0) dbg5 = increment; else dbg6 = increment;
+
+		int32_t old_pos_err = mpos[m] - bldc_pos_set[m];
 		uint32_t new_pos = bldc_pos_set[m] + (uint32_t)increment;
-		int new_pos_err = mpos[m] - new_pos;
-		if(new_pos_err > max_mpos_err || new_pos_err < -1*max_mpos_err)
+		int32_t new_pos_err = mpos[m] - new_pos;
+
+		// If the error would grow too far, saturate the position. But, allow error-decreasing direction of change.
+		if((new_pos_err > max_mpos_err && abso(new_pos_err) > abso(old_pos_err)) ||
+		   (new_pos_err < -1*max_mpos_err && abso(new_pos_err) > abso(old_pos_err)))
+
 		{
 			max_pos_err_cnt++;
 		}
@@ -636,103 +722,143 @@ void drive_handler()
 
 
 
-	// All stopping conditions first:
-	if(ang_err > -5*ANG_1_DEG && ang_err < 5*ANG_1_DEG && lin_err < 30LL*65536LL && lin_err > -30LL*65536LL)
-	{
-//		run = 0;
-		stop();
-	}
+#define OBST_THRESHOLD 5
 
+	// All stopping conditions first:
 	if(!motors_enabled)
 	{
-//		run = 0;
 		stop();
 	}
-
-
-
-	if(lin_err > 100 && obstacle_front > 20)
+	else if(run)
 	{
-		micronavi_status |= 1UL<<0;
-		stop();
-#ifdef LEDS_ON
-		led_status(9, RED, LED_MODE_FADE);
-		led_status(0, RED, LED_MODE_FADE);
-		led_status(1, RED, LED_MODE_FADE);
-#endif
-	}
-	else if(lin_err < -100 && obstacle_back > 20)
-	{
-		micronavi_status |= 1UL<<0;
-		stop();
-#ifdef LEDS_ON
-		led_status(4, RED, LED_MODE_FADE);
-		led_status(5, RED, LED_MODE_FADE);
-		led_status(6, RED, LED_MODE_FADE);
-#endif
-	}
-	else if(ang_err > 10*ANG_1_DEG && obstacle_left > 20)
-	{
-		micronavi_status |= 1UL<<2;
-		stop();
-#ifdef LEDS_ON
-		led_status(2, RED, LED_MODE_FADE);
-		led_status(3, RED, LED_MODE_FADE);
-#endif
-	}
-	else if(ang_err < -10*ANG_1_DEG && obstacle_right > 20)
-	{
-		micronavi_status |= 1UL<<2;
-		stop();
-#ifdef LEDS_ON
-		led_status(7, RED, LED_MODE_FADE);
-		led_status(8, RED, LED_MODE_FADE);
-#endif
-	}
-
-
-
-	// Then, starting conditions:
-	if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_err > 60LL*65536LL || lin_err < -60LL*65536LL)
-	{
-		if(motors_enabled)
+		if(mode_xy)
 		{
-			if(run == 0)
-				do_start = 1;
+			if(lin_err < 30LL*65536LL && lin_err > -30LL*65536LL)
+			{
+				if(stop_indicators == 0)
+					beep(100, 2000, 0, 50);
+				run = 0;
 
-			run = 1;
-		}
-	}
-
-
-	if(prev_run != run || do_start)
-	{
-		if(do_start || run)
-		{
-			for(int i=1; i<10; i++)
-				led_status(i, RED, LED_MODE_FADE);
-
-			motor_torque_lim(0, 50);
-			motor_torque_lim(1, 50);
-			motor_run(0);
-			motor_run(1);
-			ang_speed = min_ang_speed;
-			lin_speed = min_lin_speed;
-			do_start = 0;
+			}
 		}
 		else
 		{
-			for(int i=1; i<10; i++)
-				led_status(i, GREEN, LED_MODE_FADE);
-			motor_let_stop(0);
-			motor_let_stop(1);
+			if(ang_err > -3*ANG_0_5_DEG && ang_err < 3*ANG_0_5_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)
+			{
+				if(stop_indicators == 0)
+					beep(100, 2000, 0, 50);
+				run = 0;
+
+			}
+		}
+
+	}
+
+	if(ignore_front==0 && run && correcting_linear && ((lin_err > 50*65536 && obstacle_front_near > OBST_THRESHOLD) || (lin_err > 180*65536 && obstacle_front_far > OBST_THRESHOLD)))
+	{
+		{
+			beep(500, 100, 0, 100);
+			stop_indicators = 125;
+			#ifdef LEDS_ON
+			led_status(9, RED, LED_MODE_FADE);
+			led_status(0, RED, LED_MODE_FADE);
+			led_status(1, RED, LED_MODE_FADE);
+			#endif
+		}
+		micronavi_status |= 1UL<<0;
+		stop();
+
+	}
+	else if(ignore_back==0 && run && correcting_linear && ((lin_err < -50*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_err < -180*65536 && obstacle_back_far > OBST_THRESHOLD)))
+	{
+		{
+			beep(500, 100, 0, 100);
+			stop_indicators = 125;
+			#ifdef LEDS_ON
+			led_status(4, RED, LED_MODE_FADE);
+			led_status(5, RED, LED_MODE_FADE);
+			led_status(6, RED, LED_MODE_FADE);
+			#endif
+		}
+
+		micronavi_status |= 1UL<<0;
+		stop();
+	}
+	else if(ignore_left==0 && run && correcting_angle && ((ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 18*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD)))
+	{
+		{
+			beep(500, 100, 0, 100);
+			stop_indicators = 125;
+			#ifdef LEDS_ON
+			led_status(2, RED, LED_MODE_FADE);
+			led_status(3, RED, LED_MODE_FADE);
+			#endif
+		}
+
+		micronavi_status |= 1UL<<2;
+		stop();
+	}
+	else if(ignore_right==0 && run && correcting_angle && ((ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -18*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD)))
+	{
+		{
+			beep(500, 100, 0, 100);
+			stop_indicators = 125;
+			#ifdef LEDS_ON
+			led_status(7, RED, LED_MODE_FADE);
+			led_status(8, RED, LED_MODE_FADE);
+			#endif
+		}
+		micronavi_status |= 1UL<<2;
+
+		stop();
+	}
+
+	if(ignore_left > 0) ignore_left--;
+	if(ignore_right > 0) ignore_right--;
+	if(ignore_front > 0) ignore_front--;
+	if(ignore_back > 0) ignore_back--;
+
+	int do_start = 0;
+
+	// Then, starting conditions:
+	if(accurot)
+	{
+		if(ang_err < -2*ANG_1_DEG || ang_err > 2*ANG_1_DEG || lin_err > 40LL*65536LL || lin_err < -40LL*65536LL)
+		{
+			if(motors_enabled)
+				do_start = 1;
 		}
 	}
 	else
 	{
-//		for(int i=1; i<10; i++)
-//			led_status(i, YELLOW, LED_MODE_FADE);
+		if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_err > 60LL*65536LL || lin_err < -60LL*65536LL)
+		{
+			if(motors_enabled)
+				do_start = 1;
+		}
 	}
+
+	static int dbg1;
+	if(do_start && !run)
+	{
+		if(stop_indicators == 0)
+			beep(150, 800, -300, 50);
+
+		motor_torque_lim(0, 60);
+		motor_torque_lim(1, 60);
+		motor_run(0);
+		motor_run(1);
+		ang_speed = min_ang_speed;
+		lin_speed = min_lin_speed;
+		run = 1;
+	}
+
+	if(!run)
+	{
+		motor_let_stop(0);
+		motor_let_stop(1);
+	}
+
 	prev_run = run;
 
 	static int nonrun_cnt;
@@ -758,6 +884,8 @@ void drive_handler()
 
 	if(err_cnt > 0) err_cnt--;
 
+	if(stop_indicators > 0) stop_indicators--;
+
 	if(drive_diag)
 	{
 		drive_diag->ang_err = ang_err;
@@ -770,6 +898,14 @@ void drive_handler()
 		drive_diag->remaining = abso((lin_err>>16));
 		drive_diag->micronavi_stop_flags = micronavi_status;
 		drive_diag->run = run;
+		drive_diag->dbg1 = motors_enabled;
+		drive_diag->dbg2 = mpos[0];
+		drive_diag->dbg3 = bldc_pos_set[1];
+		drive_diag->dbg4 = mpos[1];
+		drive_diag->ang_speed_i = ang_speed_i;
+		drive_diag->lin_speed_i = lin_speed_i;
+		drive_diag->dbg5 = dbg5;
+		drive_diag->dbg6 = dbg6;
 	}
 
 
