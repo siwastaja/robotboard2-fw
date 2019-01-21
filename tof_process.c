@@ -264,62 +264,6 @@ int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in)
 	return avg;
 }
 
-void hdr_combine(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in) __attribute__((section(".text_itcm")));
-void hdr_combine(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
-{
-	for(int i=0; i < TOF_XS*TOF_YS; i++)
-	{
-		int16_t dcs20_lo = dcs20_lo_in[i];
-		int16_t dcs31_lo = dcs31_lo_in[i];
-		int16_t dcs20_hi = dcs20_hi_in[i];
-		int16_t dcs31_hi = dcs31_hi_in[i];
-
-		int16_t dcs20, dcs31;
-
-		if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
-		{
-			dcs20 = dcs20_lo*HDR_FACTOR;
-			dcs31 = dcs31_lo*HDR_FACTOR;
-		}
-		else
-		{
-			dcs20 = dcs20_hi;
-			dcs31 = dcs31_hi;
-		}
-
-		dcs20_out[i] = dcs20;
-		dcs31_out[i] = dcs31;
-	}
-}
-
-void hdr_combine_narrow(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in) __attribute__((section(".text_itcm")));
-void hdr_combine_narrow(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
-{
-	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
-	{
-		int16_t dcs20_lo = dcs20_lo_in[i];
-		int16_t dcs31_lo = dcs31_lo_in[i];
-		int16_t dcs20_hi = dcs20_hi_in[i];
-		int16_t dcs31_hi = dcs31_hi_in[i];
-
-		int16_t dcs20, dcs31;
-
-		if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
-		{
-			dcs20 = dcs20_lo*HDR_FACTOR;
-			dcs31 = dcs31_lo*HDR_FACTOR;
-		}
-		else
-		{
-			dcs20 = dcs20_hi;
-			dcs31 = dcs31_hi;
-		}
-
-		dcs20_out[i] = dcs20;
-		dcs31_out[i] = dcs31;
-	}
-}
-
 void lens_model(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t* dcs20_in, int16_t* dcs31_in) __attribute__((section(".text_itcm")));
 void lens_model(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t* dcs20_in, int16_t* dcs31_in)
 {
@@ -370,6 +314,7 @@ void lens_model_narrow(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t
 	}
 }
 
+// TODO: make sure these two functions work with HDR_FACTOR=16 as well
 void compensated_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in) __attribute__((section(".text_itcm")));
 void compensated_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in)
 {
@@ -730,7 +675,7 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t
 		int16_t dcs31 = dcs31_hi_in[i];
 
 
-		if(dcs20 < -4000 || dcs20 > 4000 || dcs31 < -4000 || dcs31 > 4000)
+		if(dcs20 < -4090 || dcs20 > 4090 || dcs31 < -4090 || dcs31 > 4090)
 		{
 			ampl = 255;
 			dist = 0;
@@ -742,9 +687,9 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t
 			
 
 			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23);// if(ampl > 255) ampl = 255;
+				ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
 			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17);// if(ampl > 255) ampl = 255;
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
 			#endif
 
 			if(ampl<4)
@@ -761,8 +706,6 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t
 
 				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
 			}
-
-			ampl /= HDR_FACTOR; if(ampl>255) ampl=255;
 
 		}
 		ampl_out[i] = ampl;
@@ -799,7 +742,7 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, u
 		int16_t dcs31 = dcs31_hi_in[i];
 
 
-		if(dcs20 < -4000 || dcs20 > 4000 || dcs31 < -4000 || dcs31 > 4000)
+		if(dcs20 < -4090 || dcs20 > 4090 || dcs31 < -4090 || dcs31 > 4090)
 		{
 			ampl = 255;
 			dist = 0;
@@ -811,9 +754,9 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, u
 			
 
 			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23);// if(ampl > 255) ampl = 255;
+				ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
 			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17);// if(ampl > 255) ampl = 255;
+				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
 			#endif
 
 			if(ampl<4)
@@ -830,8 +773,6 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, u
 
 				dist = lookup_dist(1, pixgroup, dcs31, dcs20);
 			}
-
-			ampl /= HDR_FACTOR; if(ampl>255) ampl=255;
 
 		}
 		ampl_out[i] = ampl;
@@ -856,8 +797,8 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *d
 
 		if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
 		{
-			dcs20 = dcs20_lo*HDR_FACTOR;
-			dcs31 = dcs31_lo*HDR_FACTOR;
+			dcs20 = (int32_t)dcs20_lo*HDR_FACTOR;
+			dcs31 = (int32_t)dcs31_lo*HDR_FACTOR;
 		}
 		else
 		{
@@ -887,19 +828,19 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *d
 		int16_t dcs31_hi = dcs31_hi_in[i];
 
 
-		if(dcs20_lo < -4000 || dcs20_lo > 4000 || dcs31_lo < -4000 || dcs31_lo > 4000)
+		if(dcs20_lo < -4090 || dcs20_lo > 4090 || dcs31_lo < -4090 || dcs31_lo > 4090)
 		{
 			ampl = 255;
 			dist = 0;
 		}
 		else
 		{
-			int16_t dcs20, dcs31;
+			int32_t dcs20, dcs31;
 
 			if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
 			{
-				dcs20 = dcs20_lo*HDR_FACTOR;
-				dcs31 = dcs31_lo*HDR_FACTOR;
+				dcs20 = (int32_t)dcs20_lo*HDR_FACTOR;
+				dcs31 = (int32_t)dcs31_lo*HDR_FACTOR;
 			}
 			else
 			{
@@ -955,8 +896,8 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint
 
 		if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
 		{
-			dcs20 = dcs20_lo*HDR_FACTOR;
-			dcs31 = dcs31_lo*HDR_FACTOR;
+			dcs20 = (int32_t)dcs20_lo*HDR_FACTOR;
+			dcs31 = (int32_t)dcs31_lo*HDR_FACTOR;
 		}
 		else
 		{
@@ -993,12 +934,12 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint
 		}
 		else
 		{
-			int16_t dcs20, dcs31;
+			int32_t dcs20, dcs31;
 
 			if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
 			{
-				dcs20 = dcs20_lo*HDR_FACTOR;
-				dcs31 = dcs31_lo*HDR_FACTOR;
+				dcs20 = (int32_t)dcs20_lo*HDR_FACTOR;
+				dcs31 = (int32_t)dcs31_lo*HDR_FACTOR;
 			}
 			else
 			{
