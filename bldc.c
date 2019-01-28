@@ -115,7 +115,7 @@ void set_curr_lim(int ma)
 
 	prev_val = ma;
 
-	if(ma < 0 || ma > 20000)
+	if(ma < 0 || ma > 25000)
 		error(124);
 
 	int lim = (7*ma)/8+200;
