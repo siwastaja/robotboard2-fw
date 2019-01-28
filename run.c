@@ -29,7 +29,7 @@ static int gen_data;
 
 
 static int16_t img20[2][TOF_XS*TOF_YS] __attribute__((section(".dtcm_bss")));
-static int16_t img31[2][TOF_XS*TOF_YS] __attribute__((section(".dtcm_bss")));
+static int16_t img31[2][TOF_XS*TOF_YS];
 
 static uint16_t lofreq_wid_dist[TOF_XS*TOF_YS];
 static uint16_t lofreq_nar_dist[TOF_XS*TOF_YS];
@@ -74,8 +74,8 @@ uint32_t timestamp_initial;
 int err_cnt;
 static void log_err(int sidx)
 {
-	err_cnt += 10;
-	if(err_cnt > 30)
+//	err_cnt += 10;
+//	if(err_cnt > 30)
 	{
 		error(100+sidx);
 	}
@@ -513,7 +513,7 @@ static void long_set(int sidx, int basic_long_exp, int nar_avg_ampl)
 	epc_clk_div(2); block_epc_i2c(4);
 	epc_intlen(intlen_mults[2], INTUS(dealias_nar_exp*bubblegum)); block_epc_i2c(4);
 
-	dcmi_start_dma(&dcs2, SIZEOF_2DCS);
+	dcmi_start_dma(&dcs2, SIZEOF_2DCS_NARROW);
 	epc_trig();
 
 	// Do something here
@@ -660,19 +660,20 @@ static int lowbat_die_cnt = 0;
 static uint32_t latest_timestamps[N_SENSORS];
 
 #define MS(x) ((x)*10)
-static int32_t latency_targets[N_SENSORS] =
+int32_t latency_targets[N_SENSORS] =
 {
-	MS(300),  // 0
-	MS(300),  // 1
-	MS(600),  // 2
+	MS(2000),  // 0
+	MS(2000),  // 1
+	MS(2000),  // 2
 	MS(2000), // 3
 	MS(2000), // 4
 	MS(2000), // 5
 	MS(2000), // 6
 	MS(2000), // 7
-	MS(600),  // 8
-	MS(300)   // 9
+	MS(2000),  // 8
+	MS(2000)   // 9
 };
+
 
 void run_cycle()  __attribute__((section(".text_itcm")));
 void run_cycle()
@@ -687,149 +688,15 @@ void run_cycle()
 	}
 
 
-	uint32_t cur_timestamp = cnt_100us; // volatile uint32_t from timebase.c
-
-	/*
-	All the sensors run in circular round robin, providing "basic" measurements, sometimes
-	joined with a long measurement.
-
-	Quick "obstacle" measurements are stuffed in-between, based on the timing requirements set
-	based on the robot travel direction and speed.
-
-	Starvation of round-robin measurements is prevented by limiting maximum number of back-to-back
-	"obstacle" measurements
-	*/
-
-	static int basic_sidx = 0;
-	static int long_sidx_a = 0;
-	static int long_sidx_b = 5;
-	
-	do 
-	{
-		basic_sidx++;
-		if(basic_sidx >= N_SENSORS)
-		{
-			basic_sidx = 0;
-
-			long_sidx_a++;
-			long_sidx_b++;
-
-			if(long_sidx_a >= N_SENSORS)
-				long_sidx_a = 0;
-			if(long_sidx_b >= N_SENSORS)
-				long_sidx_b = 0;
-
-
-			extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
-			extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
-			obstacle_front_near = 0;
-			obstacle_back_near = 0;
-			obstacle_left_near = 0;
-			obstacle_right_near = 0;
-			obstacle_front_far = 0;
-			obstacle_back_far = 0;
-			obstacle_left_far = 0;
-			obstacle_right_far = 0;
-		}
-	}
-	while(!sensors_in_use[basic_sidx]);
-
-	int take_long = 0;
-	if(basic_sidx == long_sidx_a || basic_sidx == long_sidx_b)
-		take_long = 1;
-
-	int long_exp;
-	int narrow_avg_ampl;
-
-	tof_mux_select(basic_sidx);
-	adjust();
-
-
-	basic_set(basic_sidx, NULL, &long_exp, take_long?(&narrow_avg_ampl):NULL);
-
-	if(take_long)
-	{
-		long_set(basic_sidx, long_exp, narrow_avg_ampl);
-	}
-
-
-
-
-	// Allow max three back-to-back obstacle images, to prevent starvation of round-robin measurements
-	for(int n_obst = 0; n_obst < 3; n_obst++)
-	{
-		int obst_sidx = -1;
-		int lowest_margin = -99999999;
-		for(int i=0; i<N_SENSORS; i++)
-		{
-			int32_t time_from_prev_img = cur_timestamp - latest_timestamps[i];
-			int32_t margin = latency_targets[i] - time_from_prev_img; // negative margin = we are already late
-
-			if(sensors_in_use[i] && margin < lowest_margin)
-			{
-				lowest_margin = margin;
-				obst_sidx = i;
-			}
-		}
-
-		if(n_obst > 0)
-		{
-			// We already took one obst avoidance measurement - only take more
-			// if they are really getting late
-			if(lowest_margin > MS(20))
-				break;
-		}
-		else
-		{
-			// By all means take at least one obst avoidance image, even if it still isn't acutely urgent
-			if(lowest_margin > MS(100))
-				break;
-		}
-
-		if(obst_sidx < 0 || obst_sidx >= N_SENSORS)
-			error(555);
-
-		tof_mux_select(obst_sidx);
-
-		obstacle_set(obst_sidx);
-
-	}
-
-
-
 
 
 	charger_freerunning_fsm();
 
-	// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
-	if(sidx == 6 || sidx==9)
-		bubblegum = 2;
 
 
 	adjust();
 
-//	if(sidx&1)
-//		gen_data = 1;
 
-	if(is_tx_overrun())
-	{
-		uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
-		gen_data = 0;
-	}
-	else
-		gen_data = 1;
-
-	static int voxmap_send_cnt;
-
-	if(sidx == 9) // && round_of_longer_exposure)
-	{
-		voxmap_send_cnt++;
-	}
-	
-	if(voxmap_send_cnt >= VOXMAP_SEND_INTERVAL)
-	{
-		add_sub(1); // Force this subscription for now... Others may be temporarily dropped if they won't fit (this has lowest ID)
-	}
 
 
 	int bat_mv = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
@@ -880,17 +747,175 @@ void run_cycle()
 
 
 
+	/*
+	All the sensors run in circular round robin, providing "basic" measurements, sometimes
+	joined with a long measurement.
 
-	if(gen_data && tof_diagnostics)
+	Quick "obstacle" measurements are stuffed in-between, based on the timing requirements set
+	based on the robot travel direction and speed.
+
+	Starvation of round-robin measurements is prevented by limiting maximum number of back-to-back
+	"obstacle" measurements
+	*/
+
+	static int basic_sidx = 0;
+	static int long_sidx_a = 0;
+	static int long_sidx_b = 3;
+	static int long_sidx_c = 6;
+
+	// 0 3 6,   1 4 7,   2 5 8,   3 6 9,   4 7 0,   5 8 1,   6 9 2,   7 0 3,   8 1 4,   9 2 5, ...
+	do 
+	{
+		basic_sidx++;
+		if(basic_sidx >= N_SENSORS)
+		{
+			basic_sidx = 0;
+
+			long_sidx_a++;
+			long_sidx_b++;
+
+			if(long_sidx_a >= N_SENSORS)
+				long_sidx_a = 0;
+			if(long_sidx_b >= N_SENSORS)
+				long_sidx_b = 0;
+
+
+			extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
+			extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
+			obstacle_front_near = 0;
+			obstacle_back_near = 0;
+			obstacle_left_near = 0;
+			obstacle_right_near = 0;
+			obstacle_front_far = 0;
+			obstacle_back_far = 0;
+			obstacle_left_far = 0;
+			obstacle_right_far = 0;
+		}
+	}
+	while(!sensors_in_use[basic_sidx]);
+
+
+
+	if(is_tx_overrun())
+	{
+		uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
+		gen_data = 0;
+	}
+	else
+		gen_data = 1;
+
+
+	int take_long = 0;
+	if(basic_sidx == long_sidx_a || basic_sidx == long_sidx_b || basic_sidx == long_sidx_c)
+		take_long = 1;
+
+
+	#define VOXMAP_SEND_MASK 0b1111111110
+	static int voxmap_send_mask;
+	if(take_long)
+	{
+		voxmap_send_mask |= 1<<basic_sidx;
+	}
+
+	int send_voxmap = 0;
+	if((voxmap_send_mask & VOXMAP_SEND_MASK) == VOXMAP_SEND_MASK)
+	{
+		send_voxmap = 1;
+		add_sub(1); // Force this subscription for now... Others may be temporarily dropped if they won't fit (this has lowest ID)
+	}
+
+
+	// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
+	if(basic_sidx == 6 || basic_sidx==9)
+		bubblegum = 2;
+	else
+		bubblegum = 1;
+
+
+	int long_exp;
+	int narrow_avg_ampl;
+
+	tof_mux_select(basic_sidx);
+	adjust();
+
+
+	basic_set(basic_sidx, NULL, &long_exp, take_long?(&narrow_avg_ampl):NULL);
+	latest_timestamps[basic_sidx] = cnt_100us;
+
+	if(take_long && basic_sidx != 1) // prototype issue: sensor 1 has one of the narrow leds shorted, don't use it.
+	{
+		long_set(basic_sidx, long_exp, narrow_avg_ampl);
+	}
+
+
+
+
+	// Allow max three back-to-back obstacle images, to prevent starvation of round-robin measurements
+	for(int n_obst = 0; n_obst < 3; n_obst++)
+	{
+		int obst_sidx = -1;
+		int32_t lowest_margin = 99999999;
+		for(int i=0; i<N_SENSORS; i++)
+		{
+			int32_t time_from_prev_img = cnt_100us - latest_timestamps[i];
+			int32_t margin = latency_targets[i] - time_from_prev_img; // negative margin = we are already late
+
+			//DBG_PR_VAR_I32(i);
+			//DBG_PR_VAR_I32(time_from_prev_img);
+			//DBG_PR_VAR_I32(margin);
+
+			if(sensors_in_use[i] && margin < lowest_margin)
+			{
+				lowest_margin = margin;
+				obst_sidx = i;
+			}
+		}
+
+		if(n_obst > 0)
+		{
+			// We already took one obst avoidance measurement - only take more
+			// if they are really getting late
+			if(lowest_margin > MS(20))
+				break;
+		}
+		else
+		{
+			// By all means take at least one obst avoidance image, even if it still isn't acutely urgent
+			if(lowest_margin > MS(100))
+				break;
+		}
+
+		if(obst_sidx < 0 || obst_sidx >= N_SENSORS)
+			error(555);
+
+		tof_mux_select(obst_sidx);
+
+
+		// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
+		if(basic_sidx == 6 || basic_sidx==9)
+			bubblegum = 2;
+		else
+			bubblegum = 1;
+
+		obstacle_set(obst_sidx);
+		latest_timestamps[obst_sidx] = cnt_100us;
+
+
+	}
+
+
+
+
+/*	if(gen_data && tof_diagnostics)
 	{
 		tof_diagnostics->temperature = chiptemp;
 	}
-
+*/
 
 	adjust();
 
 	int do_restore_subs;
-	if(voxmap_send_cnt >= VOXMAP_SEND_INTERVAL)
+	if(send_voxmap)
 	{
 		// Subscription is forced above.
 		if(!mcu_multi_voxel_map)
@@ -918,7 +943,7 @@ void run_cycle()
 				bl = 0;
 				execute_corr_pos();
 				restart_voxmap();
-				voxmap_send_cnt = 0;
+				voxmap_send_mask = 0;
 				do_restore_subs = 1;
 			}
 		}

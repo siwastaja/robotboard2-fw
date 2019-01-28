@@ -10,6 +10,7 @@
 #include "../robotsoft/api_board_to_soft.h"
 #include "../robotsoft/api_soft_to_board.h"
 #include "audio.h"
+#include "tof_ctrl.h" // for N_SENSORS
 
 #define LEDS_ON
 
@@ -65,9 +66,9 @@ int is_driving()
 	return run;
 }
 
-static double max_ang_speed = 10.0; // steps per cycle // 8.0
+static double max_ang_speed = 13.0; // steps per cycle
 static double min_ang_speed = 3.0;
-static double max_lin_speed = 40.0;
+static double max_lin_speed = 45.0;
 static double min_lin_speed = 5.0;
 
 void set_top_speed_max(int old_style_value)
@@ -179,9 +180,9 @@ void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_fi
 //	do_start = 1;
 }
 
-void cmd_motors(int enabled)
+void cmd_motors(int enabled_ms)
 {
-	motors_enabled = enabled;
+	motors_enabled = enabled_ms*4;
 }
 
 static s2b_corr_pos_t stored_corrpos;
@@ -232,7 +233,7 @@ static void stop()
 	store_lin_err = 0;
 //	do_start = 0;
 	ang_to_target = cur_pos.ang;
-	backmode = 0;
+	backmode = 2; // auto decision
 }
 
 void cmd_stop_movement()
@@ -266,6 +267,134 @@ static void log_err()
 	if(err_cnt > 3000)
 		error(130);
 }
+
+
+extern int32_t latency_targets[N_SENSORS];
+#define MS(x) ((x)*10)
+
+void sensors_fwd(double speed)
+{
+	// Latencies: the criticals; the secondaries (sides), the rest (nonrelated)
+	// Speed   0 -> 500ms, 1000ms, 2000ms
+	// Speed  50 -> 400ms, 800ms,  2200ms
+	// Speed 100 -> 300ms, 600ms,  2400ms
+	// Speed 150 and over -> 200ms, 400ms,  2600ms
+//	int target = 500.0 - speed*2.0;
+//	if(target < 200) target = 200;
+	int target = 600.0 - speed*2.0;
+	if(target < 300) target = 300;
+
+	int secondaries = target * 2;
+	int nonrelated = 3000 - 2*target;
+
+	latency_targets[9] = MS(target);
+	latency_targets[0] = MS(target);
+	latency_targets[1] = MS(target);
+
+	latency_targets[2] = MS(secondaries);
+	latency_targets[8] = MS(secondaries);
+
+	latency_targets[3] = MS(nonrelated);
+	latency_targets[4] = MS(nonrelated);
+	latency_targets[5] = MS(nonrelated);
+	latency_targets[6] = MS(nonrelated);
+	latency_targets[7] = MS(nonrelated);
+}
+
+void sensors_bwd(double speed)
+{
+	// Latencies: the criticals; the secondaries (sides), the rest (nonrelated)
+	// Speed   0 -> 500ms, 1000ms, 2000ms
+	// Speed  50 -> 400ms, 800ms,  2200ms
+	// Speed 100 -> 300ms, 600ms,  2400ms
+	// Speed 150 and over -> 200ms, 400ms,  2600ms
+//	int target = 500.0 - speed*2.0;
+//	if(target < 200) target = 200;
+	int target = 600.0 - speed*2.0;
+	if(target < 300) target = 300;
+
+	int secondaries = target * 2;
+	int nonrelated = 3000 - 2*target;
+
+	latency_targets[4] = MS(target);
+	latency_targets[5] = MS(target);
+	latency_targets[6] = MS(target);
+
+	latency_targets[3] = MS(secondaries);
+	latency_targets[7] = MS(secondaries);
+
+	latency_targets[0] = MS(nonrelated);
+	latency_targets[1] = MS(nonrelated);
+	latency_targets[2] = MS(nonrelated);
+	latency_targets[8] = MS(nonrelated);
+	latency_targets[9] = MS(nonrelated);
+}
+
+
+void sensors_posang(double speed)
+{
+	// Latencies: the criticals; the secondaries (sides), the rest (nonrelated)
+	// Speed   0 -> 500ms, 1000ms, 2000ms
+	// Speed  10 -> 400ms, 800ms,  2200ms
+	// Speed  20 -> 300ms, 600ms,  2400ms
+	// Speed  30 and over -> 200ms, 400ms,  2600ms
+//	int target = 500.0 - speed*10.0;
+//	if(target < 200) target = 200;
+	int target = 600.0 - speed*10.0;
+	if(target < 300) target = 300;
+
+	int secondaries = target * 2;
+	int nonrelated = 3000 - 2*target;
+
+	latency_targets[7] = MS(target);
+	latency_targets[8] = MS(target);
+
+	latency_targets[9] = MS(secondaries);
+	latency_targets[4] = MS(secondaries);
+	latency_targets[5] = MS(secondaries);
+
+	latency_targets[0] = MS(nonrelated);
+	latency_targets[1] = MS(nonrelated);
+	latency_targets[2] = MS(nonrelated);
+	latency_targets[3] = MS(nonrelated);
+	latency_targets[6] = MS(nonrelated);
+}
+
+void sensors_negang(double speed)
+{
+	// Latencies: the criticals; the secondaries (sides), the rest (nonrelated)
+	// Speed   0 -> 500ms, 1000ms, 2000ms
+	// Speed  10 -> 400ms, 800ms,  2200ms
+	// Speed  20 -> 300ms, 600ms,  2400ms
+	// Speed  30 and over -> 200ms, 400ms,  2600ms
+//	int target = 500.0 - speed*10.0;
+//	if(target < 200) target = 200;
+	int target = 600.0 - speed*10.0;
+	if(target < 300) target = 300;
+
+	int secondaries = target * 2;
+	int nonrelated = 3000 - 2*target;
+
+	latency_targets[2] = MS(target);
+	latency_targets[3] = MS(target);
+
+	latency_targets[1] = MS(secondaries);
+	latency_targets[5] = MS(secondaries);
+	latency_targets[6] = MS(secondaries);
+
+	latency_targets[0] = MS(nonrelated);
+	latency_targets[4] = MS(nonrelated);
+	latency_targets[7] = MS(nonrelated);
+	latency_targets[8] = MS(nonrelated);
+	latency_targets[9] = MS(nonrelated);
+}
+
+void sensors_idle()
+{
+	for(int i=0; i<N_SENSORS; i++)
+		latency_targets[i] = MS(3000);
+}
+
 
 void drive_handler() __attribute__((section(".text_itcm")));
 void drive_handler()
@@ -432,9 +561,38 @@ void drive_handler()
 	a_y /= 6;
 	a_z /= 6;
 
-	if(ac_th_det_on>1000)
+
+	/*
+		setting: 97495:
+		8 rounds in positive direction:
+		358.1 - too little
+		1.9 deg -> 0.2375 per 360 too little
+		New setting: 97559
+
+
+		8 rounds in negative direction:
+		353.5 - too much
+		6.5 deg -> 0.8125 per 360 too much
+		New setting: 97276
+
+	*/
+
+	if(ac_th_det_on>10000)
 	{
-		cur_pos.ang += (97495LL*(int64_t)g_yaw)>>16;
+/*
+		if(g_yaw > 0)
+			cur_pos.ang += (97559LL*(int64_t)g_yaw)>>16;
+		else
+			cur_pos.ang += (97276LL*(int64_t)g_yaw)>>16;
+*/
+
+		// Pos dir: drifts a little in pos dir with  97995    drifts in pos dir with 98095    drifts in pos dir with 98010
+		// Neg dir: drifts in neg dir   97295    in  pos dir 96295
+		if(g_yaw > 0)
+			cur_pos.ang += (97695LL*(int64_t)g_yaw)>>16;
+		else
+			cur_pos.ang += (96895LL*(int64_t)g_yaw)>>16;
+
 		cur_pos.pitch += (97495LL*(int64_t)g_pitch)>>16;
 		cur_pos.roll += (97495LL*(int64_t)g_roll)>>16;
 
@@ -528,7 +686,7 @@ void drive_handler()
 		int64_t dy = cur_pos.y - target_pos.y;
 		lin_err = sqrt(sq((double)dx) + sq((double)dy));
 
-		if(lin_err > 200LL*65536LL || new_direction)
+		if(lin_err > 400LL*65536LL || new_direction)
 			ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2.0*M_PI));
 	}
 	else
@@ -682,6 +840,36 @@ void drive_handler()
 
 	if(lin_speed > max_lin_speed || lin_speed > max_lin_speed_by_lin_err || lin_speed > max_lin_speed_by_ang_err)
 		lin_speed *= 0.985;
+
+
+	if(correcting_linear)
+	{
+		if(reverse)
+		{
+			sensors_bwd(lin_speed);
+		}
+		else
+		{
+			sensors_fwd(lin_speed);
+		}
+	}
+	else // Rotating only
+	{
+		if(ang_err < -6*ANG_1_DEG)
+		{
+			sensors_posang(ang_speed);
+		}
+		else if(ang_err > +6*ANG_1_DEG)
+		{
+			sensors_negang(ang_speed);
+		}
+		else
+		{
+			sensors_idle();
+		}
+	}
+
+
 
 	static const int max_mpos_err = 4*256;
 	static int max_pos_err_cnt;
@@ -844,8 +1032,8 @@ void drive_handler()
 		if(stop_indicators == 0)
 			beep(150, 800, -300, 50);
 
-		motor_torque_lim(0, 60);
-		motor_torque_lim(1, 60);
+		motor_torque_lim(0, 90);
+		motor_torque_lim(1, 90);
 		motor_run(0);
 		motor_run(1);
 		ang_speed = min_ang_speed;

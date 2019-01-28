@@ -2,7 +2,7 @@
 
 #DEVIP = 10.3.0.6
 #DEVIP = 192.168.43.59
-DEVIP = 192.168.1.2
+DEVIP = 192.168.1.6
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
@@ -47,7 +47,6 @@ main.bin: $(OBJ)
 # causing the binary file to extend to the address space of the totally wrong (meaningless) "load address", generating 500 megabyte binary.
 # Since bss sections have nothing to do in the binary, we can just as well remove them from the output file.
 # .settings is also removed - this makes the binary small, and keeps the old settings through reflash process
-
 ff: main.bin
 	scp main_full.bin $(DEVIP):~/robotsoft/main_full.bin
 	ssh $(DEVIP) ~/robotsoft/spiprog r 10 ~/robotsoft/main_full.bin

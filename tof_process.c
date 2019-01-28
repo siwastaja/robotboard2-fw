@@ -1697,41 +1697,43 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 				if(local_z < 150 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
 					continue;
 
-				#define OBST_AVOID_WIDTH 600
+				#define OBST_MARGIN (50)
+
+				#define OBST_AVOID_WIDTH (600+OBST_MARGIN)
 
 				if(local_z > 120 && local_z < 1200)
 				{
 					if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
 					{
-						if(local_x >= 350 && local_x < 450)
+						if(local_x >= 100 && local_x < 450+OBST_MARGIN)
 							obstacle_front_near++;
-						if(local_x >= 450 && local_x < 550)
+						if(local_x >= 450+OBST_MARGIN && local_x < 550+OBST_MARGIN)
 							obstacle_front_far++;
 
-						if(local_x <= -550 && local_x > -700)
+						if(local_x <= -450 && local_x > -700-OBST_MARGIN)
 							obstacle_back_near++;
-						if(local_x <= -700 && local_x > -800)
+						if(local_x <= -700-OBST_MARGIN && local_x > -800-OBST_MARGIN)
 							obstacle_back_far++;
 					}
 
 					if(local_x > -490 && local_x < -200)
 					{
-						if(local_y >= 200 && local_y < 400)
+						if(local_y >= 200+OBST_MARGIN && local_y < 400+OBST_MARGIN)
 							obstacle_left_near++;
 
-						if(local_y >= 400 && local_y < 500)
-							obstacle_left_far++;
+						if(local_y <= -200 && local_y > -400-OBST_MARGIN)
+							obstacle_right_near++;
 					}
 
 
 					if(local_x > -440 && local_x < -200)
 					{
-						if(local_y <= -200 && local_y > -400)
-							obstacle_right_near++;
 
-						if(local_y <= -400 && local_y > -500)
+						if(local_y <= -400-OBST_MARGIN && local_y > -500-OBST_MARGIN)
 							obstacle_right_far++;
 
+						if(local_y >= 400+OBST_MARGIN && local_y < 500+OBST_MARGIN)
+							obstacle_left_far++;
 
 					}
 				}
@@ -2165,45 +2167,42 @@ void tof_to_obstacle_avoidance(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, 
 
 
 				// VACUUM APP: Ignore the nozzle
-				#define NOZZLE_WIDTH 760
 				if(local_z < 150 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
 					continue;
-
-				#define OBST_AVOID_WIDTH 600
 
 				if(local_z > 120 && local_z < 1200)
 				{
 					if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
 					{
-						if(local_x >= 350 && local_x < 450)
+						if(local_x >= 100 && local_x < 450+OBST_MARGIN)
 							obstacle_front_near++;
-						if(local_x >= 450 && local_x < 550)
+						if(local_x >= 450+OBST_MARGIN && local_x < 550+OBST_MARGIN)
 							obstacle_front_far++;
 
-						if(local_x <= -550 && local_x > -700)
+						if(local_x <= -450 && local_x > -700-OBST_MARGIN)
 							obstacle_back_near++;
-						if(local_x <= -700 && local_x > -800)
+						if(local_x <= -700-OBST_MARGIN && local_x > -800-OBST_MARGIN)
 							obstacle_back_far++;
 					}
 
 					if(local_x > -490 && local_x < -200)
 					{
-						if(local_y >= 200 && local_y < 400)
+						if(local_y >= 200+OBST_MARGIN && local_y < 400+OBST_MARGIN)
 							obstacle_left_near++;
 
-						if(local_y >= 400 && local_y < 500)
-							obstacle_left_far++;
+						if(local_y <= -200 && local_y > -400-OBST_MARGIN)
+							obstacle_right_near++;
 					}
 
 
 					if(local_x > -440 && local_x < -200)
 					{
-						if(local_y <= -200 && local_y > -400)
-							obstacle_right_near++;
 
-						if(local_y <= -400 && local_y > -500)
+						if(local_y <= -400-OBST_MARGIN && local_y > -500-OBST_MARGIN)
 							obstacle_right_far++;
 
+						if(local_y >= 400+OBST_MARGIN && local_y < 500+OBST_MARGIN)
+							obstacle_left_far++;
 
 					}
 				}

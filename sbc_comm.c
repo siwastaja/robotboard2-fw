@@ -743,7 +743,7 @@ void parse_rx_packet()
 			case CMD_MOTORS:
 			{
 				if(((s2b_motors_t*)p_data)->enabled)
-					cmd_motors(250*12);
+					cmd_motors(8000); // milliseconds watchdog
 				else
 					cmd_motors(0);
 			}

@@ -29,7 +29,7 @@ typedef struct
 extern hires_pos_t cur_pos;
 
 
-void cmd_motors(int enabled);
+void cmd_motors(int enabled_ms);
 void cmd_go_to(s2b_move_abs_t* m);
 
 

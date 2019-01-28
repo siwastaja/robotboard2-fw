@@ -39,7 +39,7 @@ int total_front_accum, total_front_accum_cnt;
 
 	#define CHAFIND_PUSH_TUNE 0 // in mm, lower number = go further
 
-	#define CHAFIND_AIM_Y_TUNE 10  // Positive = go more right
+	#define CHAFIND_AIM_Y_TUNE 0
 
 #else
 
@@ -51,7 +51,7 @@ int total_front_accum, total_front_accum_cnt;
 
 	#define CHAFIND_PUSH_TUNE 0 // in mm, lower number = go further
 
-	#define CHAFIND_AIM_Y_TUNE 10  // Positive = go more right
+	#define CHAFIND_AIM_Y_TUNE 0
 
 #endif
 
@@ -127,7 +127,7 @@ void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_nec
 //	dbg[2] = nearest_hit_y;
 
 
-	if(z > 140 && z < 210 && x >= nearest_hit_x && x < nearest_hit_x+60 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-25 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+25)
+	if(z > 140 && z < 210 && x >= nearest_hit_x && x < nearest_hit_x+70 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-25 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+25)
 	{
 		middle_cnt++;
 		if(y < middle_min_y) middle_min_y = y;
@@ -257,6 +257,16 @@ void navig_fsm2_for_charger()
 		chafind_state = CHAFIND_FAIL;
 	}
 
+	if(chafind_state)
+	{
+		#ifdef CONTACTS_ON_BACK
+			obstacle_avoidance_ignore(2, 200);
+		#else
+			obstacle_avoidance_ignore(0, 200);
+		#endif
+
+	}
+
 	switch(chafind_state)
 	{
 		case CHAFIND_START:
@@ -287,6 +297,7 @@ void navig_fsm2_for_charger()
 						#ifdef CONTACTS_ON_BACK
 							movement *= -1;
 						#endif
+						cmd_motors(5000);
 						straight_rel(movement);
 						if(chafind_results) chafind_results->first_movement_needed = movement;
 						chafind_state = CHAFIND_WAIT_FWD1;
@@ -362,10 +373,9 @@ void navig_fsm2_for_charger()
 					int final_movement = dist2-ORIGIN_TO_CONTACTS-CHAFIND_PUSH_TUNE;
 					#ifdef CONTACTS_ON_BACK
 						final_movement *= -1;
-						obstacle_avoidance_ignore(2, 2000);
 					#else
-						obstacle_avoidance_ignore(0, 2000);
 					#endif
+					cmd_motors(5000);
 					straight_rel(final_movement);
 					chafind_state = CHAFIND_WAIT_PUSH;
 
@@ -401,6 +411,7 @@ void navig_fsm2_for_charger()
 						else                  shift_ang =  -8*ANG_1_DEG;
 
 						int d = ((float)shift)/tan((float)shift_ang*(2.0*M_PI)/4294967296.0);
+						cmd_motors(8000);
 
 						#ifdef CONTACTS_ON_BACK
 							rotate_and_straight_rel(-1*(ang+shift_ang), +1*d, 1);
@@ -426,7 +437,7 @@ void navig_fsm2_for_charger()
 		{
 			if(!is_driving())
 			{
-				timer=1;
+				timer=2;
 				chafind_state++;
 			}
 		}
@@ -436,6 +447,8 @@ void navig_fsm2_for_charger()
 		{
 			if(--timer == 0)
 			{
+				cmd_motors(8000);
+
 				#ifdef CONTACTS_ON_BACK
 					rotate_and_straight_rel(+1*store_shift_ang, -1*store_back, 1);
 				#else
@@ -451,7 +464,7 @@ void navig_fsm2_for_charger()
 		{
 			if(!is_driving())
 			{
-				timer = 1;
+				timer = 2;
 				chafind_state = CHAFIND_WAIT_FWD1_STOPEXTRA1;
 			}
 		}
@@ -497,10 +510,10 @@ void navig_fsm2_for_charger()
 				int final_movement = dist-ORIGIN_TO_CONTACTS-CHAFIND_PUSH_TUNE;
 				#ifdef CONTACTS_ON_BACK
 					final_movement *= -1;
-					obstacle_avoidance_ignore(2, 2000);
 				#else
-					obstacle_avoidance_ignore(0, 2000);
 				#endif
+				cmd_motors(5000);
+
 				straight_rel(final_movement);
 				chafind_state = CHAFIND_WAIT_PUSH;
 			}
