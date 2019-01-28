@@ -1045,6 +1045,7 @@ static void inthandler8()
 	g_packet5.n = fifo.lvls.g[5];
 
 	// A & G data is finished. Generate software interrupt to do the processing at lower interrupt priority than our current context.
+	// This trigs the drive handler in drive.c:
 	NVIC->STIR = 147;
 
 	uint32_t dt = cnt_100us - m_conv_start_100us;
