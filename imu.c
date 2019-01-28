@@ -911,6 +911,7 @@ static void inthandler4()
 	if( (fifo.quick.first & ERR_FIRST_MASK) || 
 	    (fifo.quick.second & ERR_SECOND_MASK))
 	{
+		SAFETY_SHUTDOWN();
 		uart_print_string_blocking("\r\nSTOPPED: too many samples\r\n");
 
 		for(int i=0; i<6; i++)
