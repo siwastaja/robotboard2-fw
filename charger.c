@@ -1221,7 +1221,7 @@ void charger_freerunning_fsm()
 				combined_max_output_power = 200000.0*0.93; // 186000
 				combined_max_output_current = 20000;
 				start_phab(1);
-				beep(100, 800, -400, 100);
+				beep(30, 1000, -800, 100);
 
 
 				if(!charger_is_running())
