@@ -24,6 +24,12 @@
 void init_imu() __attribute__((section(".text_itcm")));
 void init_imu();
 
+static int16_t m_compensate_x(int16_t x_in, uint16_t rhall_in, int idx);
+static int16_t m_compensate_y(int16_t y_in, uint16_t rhall_in, int idx);
+static int16_t m_compensate_z(int16_t z_in, uint16_t rhall_in, int idx);
+
+
+
 typedef struct __attribute__((packed))
 {
 	int16_t x;
@@ -73,4 +79,5 @@ typedef union __attribute__((packed))
 
 extern volatile a_dma_packet_t * const imu_a[6];
 extern volatile g_dma_packet_t * const imu_g[6];
+extern volatile m_dma_packet_t * const imu_m[6];
 

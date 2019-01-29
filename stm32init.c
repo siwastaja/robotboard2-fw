@@ -49,6 +49,7 @@ extern void charger_safety_errhandler();
 extern void charger_adc2_pha_inthandler();
 
 extern void drive_handler();
+extern void compass_handler();
 
 extern unsigned int _STACKTOP;
 
@@ -221,7 +222,7 @@ unsigned int * the_nvic_vector[VECTOR_TBL_LEN] __attribute__ ((section(".nvic_ve
 /* 0x0284                    */ (unsigned int *) invalid_handler,
 /* 0x0288                    */ (unsigned int *) invalid_handler,
 /* 0x028C (empty #147)       */ (unsigned int *) drive_handler,
-/* 0x0290                    */ (unsigned int *) invalid_handler,
+/* 0x0290 (empty #148)       */ (unsigned int *) compass_handler,
 /* 0x0294                    */ (unsigned int *) invalid_handler
 
 };

@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include "../robotsoft/api_soft_to_board.h"
 
+#define ANG_360_DEG_ULL 4294967296ULL
+#define ANG_360_DEG_LL  4294967296LL
+
 #define ANG_180_DEG 2147483648UL
 #define ANG_90_DEG  1073741824
 #define ANG_2_5_DEG   29826162

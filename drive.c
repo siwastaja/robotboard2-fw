@@ -23,16 +23,10 @@
 
 #define G_DC_FILT 10 // Quadratic effect, 15 maximum.
 
-static int moving = 1000;
+static int moving = 500;
 static inline void robot_moves()
 {
-	moving = 1000;
-}
-
-static inline void robot_doesnt_move()
-{
-	if(moving > 0)
-		moving--;
+	moving = 500; // 2 seconds
 }
 
 static inline int is_robot_moving()
@@ -204,7 +198,7 @@ void execute_corr_pos()
 	int64_t dy = stored_corrpos.dy;
 
 	if(dx > 2000LL || dx < -2000LL || dy > 2000LL || dy < -2000LL)
-		error(167);
+		error(130);
 
 	// Divide by 2 by only shifting 15 places instead of 16.
 	dx<<=15;
@@ -265,7 +259,7 @@ static void log_err()
 {
 	err_cnt+=1000;
 	if(err_cnt > 3000)
-		error(130);
+		error(131);
 }
 
 
@@ -395,6 +389,474 @@ void sensors_idle()
 		latency_targets[i] = MS(3000);
 }
 
+// Magnetometer code
+// Magnetometers 2,3,4,5 are used.
+// 0,1 are not used because they are located near the high-current wiring; these IMUs are in optimum placement
+// for gyro&accelerometer and used for these purposes only.
+// Code is written to support using all magnetometers later if that works out anyway.
+
+
+
+/*
+	Run rotation_fsm (about at least ~10Hz or more):
+	rotation_fsm(3) - stop rotating
+	rotation_fsm(1) - start rotating CW, reset rotation counter
+	rotation_fsm(2) - start rotating CCW, reset rotation counter
+	rotation_fsm(0) - return rotation counter
+*/
+
+#define ROTA_CMD_POLL 0
+#define ROTA_CMD_START_POSANG 1
+#define ROTA_CMD_START_NEGANG 2
+#define ROTA_CMD_STOP 3
+#define ROTA_CMD_STOP_ABRUPT 4
+
+static int rotation_fsm(int cmd)
+{
+	static int state;
+	static uint32_t start_ang;
+	static int n_rounds;
+	static int expecting_full_turn;
+
+	if(cmd == ROTA_CMD_STOP_ABRUPT)
+	{
+		state = 0;
+		stop();
+	}
+	else if(cmd == ROTA_CMD_STOP)
+	{
+		state = 0;
+		ang_to_target = start_ang;
+	}
+	else if(cmd == ROTA_CMD_START_POSANG)
+	{
+		start_ang = cur_pos.ang;
+		n_rounds = 0;
+		expecting_full_turn = 0;
+		state = 1;
+	}
+	else if(cmd == ROTA_CMD_START_NEGANG)
+	{
+		start_ang = cur_pos.ang;
+		n_rounds = 0;
+		expecting_full_turn = 0;
+		state = 2;
+	}
+
+	switch(state)
+	{
+		case 0:
+		break;
+
+		case 1:
+		{
+			int32_t diff_from_start = cur_pos.ang - start_ang;
+			if(diff_from_start > -30 && diff_from_start < -20)
+			{
+				// Almost a full turn - set a sub-state
+				expecting_full_turn = 1;
+			}
+			else if(diff_from_start > 0 && expecting_full_turn)
+			{
+				// Got a full turn.
+				n_rounds++;
+				expecting_full_turn = 0;
+			}
+
+			ang_to_target = cur_pos.ang + ANG_45_DEG;
+
+		} break;
+
+		case 2:
+		{
+			int32_t diff_from_start = cur_pos.ang - start_ang;
+			if(diff_from_start > 20 && diff_from_start < 30)
+			{
+				// Almost a full turn - set a sub-state
+				expecting_full_turn = 1;
+			}
+			else if(diff_from_start < 0 && expecting_full_turn)
+			{
+				// Got a full turn.
+				n_rounds++;
+				expecting_full_turn = 0;
+			}
+
+			ang_to_target = cur_pos.ang - ANG_45_DEG;
+
+		} break;
+
+		default: error(132); while(1);
+	}
+
+	return n_rounds;
+}
+
+
+static int m_min_x[6];
+static int m_min_y[6];
+static int m_max_x[6];
+static int m_max_y[6];
+
+// IMU magnetometer orientations on the PCB, 0 degrees = East, 90 degrees = North
+static const uint32_t m_orientations[6] = {270*ANG_1_DEG, 90*ANG_1_DEG, 0*ANG_1_DEG, 180*ANG_1_DEG, 0*ANG_1_DEG, 180*ANG_1_DEG};
+
+static int compass_state;
+
+
+typedef struct
+{
+
+	// Input data for calibration
+	// Collect during all possible angular poses
+	int min_x;
+	int max_x;
+	int min_y;
+	int max_y;
+
+	// Hard-iron removal
+	int offs_x;
+	int offs_y;
+
+	// Simple soft-iron removal
+	int scale_x;
+	int scale_y;
+} m_iron_calib_t;
+
+m_iron_calib_t m_iron_calib[6];
+
+void reset_compass_calib()
+{
+	for(int imu=2; imu<6; imu++)
+	{
+		m_iron_calib[imu].min_x = 10000;
+		m_iron_calib[imu].min_y = 10000;
+		m_iron_calib[imu].max_x = -10000;
+		m_iron_calib[imu].max_y = -10000;
+	}
+}
+
+
+static void calc_compass_calib(int imu)
+{
+	// Hard iron offsets
+	m_iron_calib[imu].offs_x = (m_iron_calib[imu].max_x + m_iron_calib[imu].min_x)/2;
+	m_iron_calib[imu].offs_y = (m_iron_calib[imu].max_y + m_iron_calib[imu].min_y)/2;
+
+	// Simple "good enough for now" soft iron correction: scale the ellipse so that its x width, y width are the same.
+
+	int avg_dx = (m_iron_calib[imu].max_x - m_iron_calib[imu].min_x)/2;
+	int avg_dy = (m_iron_calib[imu].max_y - m_iron_calib[imu].min_y)/2;
+	int avg_d = (avg_dx + avg_dy)/2;
+
+	// The absolute scale of the numbers is irrelevant. Here we use x16384 fixed point math.
+	// Could use floating point instead, but limiting the usage now when there is no reason to.
+
+	m_iron_calib[imu].scale_x = (16384*avg_d) / avg_dx;
+	m_iron_calib[imu].scale_y = (16384*avg_d) / avg_dy;
+}
+
+static inline int compass_x(int imu, int val)
+{
+	return (val - m_iron_calib[imu].offs_x) * m_iron_calib[imu].scale_x);
+}
+
+static inline int compass_y(int imu, int val)
+{
+	return (val - m_iron_calib[imu].offs_y) * m_iron_calib[imu].scale_y);
+}
+
+static void compass_fsm()
+{
+	switch(compass_state)
+	{
+		case 0:
+		{
+
+		} break;
+
+		case 1:
+		{
+			reset_compass_calib();
+			rotation_fsm(ROTA_CMD_START_POSANG);
+			state++;
+		} break;
+
+		case 2:
+		{
+			if(rotation_fsm(ROTA_CMD_POLL) >= 2)
+			{
+				rotation_fsm(ROTA_CMD_START_NEGANG);
+				state++;
+			}
+		} break;
+
+		case 3:
+		{
+			if(rotation_fsm(ROTA_CMD_POLL) >= 2)
+			{
+				rotation_fsm(ROTA_CMD_STOP);
+				for(int i=2; i<6; i++)
+					calc_compass_calib(i);
+				state++;
+			}
+		} break;
+
+		case 4:
+		{
+			// Calibrated
+		} break;
+
+		default: error(133); while(1);
+	}
+}
+
+
+void compass_handler() __attribute__((section(".text_itcm")));
+void compass_handler()
+{
+
+	uint32_t headings[6];
+
+	for(int imu=2; imu<6; imu++)
+	{
+		int16_t x = m_compensate_x(imu_m[imu].coords.x, imu_m[imu].coords.rhall, imu);
+		int16_t y = m_compensate_y(imu_m[imu].coords.y, imu_m[imu].coords.rhall, imu);
+		//int16_t z = m_compensate_z(imu_m[imu].coords.z, imu_m[imu].coords.rhall, imu);
+
+
+		if(compass_state >= 2 && compas_state <= 3)
+		{
+			if(x < m_iron_calib[imu].min_x)
+				m_iron_calib[imu].min_x = x;
+			if(y < m_iron_calib[imu].min_y)
+				m_iron_calib[imu].min_y = y;
+			if(x > m_iron_calib[imu].max_x)
+				m_iron_calib[imu].max_x = x;
+			if(y > m_iron_calib[imu].max_y)
+				m_iron_calib[imu].max_y = y;
+		}
+		else
+		{
+			int corr_x = compass_x(imu, x);
+			int corr_y = compass_y(imu, y);
+
+			uint32_t heading = (uint32_t) (4294967296.0 * (M_PI + -1*atan2(corr_y, corr_x)) / (2.0*M_PI));
+			heading += m_orientations[imu];
+			headings[imu] = heading;
+			if(compass_heading)
+			{
+				compass_heading->heading_per_imu[imu] = heading;
+				compass_heading->imus_valid |= 1<<imu;
+			}
+		}
+	}
+
+	// Average the headings.
+	// For proper wrap-around handling (i.e., think about averaging 359 and 1 together, which should result 0),
+	// all values are, if necessary, wrapped to mid-range (now think about averaging 179 and 181), then wrapped back.
+
+	int wrap = 0;
+	if(headings[2] < 90*ANG_1_DEG || headings[2] > 270*ANG_1_DEG)
+		wrap = 1;
+
+	if(wrap)
+	{
+		for(int i=2; i<6; i++)
+			headings[i] += ANG_180_DEG;
+	}
+
+	uint64_t acc = 0;
+	for(int i=2; i<6; i++)
+		acc += headings[i];
+
+	uint32_t avg = acc/4;
+
+	// Any measurement deviating a lot from others should be treated as failure
+	// If nothing else, averaging through wrapping fails if the differences are too big.
+	for(int i=2; i<6; i++)
+	{
+		if(abso(headings[i]-avg) > 30*ANG_1_DEG))
+		{
+			error(134); // TODO: bail out softly
+		}
+	}
+
+	if(wrap)
+		avg += ANG_180_DEG;
+
+	if(compass_heading)
+		compass_heading->combined_heading = avg;
+
+}
+
+static int gyro_calib_state;
+
+static int32_t gyro_mult_pos = 97695;
+static int32_t gyro_mult_neg = 96895;
+
+// Linear measurements are (mm*65536). Hall steps are (actual steps *256).
+// Both numenator and denominator are reduced by x256,
+// which is why wheel_diam[] is only x256 and HALL_STEPS_PER_TURN is directly number of actual hall steps
+static int32_t wheel_diam[2] = {790*256, 790*256};
+#define HALL_STEPS_PER_TURN (90)
+
+
+/*
+	Gyro DC offset is automatically cancelled, so it doesn't drift while the robot stays still.
+	What's left:
+	* Gain error
+	* Nonlinearity errors
+	* Acceleration-induced offset (caused by quick shaking, i.e., when travelling on uneven surface)
+
+	As a first order approximation, we do nonlinearity correction by dividing to two ranges: positive and
+	negative, having different gains for them. In the future, might add more steps, i.e., different gains
+	for different angular rate ranges.
+
+	Gain multipliers (positive and negative) need to be tuned automatically to compensate for gain drift
+	over time, temperature, etc. Basically, there are two ways to do this:
+	* Calibrate using visual clues
+	* Calibrate using compass
+
+	Compass is easier to implement on low level.
+
+
+	Compass has large absolute inaccuracy, but it's noncumulative.
+	Gyro has small relative inaccuracy, which cumulates to become large over time.
+
+	Rotating large enough number of full circles causes the compass absolute inaccuracy (which stays constant, say +/- 5 deg)
+	to become small compared to cumulated gyro inaccuracy (which cumulates, so say 1 deg/full circle -> 20 deg per 20 full circles).
+	At this point, we can approximate the compass reading as the "ground truth", and calculate the
+	correction factor for the gyro.
+*/
+
+static void calc_gyro_corr(uint32_t m_start, uint32_t m_end, uint32_t g_start, uint32_t g_end, int n_rounds)
+{
+	if(n_rounds > -5 && n_rounds < 5)
+		error(138);
+
+	// Ex.1: g_start = 90 deg, g_end = 92 deg, rounds=10  -> turned_by_g = 3600 + 2 deg
+	// Ex.2: g_start = 359 deg, g_end = 1 deg, rounds=10  -> turned_by_g = 3600 + 2 deg
+
+	int64_t turned_by_g = n_rounds*ANG_360_DEG_LL + (int32_t)(g_end - g_start);
+	int64_t turned_by_m = n_rounds*ANG_360_DEG_LL + (int32_t)(m_end - m_start);
+
+
+	if(n_rounds >= 0)
+	{
+		int32_t new_mult = ((int64_t)gyro_mult_pos*turned_by_m)/turned_by_g;
+		DBG_PR_VAR_I32(gyro_mult_pos);
+		DBG_PR_VAR_I32(new_mult);
+		gyro_mult_pos = new_mult;
+	}
+	else
+	{
+		int32_t new_mult = ((int64_t)gyro_mult_neg*turned_by_m)/turned_by_g;
+		DBG_PR_VAR_I32(gyro_mult_pos);
+		DBG_PR_VAR_I32(new_mult);
+		gyro_mult_neg = new_mult;
+	}
+
+}
+
+#define N_GYRO_CALIB_TURNS 10
+// Calibrates gyro with compass
+static void gyro_calib_fsm()
+{
+	static int timer;
+	static uint32_t compass_heading_start;
+	static uint32_t gyro_heading_start;
+	switch(gyro_calib_state)
+	{
+		case 0:
+		{
+
+		} break;
+
+		case 1:
+		{
+			compass_state = 1;
+			gyro_calib_state++;
+		} break;
+
+		case 2:
+		{
+			if(compass_state == 0)
+				gyro_calib_state = 0; // failure
+			else if(compass_state == 4)
+			{
+				timer = 100; // Let the gyro DC correction catch up
+				gyro_calib_state++;
+			}
+		} break;
+
+		case 3:
+		{
+			if(--timer <= 0)
+			{
+				compass_heading_start = latest_compass_heading;
+				gyro_heading_start = cur_pos.ang;
+				rotation_fsm(ROTA_CMD_START_POSANG);
+				gyro_calib_state++;
+			}
+		} break;
+
+		case 4:
+		{
+			if(rotation_fsm(ROTA_CMD_POLL) == N_GYRO_CALIB_TURNS)
+			{
+				rotation_fsm(ROTA_CMD_STOP);
+				timer = 50; // Let the robot stop properly
+				gyro_calib_state++;
+			}
+
+		} break;
+
+		case 5:
+		{
+			if(--timer <= 0)
+			{
+				calc_gyro_corr(compass_heading_start, latest_compass_heading, gyro_heading_start, cur_pos.ang, N_GYRO_CALIB_TURNS);
+
+				// Start another round in opposite direction
+				compass_heading_start = latest_compass_heading;
+				gyro_heading_start = cur_pos.ang;
+
+				rotation_fsm(ROTA_CMD_START_NEGANG);
+				gyro_calib_state++;
+			}
+		} break;
+
+		case 6:
+		{
+			if(rotation_fsm(ROTA_CMD_POLL) == N_GYRO_CALIB_TURNS)
+			{
+				rotation_fsm(ROTA_CMD_STOP);
+				timer = 50; // Let the robot stop properly
+				gyro_calib_state++;
+			}
+
+		} break;
+
+		case 7:
+		{
+			if(--timer <= 0)
+			{
+				calc_gyro_corr(compass_heading_start, latest_compass_heading, gyro_heading_start, cur_pos.ang, -1*N_GYRO_CALIB_TURNS);
+				gyro_calib_state++;
+			}
+		} break;
+
+		case 8:
+		{
+			// Gyro calibrated
+		} break;
+
+		default: error(136); while(1);
+	}
+}
+
+
 
 void drive_handler() __attribute__((section(".text_itcm")));
 void drive_handler()
@@ -460,14 +922,19 @@ void drive_handler()
 		int cur_gy_dccor = (cur_gy<<8) - (gyro_dc_y[imu]>>7);
 		int cur_gz_dccor = (cur_gz<<8) - (gyro_dc_z[imu]>>7);
 
-		if(cur_gz < -G_DC_MOTDET_TH || cur_gz > G_DC_MOTDET_TH || cur_gx < -G_DC_MOTDET_TH || cur_gx > G_DC_MOTDET_TH || cur_gy < -G_DC_MOTDET_TH || cur_gy > G_DC_MOTDET_TH ||
-		   ((ac_th_det_on>20000) && (cur_gz_dccor < -G_AC_MOTDET_TH || cur_gz_dccor > G_AC_MOTDET_TH || cur_gx_dccor < -G_AC_MOTDET_TH || cur_gx_dccor > G_AC_MOTDET_TH || cur_gy_dccor < -G_AC_MOTDET_TH || cur_gy_dccor > G_AC_MOTDET_TH)))
+		// Detect any movement with all gyro axes.
+		// Use larger limits to directly evaluate uncorrected raw values
+		// After the DC correction filter is up and running, use DC-offset-corrected
+		// values with tighter motion detection thresholds.
+		if(cur_gz < -G_DC_MOTDET_TH || cur_gz > G_DC_MOTDET_TH || 
+		   cur_gx < -G_DC_MOTDET_TH || cur_gx > G_DC_MOTDET_TH ||
+		   cur_gy < -G_DC_MOTDET_TH || cur_gy > G_DC_MOTDET_TH ||
+		   ((ac_th_det_on>20000) && (
+		   cur_gz_dccor < -G_AC_MOTDET_TH || cur_gz_dccor > G_AC_MOTDET_TH ||
+		   cur_gx_dccor < -G_AC_MOTDET_TH || cur_gx_dccor > G_AC_MOTDET_TH ||
+		   cur_gy_dccor < -G_AC_MOTDET_TH || cur_gy_dccor > G_AC_MOTDET_TH)))
 		{
 			robot_moves();
-		}
-		else
-		{
-			robot_doesnt_move();
 		}
 
 		if(is_robot_moving())
@@ -481,7 +948,6 @@ void drive_handler()
 //			led_status(9, BLACK, LED_MODE_KEEP);
 //			led_status(0, BLACK, LED_MODE_KEEP);
 //			led_status(1, BLACK, LED_MODE_KEEP);
-			if(ac_th_det_on < 100000) ac_th_det_on++;
 			gyro_dc_x[imu] = ((cur_gx<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_x[0])>>G_DC_FILT;
 			gyro_dc_y[imu] = ((cur_gy<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_y[0])>>G_DC_FILT;
 			gyro_dc_z[imu] = ((cur_gz<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_z[0])>>G_DC_FILT;
@@ -553,6 +1019,9 @@ void drive_handler()
 		a_z += -1*cur_az;
 	}
 
+	if(moving > 0)
+		moving--;
+
 	g_pitch /= 6;
 	g_roll /= 6;
 	g_yaw /= 6;
@@ -579,19 +1048,10 @@ void drive_handler()
 
 	if(ac_th_det_on>10000)
 	{
-/*
 		if(g_yaw > 0)
-			cur_pos.ang += (97559LL*(int64_t)g_yaw)>>16;
+			cur_pos.ang += ((int64_t)gyro_mult_pos*(int64_t)g_yaw)>>16;
 		else
-			cur_pos.ang += (97276LL*(int64_t)g_yaw)>>16;
-*/
-
-		// Pos dir: drifts a little in pos dir with  97995    drifts in pos dir with 98095    drifts in pos dir with 98010
-		// Neg dir: drifts in neg dir   97295    in  pos dir 96295
-		if(g_yaw > 0)
-			cur_pos.ang += (97695LL*(int64_t)g_yaw)>>16;
-		else
-			cur_pos.ang += (96895LL*(int64_t)g_yaw)>>16;
+			cur_pos.ang += ((int64_t)gyro_mult_neg*(int64_t)g_yaw)>>16;
 
 		cur_pos.pitch += (97495LL*(int64_t)g_pitch)>>16;
 		cur_pos.roll += (97495LL*(int64_t)g_roll)>>16;
@@ -614,9 +1074,11 @@ void drive_handler()
 
 			ac_th_det_on = 0;
 		}
+
 	}
 
-#define WHEEL_DIAM_MM 790LL
+	if(ac_th_det_on < 100000) ac_th_det_on++;
+
 
 	uint32_t mpos[2];
 	mpos[0] = bldc_pos[0];
@@ -642,10 +1104,10 @@ void drive_handler()
 	prevpos[0] = mpos[0];
 	prevpos[1] = mpos[1];
 
-	if(deltapos[0] < -1000 || deltapos[0] > 1000 || deltapos[1] < -1000 || deltapos[1] > 1000) error(132);
+	if(deltapos[0] < -1000 || deltapos[0] > 1000 || deltapos[1] < -1000 || deltapos[1] > 1000) error(135);
 
-	deltapos[0] *= (WHEEL_DIAM_MM<<16)/(90*256);
-	deltapos[1] *= -1*(WHEEL_DIAM_MM<<16)/(90*256);
+	deltapos[0] *= wheel_diam[0]/HALL_STEPS_PER_TURN;
+	deltapos[1] *= -1*wheel_diam[1]/HALL_STEPS_PER_TURN;
 
 	int32_t fwd = (deltapos[0] + deltapos[1])>>1;
 
@@ -762,7 +1224,7 @@ void drive_handler()
 #endif
 
 	// Over 100 meters is an error.
-	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(133);
+	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(136);
 
 
 	static int correcting_angle = 1;
@@ -876,6 +1338,10 @@ void drive_handler()
 	// We know the target wheel positions, but limit the rate of change
 	int ang_speed_i = (int)ang_speed;
 	int lin_speed_i = (int)lin_speed;
+
+	if(ang_speed_i != 0 || lin_speed_i != 0)
+		robot_moves();
+
 	int dbg5, dbg6;
 	for(int m=0; m<2; m++)
 	{

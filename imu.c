@@ -503,6 +503,7 @@ volatile m_dma_packet_t m_packet5 __attribute__((aligned(4))) __attribute__((sec
 
 volatile a_dma_packet_t * const imu_a[6] = {&a_packet0, &a_packet1, &a_packet2, &a_packet3, &a_packet4, &a_packet5};
 volatile g_dma_packet_t * const imu_g[6] = {&g_packet0, &g_packet1, &g_packet2, &g_packet3, &g_packet4, &g_packet5};
+volatile m_dma_packet_t * const imu_m[6] = {&m_packet0, &m_packet1, &m_packet2, &m_packet3, &m_packet4, &m_packet5};
 
 
 // A & G read commands are the same: start with 0xbf, then don't care.
@@ -1099,6 +1100,11 @@ static void inthandler10()
 	last_handler = 10;
 	TIM3->SR = 0UL;
 	DESEL_M135();
+
+	// M data is finished. Generate software interrupt to do the processing at lower interrupt priority than our current context.
+	// This trigs the compass_handler in drive.c:
+	NVIC->STIR = 148;
+
 	ag01_nondma();
 	ag23_nondma();
 	ag45_nondma();
