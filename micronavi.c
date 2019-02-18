@@ -31,7 +31,7 @@ int total_front_accum, total_front_accum_cnt;
 
 #ifdef CONTACTS_ON_BACK
 
-	#define CHAFIND_FIRST_DIST 820
+	#define CHAFIND_FIRST_DIST 850
 	#define CHAFIND_FIRST_DIST_TOLERANCE 35
 
 	#define CHAFIND_PASS1_ACCEPT_ANGLE (2*ANG_1_DEG) 
@@ -437,7 +437,7 @@ void navig_fsm2_for_charger()
 		{
 			if(!is_driving())
 			{
-				timer=2;
+				timer=20;
 				chafind_state++;
 			}
 		}
@@ -464,8 +464,8 @@ void navig_fsm2_for_charger()
 		{
 			if(!is_driving())
 			{
-				timer = 2;
-				chafind_state = CHAFIND_WAIT_FWD1_STOPEXTRA1;
+				timer = 20;
+				chafind_state = CHAFIND_WAIT_FWD2_STOPEXTRA1;
 			}
 		}
 		break;
@@ -483,12 +483,9 @@ void navig_fsm2_for_charger()
 
 		case CHAFIND_WAIT_FWD2_STOPEXTRA1:
 		{
-			error(555);
 			if(--timer == 0)
 			{
-				chafind_state++;
-				total_front_accum = 0;
-				total_front_accum_cnt = 0;
+				chafind_state = CHAFIND_START;
 			}
 		}
 		break;
