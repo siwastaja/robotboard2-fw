@@ -541,7 +541,8 @@ static const m_dma_packet_t  m_bdma_command __attribute__((aligned(4))) __attrib
 // 1 = BOSCH enhanced regular preset: 0.8 mA
 // 2 = midway between 1 and 3: around 2.5 mA
 // 3 = BOSCH high accuracy preset: 4.9 mA
-#define M_ACCURACY 1
+// The amount of noise is staggering. Must use the highest preset, and average afterwards as well.
+#define M_ACCURACY 3
 
 #if M_ACCURACY == 0
 #define M_NUM_XY_REPETITIONS 9
@@ -1856,6 +1857,9 @@ void init_imu()
 
 	NVIC_SetPriority(147, INTPRIO_SOFTWARE);
 	NVIC_EnableIRQ(147);
+
+	NVIC_SetPriority(148, INTPRIO_SOFTWARE);
+	NVIC_EnableIRQ(148);
 
 	set_timer(50000);
 }
