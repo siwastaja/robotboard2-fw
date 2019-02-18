@@ -237,6 +237,26 @@ int calc_avg_ampl_x256(int16_t* dcs20_in, int16_t* dcs31_in)
 	return avg;
 }
 
+int calc_avg_ampl_x256_narrow(int16_t* dcs20_in, int16_t* dcs31_in)
+{
+	uint32_t accum = 0;
+	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
+	{
+		int16_t dcs20 = dcs20_in[i];
+		int16_t dcs31 = dcs31_in[i];
+		int ampl;
+		#ifdef FAST_APPROX_AMPLITUDE
+			ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
+		#else
+			ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
+		#endif
+
+		accum += ampl;
+	}
+	uint32_t avg = (256*accum)/(TOF_XS_NARROW*TOF_YS_NARROW);
+	return avg;
+}
+
 int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in) __attribute__((section(".text_itcm")));
 int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in)
 {
@@ -396,8 +416,8 @@ void compensated_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t
 }
 
 
-int flare_factor = 10;
-int flare_factor_narrow = 6;
+int flare_factor = 17;
+int flare_factor_narrow = 7;
 
 #if 0
 void adjust()
@@ -873,7 +893,8 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *d
 				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
 			}
 
-			ampl /= HDR_FACTOR; if(ampl>255) ampl=255;
+			// ampl /= HDR_FACTOR; 
+			if(ampl>255) ampl=255;
 
 		}
 		ampl_out[i] = ampl;
@@ -972,7 +993,8 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint
 				dist = lookup_dist(1, pixgroup, dcs31, dcs20);
 			}
 
-			ampl /= HDR_FACTOR; if(ampl>255) ampl=255;
+			//ampl /= HDR_FACTOR;
+			if(ampl>255) ampl=255;
 
 		}
 		ampl_out[i] = ampl;
@@ -1293,15 +1315,15 @@ sensor_mount_t sensor_mounts[N_SENSORS] =
 {          //      mountmode    x     y       hor ang           ver ang      height    
  /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 2),         300 },
 
- /*1:                */ { 1,   130,   103, DEGTOANG16(    24.4), DEGTOANG16( 5.4),       310  },
- /*2:                */ { 2,  -235,   215, DEGTOANG16(    66.4), DEGTOANG16( 2.4),       310  },
- /*3:                */ { 1,  -380,   215, DEGTOANG16(    86.5), DEGTOANG16( 2.9),       310  },
- /*4:                */ { 2,  -522,   103, DEGTOANG16(   157.4), DEGTOANG16( 4.9),       280  },
- /*5:                */ { 1,  -522,    35, DEGTOANG16(   183.4), DEGTOANG16( 7.9),       260  },
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(   206.8), DEGTOANG16( 5.4),       290  },
- /*7:                */ { 2,  -380,  -215, DEGTOANG16(   268.5), DEGTOANG16( 4.4),       280  },
- /*8:                */ { 1,  -235,  -215, DEGTOANG16(   294.9), DEGTOANG16( 5.4),       300  },
- /*9:                */ { 2,   130,  -103, DEGTOANG16(   334.9), DEGTOANG16( -0.9),      320  }
+ /*1:                */ { 1,   130,   103, DEGTOANG16(    24.4), DEGTOANG16( 4.4),       310  }, // -1
+ /*2:                */ { 2,  -235,   215, DEGTOANG16(    66.4), DEGTOANG16( 1.4),       310  }, // -1
+ /*3:                */ { 1,  -380,   215, DEGTOANG16(    86.5), DEGTOANG16( 1.9),       310  }, // -1
+ /*4:                */ { 2,  -522,   103, DEGTOANG16(   157.4), DEGTOANG16( 3.9),       280  }, // -1
+ /*5:                */ { 1,  -522,    35, DEGTOANG16(   184.0), DEGTOANG16( 6.9),       260  }, // -1
+ /*6:                */ { 1,  -522,  -103, DEGTOANG16(   206.0), DEGTOANG16( 4.4),       290  }, // -1
+ /*7:                */ { 2,  -380,  -215, DEGTOANG16(   268.5), DEGTOANG16( 3.4),       280  }, // -1
+ /*8:                */ { 1,  -235,  -215, DEGTOANG16(   294.9), DEGTOANG16( 4.4),       300  }, // -1
+ /*9:                */ { 2,   130,  -103, DEGTOANG16(   334.9), DEGTOANG16( -0.9),      320  }  // 0
 };
 
 void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
@@ -1694,10 +1716,10 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 
 				// VACUUM APP: Ignore the nozzle
 				#define NOZZLE_WIDTH 760
-				if(local_z < 150 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+				if(local_z < 200 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
 					continue;
 
-				#define OBST_MARGIN (50)
+				#define OBST_MARGIN (100)
 
 				#define OBST_AVOID_WIDTH (600+OBST_MARGIN)
 
@@ -1707,12 +1729,12 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 					{
 						if(local_x >= 100 && local_x < 450+OBST_MARGIN)
 							obstacle_front_near++;
-						if(local_x >= 450+OBST_MARGIN && local_x < 550+OBST_MARGIN)
+						if(local_x >= 450+OBST_MARGIN && local_x < 650+OBST_MARGIN)
 							obstacle_front_far++;
 
 						if(local_x <= -450 && local_x > -700-OBST_MARGIN)
 							obstacle_back_near++;
-						if(local_x <= -700-OBST_MARGIN && local_x > -800-OBST_MARGIN)
+						if(local_x <= -700-OBST_MARGIN && local_x > -900-OBST_MARGIN)
 							obstacle_back_far++;
 					}
 
@@ -2167,7 +2189,7 @@ void tof_to_obstacle_avoidance(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, 
 
 
 				// VACUUM APP: Ignore the nozzle
-				if(local_z < 150 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+				if(local_z < 200 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
 					continue;
 
 				if(local_z > 120 && local_z < 1200)
@@ -2176,12 +2198,12 @@ void tof_to_obstacle_avoidance(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, 
 					{
 						if(local_x >= 100 && local_x < 450+OBST_MARGIN)
 							obstacle_front_near++;
-						if(local_x >= 450+OBST_MARGIN && local_x < 550+OBST_MARGIN)
+						if(local_x >= 450+OBST_MARGIN && local_x < 650+OBST_MARGIN)
 							obstacle_front_far++;
 
 						if(local_x <= -450 && local_x > -700-OBST_MARGIN)
 							obstacle_back_near++;
-						if(local_x <= -700-OBST_MARGIN && local_x > -800-OBST_MARGIN)
+						if(local_x <= -700-OBST_MARGIN && local_x > -900-OBST_MARGIN)
 							obstacle_back_far++;
 					}
 

@@ -95,6 +95,7 @@ int32_t calc_widnar_correction(int32_t* corr, uint8_t *wid_ampl, uint16_t *wid_d
 void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg);
 void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg);
 int calc_avg_ampl_x256(int16_t* dcs20_in, int16_t* dcs31_in);
+int calc_avg_ampl_x256_narrow(int16_t* dcs20_in, int16_t* dcs31_in);
 int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in);
 
 
