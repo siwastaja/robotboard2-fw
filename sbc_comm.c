@@ -774,6 +774,12 @@ void parse_rx_packet()
 			}
 			break;
 
+
+			case CMD_SELF_CALIB_REQUEST:
+			{
+				self_calib();
+			}
+			break;
 			
 			default:
 			{
