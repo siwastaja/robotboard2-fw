@@ -142,7 +142,7 @@ m_calib_t m_calib[6];
 
 */
 
-static int16_t m_compensate_x(int16_t x_in, uint16_t rhall_in, int idx)
+int16_t m_compensate_x(int16_t x_in, uint16_t rhall_in, int idx)
 {
 	// Remove any status/don't care bits and shift to actual width
 	x_in >>= 3;
@@ -182,7 +182,7 @@ static int16_t m_compensate_x(int16_t x_in, uint16_t rhall_in, int idx)
 
 
 
-static int16_t m_compensate_y(int16_t y_in, uint16_t rhall_in, int idx)
+int16_t m_compensate_y(int16_t y_in, uint16_t rhall_in, int idx)
 {
 	// Remove any status/don't care bits and shift to actual width
 	y_in >>= 3;
@@ -203,7 +203,7 @@ static int16_t m_compensate_y(int16_t y_in, uint16_t rhall_in, int idx)
 	int32_t tmp8;
 	int32_t tmp9;
 
-	tmp1 = (((int32_t)m_calib[idx].xyz1) * 16384) / tmp0;
+	tmp1 = (((int32_t)m_calib[idx].xyz1) * 16384) / rhall_in;
 	tmp2 = ((uint16_t)tmp1) - ((uint16_t)0x4000);
 	ret = ((int16_t)tmp2);
 	tmp3 = ((int32_t) ret) * ((int32_t)ret);
@@ -222,7 +222,7 @@ static int16_t m_compensate_y(int16_t y_in, uint16_t rhall_in, int idx)
 #define BMM150_NEGATIVE_SATURATION_Z -32767
 #define BMM150_POSITIVE_SATURATION_Z 32767
 
-static int16_t m_compensate_z(int16_t z_in, uint16_t rhall_in, int idx)
+int16_t m_compensate_z(int16_t z_in, uint16_t rhall_in, int idx)
 {
 	// Remove any status/don't care bits and shift to actual width
 	z_in >>= 1;
