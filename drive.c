@@ -62,7 +62,7 @@ int is_driving()
 
 static double max_ang_speed = 13.0; // steps per cycle
 static double min_ang_speed = 3.0;
-static double max_lin_speed = 45.0;
+static double max_lin_speed = 30.0;
 static double min_lin_speed = 5.0;
 
 void set_top_speed_max(int old_style_value)
@@ -236,6 +236,15 @@ void cmd_stop_movement()
 	stop();
 	micronavi_status = 0;
 	lock_processing = 0;
+}
+
+static int start_self_calib;
+
+void self_calib()
+{
+	//uart_print_string_blocking("self_calib()\r\n");
+
+	start_self_calib = 1;
 }
 
 static int ignore_front, ignore_left, ignore_back, ignore_right;
@@ -420,16 +429,19 @@ static int rotation_fsm(int cmd)
 
 	if(cmd == ROTA_CMD_STOP_ABRUPT)
 	{
+		cmd_motors(1000);
 		state = 0;
 		stop();
 	}
 	else if(cmd == ROTA_CMD_STOP)
 	{
+		cmd_motors(1000);
 		state = 0;
 		ang_to_target = start_ang;
 	}
 	else if(cmd == ROTA_CMD_START_POSANG)
 	{
+		cmd_motors(1000);
 		start_ang = cur_pos.ang;
 		n_rounds = 0;
 		expecting_full_turn = 0;
@@ -437,6 +449,7 @@ static int rotation_fsm(int cmd)
 	}
 	else if(cmd == ROTA_CMD_START_NEGANG)
 	{
+		cmd_motors(1000);
 		start_ang = cur_pos.ang;
 		n_rounds = 0;
 		expecting_full_turn = 0;
@@ -451,7 +464,7 @@ static int rotation_fsm(int cmd)
 		case 1:
 		{
 			int32_t diff_from_start = cur_pos.ang - start_ang;
-			if(diff_from_start > -30 && diff_from_start < -20)
+			if(diff_from_start > -30*ANG_1_DEG && diff_from_start < -20*ANG_1_DEG)
 			{
 				// Almost a full turn - set a sub-state
 				expecting_full_turn = 1;
@@ -463,14 +476,16 @@ static int rotation_fsm(int cmd)
 				expecting_full_turn = 0;
 			}
 
-			ang_to_target = cur_pos.ang + ANG_45_DEG;
+			cmd_motors(1000);
+
+			ang_to_target = cur_pos.ang + 45*ANG_1_DEG;
 
 		} break;
 
 		case 2:
 		{
 			int32_t diff_from_start = cur_pos.ang - start_ang;
-			if(diff_from_start > 20 && diff_from_start < 30)
+			if(diff_from_start > 20*ANG_1_DEG && diff_from_start < 30*ANG_1_DEG)
 			{
 				// Almost a full turn - set a sub-state
 				expecting_full_turn = 1;
@@ -482,7 +497,9 @@ static int rotation_fsm(int cmd)
 				expecting_full_turn = 0;
 			}
 
-			ang_to_target = cur_pos.ang - ANG_45_DEG;
+			cmd_motors(1000);
+
+			ang_to_target = cur_pos.ang - 45*ANG_1_DEG;
 
 		} break;
 
@@ -493,16 +510,19 @@ static int rotation_fsm(int cmd)
 }
 
 
-static int m_min_x[6];
-static int m_min_y[6];
-static int m_max_x[6];
-static int m_max_y[6];
-
 // IMU magnetometer orientations on the PCB, 0 degrees = East, 90 degrees = North
-static const uint32_t m_orientations[6] = {270*ANG_1_DEG, 90*ANG_1_DEG, 0*ANG_1_DEG, 180*ANG_1_DEG, 0*ANG_1_DEG, 180*ANG_1_DEG};
+static const uint32_t m_orientations[6] = {270*UANG_1_DEG, 90*UANG_1_DEG, 0*UANG_1_DEG, 180*UANG_1_DEG, 0*UANG_1_DEG, 180*UANG_1_DEG};
 
+static const int     m_num    = 3;
+static const uint8_t m_use[6] = {0,0,1,1,0,1};
+
+
+static int init_calib_state = 0;
 static int compass_state;
+static int gyro_calib_state;
 
+
+static uint32_t latest_compass_heading;
 
 typedef struct
 {
@@ -527,7 +547,7 @@ m_iron_calib_t m_iron_calib[6];
 
 void reset_compass_calib()
 {
-	for(int imu=2; imu<6; imu++)
+	for(int imu=0; imu<6; imu++)
 	{
 		m_iron_calib[imu].min_x = 10000;
 		m_iron_calib[imu].min_y = 10000;
@@ -558,12 +578,12 @@ static void calc_compass_calib(int imu)
 
 static inline int compass_x(int imu, int val)
 {
-	return (val - m_iron_calib[imu].offs_x) * m_iron_calib[imu].scale_x);
+	return (val - m_iron_calib[imu].offs_x) * m_iron_calib[imu].scale_x;
 }
 
 static inline int compass_y(int imu, int val)
 {
-	return (val - m_iron_calib[imu].offs_y) * m_iron_calib[imu].scale_y);
+	return (val - m_iron_calib[imu].offs_y) * m_iron_calib[imu].scale_y;
 }
 
 static void compass_fsm()
@@ -577,28 +597,33 @@ static void compass_fsm()
 
 		case 1:
 		{
+			max_ang_speed = 7.0;
 			reset_compass_calib();
 			rotation_fsm(ROTA_CMD_START_POSANG);
-			state++;
+			compass_state++;
 		} break;
 
 		case 2:
 		{
-			if(rotation_fsm(ROTA_CMD_POLL) >= 2)
+			if(rotation_fsm(ROTA_CMD_POLL) >= 4)
 			{
 				rotation_fsm(ROTA_CMD_START_NEGANG);
-				state++;
+				compass_state++;
 			}
 		} break;
 
 		case 3:
 		{
-			if(rotation_fsm(ROTA_CMD_POLL) >= 2)
+			if(rotation_fsm(ROTA_CMD_POLL) >= 4)
 			{
 				rotation_fsm(ROTA_CMD_STOP);
-				for(int i=2; i<6; i++)
-					calc_compass_calib(i);
-				state++;
+				max_ang_speed = 12.0;
+				for(int i=0; i<6; i++)
+				{
+					if(m_use[i])
+						calc_compass_calib(i);
+				}
+				compass_state++;
 			}
 		} break;
 
@@ -611,21 +636,23 @@ static void compass_fsm()
 	}
 }
 
+static void gyro_calib_fsm();
 
 void compass_handler() __attribute__((section(".text_itcm")));
 void compass_handler()
 {
-
 	uint32_t headings[6];
 
-	for(int imu=2; imu<6; imu++)
+	for(int imu=0; imu<6; imu++)
 	{
-		int16_t x = m_compensate_x(imu_m[imu].coords.x, imu_m[imu].coords.rhall, imu);
-		int16_t y = m_compensate_y(imu_m[imu].coords.y, imu_m[imu].coords.rhall, imu);
-		//int16_t z = m_compensate_z(imu_m[imu].coords.z, imu_m[imu].coords.rhall, imu);
+		if(!m_use[imu])
+			continue;
 
+		int16_t x = m_compensate_x(imu_m[imu]->coords.x, imu_m[imu]->coords.rhall, imu);
+		int16_t y = m_compensate_y(imu_m[imu]->coords.y, imu_m[imu]->coords.rhall, imu);
+		//int16_t z = m_compensate_z(imu_m[imu]->coords.z, imu_m[imu]->coords.rhall, imu);
 
-		if(compass_state >= 2 && compas_state <= 3)
+		if(compass_state >= 2 && compass_state <= 3)
 		{
 			if(x < m_iron_calib[imu].min_x)
 				m_iron_calib[imu].min_x = x;
@@ -636,14 +663,30 @@ void compass_handler()
 			if(y > m_iron_calib[imu].max_y)
 				m_iron_calib[imu].max_y = y;
 		}
-		else
+		else if(compass_state == 4)
 		{
 			int corr_x = compass_x(imu, x);
 			int corr_y = compass_y(imu, y);
 
+/*
+			DBG_PR_VAR_I32(imu);
+			DBG_PR_VAR_I32(m_iron_calib[imu].min_x);
+			DBG_PR_VAR_I32(m_iron_calib[imu].max_x);
+			DBG_PR_VAR_I32(m_iron_calib[imu].min_y);
+			DBG_PR_VAR_I32(m_iron_calib[imu].max_y);
+			DBG_PR_VAR_I32(m_iron_calib[imu].offs_x);
+			DBG_PR_VAR_I32(m_iron_calib[imu].offs_y);
+			DBG_PR_VAR_I32(m_iron_calib[imu].scale_x);
+			DBG_PR_VAR_I32(m_iron_calib[imu].scale_y);
+			DBG_PR_VAR_I32(x);
+			DBG_PR_VAR_I32(y);
+			DBG_PR_VAR_I32(corr_x);
+			DBG_PR_VAR_I32(corr_y);
+*/
 			uint32_t heading = (uint32_t) (4294967296.0 * (M_PI + -1*atan2(corr_y, corr_x)) / (2.0*M_PI));
 			heading += m_orientations[imu];
 			headings[imu] = heading;
+
 			if(compass_heading)
 			{
 				compass_heading->heading_per_imu[imu] = heading;
@@ -656,41 +699,75 @@ void compass_handler()
 	// For proper wrap-around handling (i.e., think about averaging 359 and 1 together, which should result 0),
 	// all values are, if necessary, wrapped to mid-range (now think about averaging 179 and 181), then wrapped back.
 
-	int wrap = 0;
-	if(headings[2] < 90*ANG_1_DEG || headings[2] > 270*ANG_1_DEG)
-		wrap = 1;
-
-	if(wrap)
+	if(compass_state == 4)
 	{
-		for(int i=2; i<6; i++)
-			headings[i] += ANG_180_DEG;
+		int wrap = 0;
+		int first = 0;
+		while(!m_use[first]) first++;
+
+		if(headings[first] < 90*UANG_1_DEG || headings[first] > 270*UANG_1_DEG)
+			wrap = 1;
+
+		if(wrap)
+		{
+			for(int i=0; i<6; i++)
+				headings[i] += ANG_180_DEG;
+		}
+
+		uint64_t acc = 0;
+		for(int i=0; i<6; i++)
+		{
+			if(!m_use[i])
+				continue;
+			acc += headings[i];
+		}
+
+		uint32_t avg = acc/m_num;
+
+		// Any measurement deviating a lot from others should be treated as failure
+		// If nothing else, averaging through wrapping fails if the differences are too big.
+		for(int i=0; i<6; i++)
+		{
+			if(!m_use[i])
+				continue;
+			if(abso(headings[i]-avg) > 45*ANG_1_DEG)
+			{
+//				error(134); // TODO: bail out softly
+			}
+		}
+
+		if(wrap)
+			avg += ANG_180_DEG;
+
+		latest_compass_heading = avg;
+
+		if(compass_heading)
+			compass_heading->combined_heading = avg;
 	}
 
-	uint64_t acc = 0;
-	for(int i=2; i<6; i++)
-		acc += headings[i];
-
-	uint32_t avg = acc/4;
-
-	// Any measurement deviating a lot from others should be treated as failure
-	// If nothing else, averaging through wrapping fails if the differences are too big.
-	for(int i=2; i<6; i++)
+	if(start_self_calib)
 	{
-		if(abso(headings[i]-avg) > 30*ANG_1_DEG))
+		//DBG_PR_VAR_I16(start_self_calib);
+		//compass_state = 1;
+		gyro_calib_state = 1;
+		start_self_calib = 0;
+	}
+
+	gyro_calib_fsm();
+	compass_fsm();
+
+	static int cnt = 0;
+	if((gyro_calib_state > 0 && gyro_calib_state < 8) || (compass_state > 0 && compass_state < 4) || (init_calib_state > 0))
+	{
+		cnt++;
+		if(cnt >= 20)
 		{
-			error(134); // TODO: bail out softly
+			cnt = 0;
+			beep(75, 800, -600, 30);
 		}
 	}
 
-	if(wrap)
-		avg += ANG_180_DEG;
-
-	if(compass_heading)
-		compass_heading->combined_heading = avg;
-
 }
-
-static int gyro_calib_state;
 
 static int32_t gyro_mult_pos = 97695;
 static int32_t gyro_mult_neg = 96895;
@@ -698,7 +775,8 @@ static int32_t gyro_mult_neg = 96895;
 // Linear measurements are (mm*65536). Hall steps are (actual steps *256).
 // Both numenator and denominator are reduced by x256,
 // which is why wheel_diam[] is only x256 and HALL_STEPS_PER_TURN is directly number of actual hall steps
-static int32_t wheel_diam[2] = {790*256, 790*256};
+
+static int32_t wheel_diam[2] = {765*256, 765*256};
 #define HALL_STEPS_PER_TURN (90)
 
 
@@ -741,31 +819,36 @@ static void calc_gyro_corr(uint32_t m_start, uint32_t m_end, uint32_t g_start, u
 	int64_t turned_by_g = n_rounds*ANG_360_DEG_LL + (int32_t)(g_end - g_start);
 	int64_t turned_by_m = n_rounds*ANG_360_DEG_LL + (int32_t)(m_end - m_start);
 
+	//DBG_PR_VAR_I32(turned_by_g/ANG_0_1_DEG);
+	//DBG_PR_VAR_I32(turned_by_m/ANG_0_1_DEG);
 
 	if(n_rounds >= 0)
 	{
 		int32_t new_mult = ((int64_t)gyro_mult_pos*turned_by_m)/turned_by_g;
-		DBG_PR_VAR_I32(gyro_mult_pos);
-		DBG_PR_VAR_I32(new_mult);
+		//DBG_PR_VAR_I32(gyro_mult_pos);
+		//DBG_PR_VAR_I32(new_mult);
 		gyro_mult_pos = new_mult;
 	}
 	else
 	{
 		int32_t new_mult = ((int64_t)gyro_mult_neg*turned_by_m)/turned_by_g;
-		DBG_PR_VAR_I32(gyro_mult_pos);
-		DBG_PR_VAR_I32(new_mult);
+		//DBG_PR_VAR_I32(gyro_mult_neg);
+		//DBG_PR_VAR_I32(new_mult);
 		gyro_mult_neg = new_mult;
 	}
 
 }
 
-#define N_GYRO_CALIB_TURNS 10
+#define N_GYRO_CALIB_TURNS 30
 // Calibrates gyro with compass
 static void gyro_calib_fsm()
 {
 	static int timer;
 	static uint32_t compass_heading_start;
 	static uint32_t gyro_heading_start;
+	static int wrap;
+	static uint64_t accum;
+	static int n_accum;
 	switch(gyro_calib_state)
 	{
 		case 0:
@@ -777,27 +860,48 @@ static void gyro_calib_fsm()
 		{
 			compass_state = 1;
 			gyro_calib_state++;
+			//DBG_PR_VAR_I32(gyro_calib_state);
 		} break;
 
 		case 2:
 		{
 			if(compass_state == 0)
+			{
 				gyro_calib_state = 0; // failure
+				//DBG_PR_VAR_I32(gyro_calib_state);
+			}
 			else if(compass_state == 4)
 			{
-				timer = 100; // Let the gyro DC correction catch up
+				timer = 350; // Let the gyro DC correction catch up - also average the compass
+				if(latest_compass_heading < 90*UANG_1_DEG || latest_compass_heading > 270*UANG_1_DEG)
+					wrap = 1;
+				else
+					wrap = 0;
+				accum = 0;
+				n_accum = 0;
 				gyro_calib_state++;
+				//DBG_PR_VAR_I32(gyro_calib_state);
 			}
 		} break;
 
 		case 3:
 		{
+			if(timer < 300)
+			{
+				accum += (uint64_t) ((uint32_t)latest_compass_heading + (uint32_t)(wrap?(UANG_180_DEG):0));
+				n_accum++;
+			}
+
 			if(--timer <= 0)
 			{
-				compass_heading_start = latest_compass_heading;
+				compass_heading_start = (uint32_t)(accum / n_accum) + (uint32_t)(wrap?(UANG_180_DEG):0);
 				gyro_heading_start = cur_pos.ang;
+				max_ang_speed = 8.0;
 				rotation_fsm(ROTA_CMD_START_POSANG);
 				gyro_calib_state++;
+				//DBG_PR_VAR_I32(compass_heading_start/UANG_1_DEG);
+				//DBG_PR_VAR_I32(gyro_heading_start/UANG_1_DEG);
+				//DBG_PR_VAR_I32(gyro_calib_state);
 			}
 		} break;
 
@@ -806,24 +910,40 @@ static void gyro_calib_fsm()
 			if(rotation_fsm(ROTA_CMD_POLL) == N_GYRO_CALIB_TURNS)
 			{
 				rotation_fsm(ROTA_CMD_STOP);
-				timer = 50; // Let the robot stop properly
+				timer = 350; // Let the robot stop properly, average the compass after that
+				accum = 0;
+				n_accum = 0;
 				gyro_calib_state++;
+				//DBG_PR_VAR_I32(gyro_calib_state);
 			}
 
 		} break;
 
 		case 5:
 		{
+			if(timer < 300)
+			{
+				accum += (uint64_t) ((uint32_t)latest_compass_heading + (uint32_t)(wrap?(UANG_180_DEG):0));
+				n_accum++;
+			}
+
 			if(--timer <= 0)
 			{
-				calc_gyro_corr(compass_heading_start, latest_compass_heading, gyro_heading_start, cur_pos.ang, N_GYRO_CALIB_TURNS);
+				uint32_t gyro_heading_end = cur_pos.ang;
+				uint32_t compass_heading_end = (uint32_t)(accum / n_accum) + (uint32_t)(wrap?(UANG_180_DEG):0);
+
+				//DBG_PR_VAR_U32(compass_heading_end/UANG_1_DEG);
+				//DBG_PR_VAR_U32(gyro_heading_end/UANG_1_DEG);
+
+				calc_gyro_corr(compass_heading_start, compass_heading_end, gyro_heading_start, gyro_heading_end, N_GYRO_CALIB_TURNS);
 
 				// Start another round in opposite direction
-				compass_heading_start = latest_compass_heading;
+				compass_heading_start = compass_heading_end;
 				gyro_heading_start = cur_pos.ang;
 
 				rotation_fsm(ROTA_CMD_START_NEGANG);
 				gyro_calib_state++;
+				//DBG_PR_VAR_I32(gyro_calib_state);
 			}
 		} break;
 
@@ -832,18 +952,45 @@ static void gyro_calib_fsm()
 			if(rotation_fsm(ROTA_CMD_POLL) == N_GYRO_CALIB_TURNS)
 			{
 				rotation_fsm(ROTA_CMD_STOP);
-				timer = 50; // Let the robot stop properly
+				timer = 350; // Let the robot stop properly
+				accum = 0;
+				n_accum = 0;
 				gyro_calib_state++;
+				//DBG_PR_VAR_I32(gyro_calib_state);
 			}
 
 		} break;
 
 		case 7:
 		{
+			if(timer < 300)
+			{
+				accum += (uint64_t) ((uint32_t)latest_compass_heading + (uint32_t)(wrap?(UANG_180_DEG):0));
+				n_accum++;
+			}
+
 			if(--timer <= 0)
 			{
-				calc_gyro_corr(compass_heading_start, latest_compass_heading, gyro_heading_start, cur_pos.ang, -1*N_GYRO_CALIB_TURNS);
+				uint32_t gyro_heading_end = cur_pos.ang;
+				uint32_t compass_heading_end = (uint32_t)(accum / n_accum) + (uint32_t)(wrap?(UANG_180_DEG):0);
+
+				//DBG_PR_VAR_U32(compass_heading_end/UANG_1_DEG);
+				//DBG_PR_VAR_U32(gyro_heading_end/UANG_1_DEG);
+
+				calc_gyro_corr(compass_heading_start, compass_heading_end, gyro_heading_start, gyro_heading_end, -1*N_GYRO_CALIB_TURNS);
+
 				gyro_calib_state++;
+				//DBG_PR_VAR_I32(gyro_calib_state);
+
+				if(init_calib_state > 0)
+				{
+					init_calib_state = 0;
+					cur_pos.x = 0;
+					cur_pos.y = 0;
+					cur_pos.ang = compass_heading_end;
+				}
+
+				max_ang_speed = 12.0;
 			}
 		} break;
 
@@ -1046,8 +1193,14 @@ void drive_handler()
 
 	*/
 
-	if(ac_th_det_on>10000)
+	if(ac_th_det_on>3000)
 	{
+		if(init_calib_state == 2)
+		{
+			init_calib_state--;
+			self_calib();
+		}
+
 		if(g_yaw > 0)
 			cur_pos.ang += ((int64_t)gyro_mult_pos*(int64_t)g_yaw)>>16;
 		else
@@ -1067,11 +1220,16 @@ void drive_handler()
 	}
 	else
 	{
-		if(is_robot_moving())
-		{
-			for(int i=0; i<10; i++)
-				led_status(i, RED, LED_MODE_FADE);
+		for(int i=0; i<10; i++)
+			led_status(i, RED, LED_MODE_FADE);
 
+		if(moving > 0)
+		{
+			if(stop_indicators < 1)
+			{
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+			}
 			ac_th_det_on = 0;
 		}
 
@@ -1196,7 +1354,21 @@ void drive_handler()
 #ifdef LEDS_ON
 	if(stop_indicators == 0)
 	{
-		if(reverse)
+		if(ang_err > 20*ANG_1_DEG && run)
+		{
+			led_status(9, YELLOW, LED_MODE_FADE);
+			led_status(4, YELLOW, LED_MODE_FADE);
+			led_status(3, YELLOW, LED_MODE_FADE);
+			led_status(2, YELLOW, LED_MODE_FADE);
+		}
+		else if(ang_err < -20*ANG_1_DEG && run)
+		{
+			led_status(1, YELLOW, LED_MODE_FADE);
+			led_status(6, YELLOW, LED_MODE_FADE);
+			led_status(7, YELLOW, LED_MODE_FADE);
+			led_status(8, YELLOW, LED_MODE_FADE);
+		}
+		else if(reverse)
 		{
 			if(run)
 			{
@@ -1204,15 +1376,15 @@ void drive_handler()
 				led_status(5, WHITE, LED_MODE_FADE);
 				led_status(6, WHITE, LED_MODE_FADE);
 			}
-			led_status(9, BLACK, LED_MODE_FADE);
-			led_status(0, BLACK, LED_MODE_FADE);
-			led_status(1, BLACK, LED_MODE_FADE);
+//			led_status(9, BLACK, LED_MODE_FADE);
+//			led_status(0, BLACK, LED_MODE_FADE);
+//			led_status(1, BLACK, LED_MODE_FADE);
 		}
 		else
 		{
-			led_status(4, BLACK, LED_MODE_FADE);
-			led_status(5, BLACK, LED_MODE_FADE);
-			led_status(6, BLACK, LED_MODE_FADE);
+//			led_status(4, BLACK, LED_MODE_FADE);
+//			led_status(5, BLACK, LED_MODE_FADE);
+//			led_status(6, BLACK, LED_MODE_FADE);
 			if(run)
 			{
 				led_status(9, WHITE, LED_MODE_FADE);
@@ -1233,16 +1405,16 @@ void drive_handler()
 
 	if(accurot)
 	{
-		if(ang_err < -5*ANG_1_DEG || ang_err > 5*ANG_1_DEG)
+		if(abso(ang_err) > 5*ANG_1_DEG)
 			correcting_linear = 0;
-		else if(ang_err > -3*ANG_1_DEG && ang_err < 3*ANG_1_DEG)
+		else if((abso(ang_err) < 3*ANG_1_DEG) && abso(lin_err) > 50*65535)
 			correcting_linear = 1;
 	}
 	else
 	{
-		if(ang_err < -25*ANG_1_DEG || ang_err > 25*ANG_1_DEG)
+		if(abso(ang_err) > 25*ANG_1_DEG)
 			correcting_linear = 0;
-		else if(ang_err > -8*ANG_1_DEG && ang_err < 8*ANG_1_DEG)
+		else if((abso(ang_err) < 8*ANG_1_DEG) && abso(lin_err) > 50*65536)
 			correcting_linear = 1;
 	}
 
@@ -1264,10 +1436,19 @@ void drive_handler()
 	double max_lin_speed_by_ang_err;
 
 	if(accurot)
-		max_lin_speed_by_ang_err = ((double)ANG_1_DEG*50.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 5 units.
+	{
+		if(abso(ang_err) > 5*ANG_1_DEG)
+			max_lin_speed_by_ang_err = 0.0;
+		else
+			max_lin_speed_by_ang_err = ((double)ANG_1_DEG*40.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 4 units.
+	}
 	else
-		max_lin_speed_by_ang_err = ((double)ANG_1_DEG*200.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 20 units.
-
+	{
+		if(abso(ang_err) > 20*ANG_1_DEG)
+			max_lin_speed_by_ang_err = 0.0;
+		else
+			max_lin_speed_by_ang_err = ((double)ANG_1_DEG*150.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 15 units.
+	}
 	// Calculate the target wheel positions to correct the measured angular error
 	// In theory, this movement produces the "correct" end result automatically
 	// However, only the _remaining_ error (by gyro!) is used on each cycle, so the target
@@ -1280,39 +1461,65 @@ void drive_handler()
 	int32_t delta_mpos_ang[2];
 	int32_t delta_mpos_lin[2];
 
-	delta_mpos_ang[0] = (ang_err/ANG_0_01_DEG);
-	delta_mpos_ang[1] = (ang_err/ANG_0_01_DEG);
-
-	delta_mpos_lin[0] = lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
-	delta_mpos_lin[1] = -1*lin_err / ((WHEEL_DIAM_MM<<16)/(90LL*256LL));
-
-
-	if(correcting_angle)
-	{	
-		if(ang_speed < max_ang_speed) ang_speed *= 1.004;
+	if(abso(ang_err) < 1*ANG_1_DEG)
+	{
+		delta_mpos_ang[0] = 0;
+		delta_mpos_ang[1] = 0;
+	}
+	else
+	{
+		delta_mpos_ang[0] = (ang_err/ANG_0_01_DEG);
+		delta_mpos_ang[1] = (ang_err/ANG_0_01_DEG);
 	}
 
-	if(ang_speed > max_ang_speed || ang_speed > max_ang_speed_by_ang_err || ang_speed > max_ang_speed_by_lin_err)
-		ang_speed *= 0.985;
-
-	if(correcting_linear)
-	{	
-		if(lin_speed < max_lin_speed) lin_speed *= 1.010;
+	if(abso(lin_err) < 10*65536)
+	{
+		delta_mpos_lin[0] = 0;
+		delta_mpos_lin[1] = 0;
+	}
+	else
+	{
+		delta_mpos_lin[0] = lin_err / (int64_t)(wheel_diam[0]/HALL_STEPS_PER_TURN);
+		delta_mpos_lin[1] = -1*lin_err / (int64_t)(wheel_diam[1]/HALL_STEPS_PER_TURN);
 	}
 
-	if(lin_speed > max_lin_speed || lin_speed > max_lin_speed_by_lin_err || lin_speed > max_lin_speed_by_ang_err)
-		lin_speed *= 0.985;
+	if(!correcting_angle || ang_speed > max_ang_speed || ang_speed > max_ang_speed_by_ang_err || ang_speed > max_ang_speed_by_lin_err)
+		ang_speed -= 0.05;
+	else if(correcting_angle)
+		ang_speed += 0.05;
 
+	if(ang_speed < 0.0) ang_speed = 0.0;
+
+
+	int dbg1, dbg2, dbg3, dbg4, dbg5, dbg6;
+
+	if(!correcting_linear || lin_speed > max_lin_speed || lin_speed > max_lin_speed_by_lin_err || lin_speed > max_lin_speed_by_ang_err)
+		lin_speed -= 0.20;
+	else if(correcting_linear)
+		lin_speed += 0.20;
+
+	if(lin_speed < 0.0) lin_speed = 0.0;
+
+	dbg1 = max_lin_speed;
+	dbg2 = max_lin_speed_by_lin_err;
+	dbg3 = max_lin_speed_by_ang_err;
+	dbg4 = lin_speed;
+	dbg5 = correcting_linear;
+	dbg6 = 0;
 
 	if(correcting_linear)
 	{
-		if(reverse)
+		if(lin_err < -50*65536)
 		{
 			sensors_bwd(lin_speed);
 		}
-		else
+		else if(lin_err > 50*65536)
 		{
 			sensors_fwd(lin_speed);
+		}
+		else
+		{
+			sensors_idle();
 		}
 	}
 	else // Rotating only
@@ -1339,10 +1546,9 @@ void drive_handler()
 	int ang_speed_i = (int)ang_speed;
 	int lin_speed_i = (int)lin_speed;
 
-	if(ang_speed_i != 0 || lin_speed_i != 0)
+	if(delta_mpos_ang[0] != 0 || delta_mpos_ang[1] != 0 || delta_mpos_lin[0] != 0 || delta_mpos_lin[1] != 0)
 		robot_moves();
 
-	int dbg5, dbg6;
 	for(int m=0; m<2; m++)
 	{
 		int d_ang = delta_mpos_ang[m];
@@ -1355,7 +1561,7 @@ void drive_handler()
 		else if(d_lin < -1*lin_speed_i) d_lin = -1*lin_speed_i;
 
 		int increment = d_ang + d_lin;
-		if(m==0) dbg5 = increment; else dbg6 = increment;
+//		if(m==0) dbg5 = increment; else dbg6 = increment;
 
 		int32_t old_pos_err = mpos[m] - bldc_pos_set[m];
 		uint32_t new_pos = bldc_pos_set[m] + (uint32_t)increment;
@@ -1376,7 +1582,7 @@ void drive_handler()
 
 
 
-#define OBST_THRESHOLD 5
+#define OBST_THRESHOLD 4
 
 	// All stopping conditions first:
 	if(!motors_enabled)
@@ -1411,7 +1617,7 @@ void drive_handler()
 	if(ignore_front==0 && run && correcting_linear && ((lin_err > 50*65536 && obstacle_front_near > OBST_THRESHOLD) || (lin_err > 180*65536 && obstacle_front_far > OBST_THRESHOLD)))
 	{
 		{
-			beep(500, 100, 0, 100);
+			beep(500, 100, 0, 70);
 			stop_indicators = 125;
 			#ifdef LEDS_ON
 			led_status(9, RED, LED_MODE_FADE);
@@ -1426,7 +1632,7 @@ void drive_handler()
 	else if(ignore_back==0 && run && correcting_linear && ((lin_err < -50*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_err < -180*65536 && obstacle_back_far > OBST_THRESHOLD)))
 	{
 		{
-			beep(500, 100, 0, 100);
+			beep(500, 100, 0, 70);
 			stop_indicators = 125;
 			#ifdef LEDS_ON
 			led_status(4, RED, LED_MODE_FADE);
@@ -1441,7 +1647,7 @@ void drive_handler()
 	else if(ignore_left==0 && run && correcting_angle && ((ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 18*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD)))
 	{
 		{
-			beep(500, 100, 0, 100);
+			beep(500, 100, 0, 70);
 			stop_indicators = 125;
 			#ifdef LEDS_ON
 			led_status(2, RED, LED_MODE_FADE);
@@ -1455,7 +1661,7 @@ void drive_handler()
 	else if(ignore_right==0 && run && correcting_angle && ((ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -18*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD)))
 	{
 		{
-			beep(500, 100, 0, 100);
+			beep(500, 100, 0, 70);
 			stop_indicators = 125;
 			#ifdef LEDS_ON
 			led_status(7, RED, LED_MODE_FADE);
@@ -1492,7 +1698,6 @@ void drive_handler()
 		}
 	}
 
-	static int dbg1;
 	if(do_start && !run)
 	{
 		if(stop_indicators == 0)
@@ -1552,14 +1757,22 @@ void drive_handler()
 		drive_diag->remaining = abso((lin_err>>16));
 		drive_diag->micronavi_stop_flags = micronavi_status;
 		drive_diag->run = run;
-		drive_diag->dbg1 = motors_enabled;
-		drive_diag->dbg2 = mpos[0];
-		drive_diag->dbg3 = bldc_pos_set[1];
-		drive_diag->dbg4 = mpos[1];
-		drive_diag->ang_speed_i = ang_speed_i;
-		drive_diag->lin_speed_i = lin_speed_i;
+/*
+		drive_diag->dbg1 = gyro_dc_z[0]>>15; // motors_enabled;
+		drive_diag->dbg2 = gyro_dc_z[1]>>15; // mpos[0];
+		drive_diag->dbg3 = gyro_dc_z[2]>>15; //= bldc_pos_set[1];
+		drive_diag->dbg4 = gyro_dc_z[3]>>15; //= mpos[1];
+		drive_diag->dbg5 = gyro_dc_z[4]>>15;
+		drive_diag->dbg6 = gyro_dc_z[5]>>15;
+*/
+		drive_diag->dbg1 = dbg1;
+		drive_diag->dbg2 = dbg2;
+		drive_diag->dbg3 = dbg3;
+		drive_diag->dbg4 = dbg4;
 		drive_diag->dbg5 = dbg5;
 		drive_diag->dbg6 = dbg6;
+		drive_diag->ang_speed_i = ang_speed_i;
+		drive_diag->lin_speed_i = lin_speed_i;
 	}
 
 
