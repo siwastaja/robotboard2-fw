@@ -14,8 +14,8 @@
 
 #define LEDS_ON
 
-#define G_DC_MOTDET_TH 250 // 100 generates false noise detections about every 2-3 seconds
-#define G_AC_MOTDET_TH (150*256) // threshold after DC offset correction
+#define G_DC_MOTDET_TH 300 // 100 generates false noise detections about every 2-3 seconds
+#define G_AC_MOTDET_TH (200*256) // threshold after DC offset correction
 
 #define GYRO_X_BLANKING_TH (100*256)
 #define GYRO_Y_BLANKING_TH (100*256)
@@ -23,10 +23,10 @@
 
 #define G_DC_FILT 10 // Quadratic effect, 15 maximum.
 
-static int moving = 500;
+static int moving = 250;
 static inline void robot_moves()
 {
-	moving = 500; // 2 seconds
+	moving = 250; // 1 seconds
 }
 
 static inline int is_robot_moving()
@@ -88,7 +88,9 @@ static int accurot;
 
 void cmd_go_to(s2b_move_abs_t* m)
 {
+	stop_chafind();
 	lock_processing = 1;
+	set_top_speed_max(60);
 	target_pos.x = (int64_t)m->x<<16;
 	target_pos.y = (int64_t)m->y<<16;
 	backmode = m->backmode;
@@ -134,6 +136,8 @@ int32_t get_remaining_lin()
 
 void straight_rel(int32_t mm)
 {
+//	uart_print_string_blocking("straight_rel\r\n");
+//	DBG_PR_VAR_I32(mm);
 	ang_to_target = cur_pos.ang;
 	store_lin_err = (int64_t)mm<<16;
 	mode_xy = 0;
@@ -148,6 +152,8 @@ void straight_rel(int32_t mm)
 
 void rotate_rel(int32_t ang32)
 {
+//	uart_print_string_blocking("rotate_rel\r\n");
+//	DBG_PR_VAR_I32(ang32);
 	ang_to_target = cur_pos.ang + (uint32_t)ang32;
 	store_lin_err = 0;
 	mode_xy = 0;
@@ -162,6 +168,9 @@ void rotate_rel(int32_t ang32)
 
 void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_first)
 {
+//	uart_print_string_blocking("rotate_and_straight_rel\r\n");
+//	DBG_PR_VAR_I32(ang32);
+//	DBG_PR_VAR_I32(mm);
 	ang_to_target = cur_pos.ang + (uint32_t)ang32;
 	store_lin_err = (int64_t)mm<<16;
 	mode_xy = 0;
@@ -176,7 +185,7 @@ void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_fi
 
 void cmd_motors(int enabled_ms)
 {
-	motors_enabled = enabled_ms*4;
+	motors_enabled = enabled_ms/4;
 }
 
 static s2b_corr_pos_t stored_corrpos;
@@ -232,6 +241,7 @@ static void stop()
 
 void cmd_stop_movement()
 {
+	stop_chafind();
 	lock_processing = 1;
 	stop();
 	micronavi_status = 0;
@@ -1331,16 +1341,19 @@ void drive_handler()
 
 	int32_t ang_err = cur_pos.ang - ang_to_target;
 
-	int auto_decision = 0;
-	if((lin_err < 300*65536 && lin_err > -300*65536) || backmode==2)
+	if(mode_xy)
 	{
-		auto_decision = 1;
-	}
+		int auto_decision = 0;
+		if((lin_err < 300*65536 && lin_err > -300*65536) || backmode==2)
+		{
+			auto_decision = 1;
+		}
 
-	if((auto_decision && (ang_err > 90*ANG_1_DEG || ang_err < -90*ANG_1_DEG)) || (backmode==1 && !auto_decision))
-	{
-		reverse = 1;
-		ang_err = (uint32_t)ang_err + (uint32_t)(ANG_180_DEG);
+		if((auto_decision && (ang_err > 90*ANG_1_DEG || ang_err < -90*ANG_1_DEG)) || (backmode==1 && !auto_decision))
+		{
+			reverse = 1;
+			ang_err = (uint32_t)ang_err + (uint32_t)(ANG_180_DEG);
+		}
 	}
 
 	static int prev_run;
