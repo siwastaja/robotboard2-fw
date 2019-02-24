@@ -114,8 +114,8 @@ void compensated_2dcs_6mhz_dist_masked_narrow(uint16_t *dist_out, epc_2dcs_narro
 
 void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
 void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
+void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int kludge_corr);
+void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int kludge_corr);
 
 void dealias_20mhz(uint16_t *hf_dist, uint16_t *lf_dist);
 void dealias_20mhz_narrow(uint16_t *hf_dist, uint16_t *lf_dist);

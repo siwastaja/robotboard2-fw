@@ -137,11 +137,24 @@ void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in)
 
 
 #define FAST_APPROX_AMPLITUDE
+
+#ifdef FAST_APPROX_AMPLITUDE
+	#define AMPL(dcs20_, dcs31_) ((abso((dcs20_))+abso((dcs31_)))/(23))
+#else
+	#define AMPL(dcs20_, dcs31_) (sqrt(sq((dcs20_))+sq((dcs31_)))/(17))
+#endif			
+
+
 //#define DO_AMB_CORR
 
 //#define DBGPR
+
 //#define DBGPRVOX
 #define PIX (30*160+80)
+//#define PIX (15*160+60)
+#define DBGPRSIDX 5
+#define IN_01_DEG (ANG_0_1_DEG/65536)
+
 
 void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg)  __attribute__((section(".text_itcm")));
 void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg)
@@ -225,11 +238,8 @@ int calc_avg_ampl_x256(int16_t* dcs20_in, int16_t* dcs31_in)
 		int16_t dcs20 = dcs20_in[i];
 		int16_t dcs31 = dcs31_in[i];
 		int ampl;
-		#ifdef FAST_APPROX_AMPLITUDE
-			ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-		#else
-			ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-		#endif
+		ampl = AMPL(dcs20, dcs31);
+		if(ampl > 255) ampl = 255;
 
 		accum += ampl;
 	}
@@ -245,11 +255,8 @@ int calc_avg_ampl_x256_narrow(int16_t* dcs20_in, int16_t* dcs31_in)
 		int16_t dcs20 = dcs20_in[i];
 		int16_t dcs31 = dcs31_in[i];
 		int ampl;
-		#ifdef FAST_APPROX_AMPLITUDE
-			ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-		#else
-			ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-		#endif
+		ampl = AMPL(dcs20, dcs31);
+		if(ampl > 255) ampl = 255;
 
 		accum += ampl;
 	}
@@ -271,11 +278,8 @@ int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in)
 			int16_t dcs20 = dcs20_in[i];
 			int16_t dcs31 = dcs31_in[i];
 			int ampl;
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-			#endif
+			ampl = AMPL(dcs20, dcs31);
+			if(ampl > 255) ampl = 255;
 
 			accum += ampl;
 		}
@@ -334,92 +338,10 @@ void lens_model_narrow(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t
 	}
 }
 
-// TODO: make sure these two functions work with HDR_FACTOR=16 as well
-void compensated_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in) __attribute__((section(".text_itcm")));
-void compensated_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in)
-{
-	for(int i=0; i < TOF_XS*TOF_YS; i++)
-	{
-		uint16_t dist;
-		int ampl;
-
-		int16_t dcs20 = dcs20_in[i];
-		int16_t dcs31 = dcs31_in[i];
-
-		dcs20 -= dcs20_flare_in[i];
-		dcs31 -= dcs31_flare_in[i];
-
-		if(dcs20 < -4090*HDR_FACTOR || dcs20 > 4090*HDR_FACTOR || dcs31 < -4090*HDR_FACTOR || dcs31 > 4090*HDR_FACTOR)
-		{
-			ampl = 255;
-			dist = 0;
-		}
-		else
-		{
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23*HDR_FACTOR); if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17*HDR_FACTOR); if(ampl > 255) ampl = 255;
-			#endif
-
-			int pixgroup;
-			if(!(i&1)) // even
-				pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
-			else
-				pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
-
-			dist = lookup_dist(0, pixgroup, dcs31, dcs20);
-		}
-		ampl_out[i] = ampl;
-		dist_out[i] = dist;
-	}
-}
-
-void compensated_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in) __attribute__((section(".text_itcm")));
-void compensated_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in)
-{
-	for(int i=0; i < TOF_XS_NARROW*TOF_YS_NARROW; i++)
-	{
-		uint16_t dist;
-		int ampl;
-
-		int16_t dcs20 = dcs20_in[i];
-		int16_t dcs31 = dcs31_in[i];
-
-		dcs20 -= dcs20_flare_in[i];
-		dcs31 -= dcs31_flare_in[i];
-
-		if(dcs20 < -4090*HDR_FACTOR || dcs20 > 4090*HDR_FACTOR || dcs31 < -4090*HDR_FACTOR || dcs31 > 4090*HDR_FACTOR)
-		{
-			ampl = 255;
-			dist = 0;
-		}
-		else
-		{
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23*HDR_FACTOR); if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17*HDR_FACTOR); if(ampl > 255) ampl = 255;
-			#endif
-
-			int pixgroup;
-			if(!(i&1)) // even
-				pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2] & 0x0f;
-			else
-				pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2]>>4;
-
-			dist = lookup_dist(1, pixgroup, dcs31, dcs20);
-		}
-		ampl_out[i] = ampl;
-		dist_out[i] = dist;
-	}
-}
-
-
 int flare_factor = 17;
 int flare_factor_narrow = 7;
 
-#if 0
+#if 1
 void adjust()
 {
 	uint8_t cmd = uart_input();
@@ -665,8 +587,8 @@ void dealias_20mhz_narrow_from_wide_lf(uint16_t *hf_dist, uint16_t *lf_dist)
 	#undef DEALIAS_THRESHOLD
 }
 
-void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)   __attribute__((section(".text_itcm")));
-void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
+void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int kludge_corr)   __attribute__((section(".text_itcm")));
+void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int kludge_corr)
 {
 	int dcs20_accum = 0;
 	int dcs31_accum = 0;
@@ -706,11 +628,8 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t
 			dcs20 -= ((int64_t)dcs20_accum*(int64_t)flare_factor)>>8;
 			
 
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-			#endif
+			ampl = AMPL(dcs20, dcs31);
+			if(ampl > 255) ampl = 255;
 
 			if(ampl<4)
 			{
@@ -725,6 +644,7 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t
 					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
 
 				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+				dist += kludge_corr;
 			}
 
 		}
@@ -732,8 +652,8 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t
 		dist_out[i] = dist;
 	}
 }
-void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)   __attribute__((section(".text_itcm")));
-void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in)
+void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int kludge_corr)   __attribute__((section(".text_itcm")));
+void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int kludge_corr)
 {
 	int dcs20_accum = 0;
 	int dcs31_accum = 0;
@@ -772,12 +692,8 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, u
 			dcs31 -= ((int64_t)dcs31_accum*(int64_t)flare_factor_narrow)>>8;
 			dcs20 -= ((int64_t)dcs20_accum*(int64_t)flare_factor_narrow)>>8;
 			
-
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-			#endif
+			ampl = AMPL(dcs20, dcs31);
+			if(ampl > 255) ampl = 255;
 
 			if(ampl<4)
 			{
@@ -792,6 +708,7 @@ void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, u
 					pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2]>>4;
 
 				dist = lookup_dist(1, pixgroup, dcs31, dcs20);
+				dist += kludge_corr;
 			}
 
 		}
@@ -856,29 +773,32 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *d
 		else
 		{
 			int32_t dcs20, dcs31;
+			int kludge_corr;
+
+			int used_lo = 0;
 
 			if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
 			{
 				dcs20 = (int32_t)dcs20_lo*HDR_FACTOR;
 				dcs31 = (int32_t)dcs31_lo*HDR_FACTOR;
+				kludge_corr = -40;
+				used_lo = 1;
 			}
 			else
 			{
 				dcs20 = dcs20_hi;
 				dcs31 = dcs31_hi;
+				kludge_corr = 0;
 			}
 
 			dcs31 -= ((int64_t)dcs31_accum*(int64_t)flare_factor)>>8;
 			dcs20 -= ((int64_t)dcs20_accum*(int64_t)flare_factor)>>8;
-			
 
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23);// if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17);// if(ampl > 255) ampl = 255;
-			#endif
+			ampl = AMPL(dcs20, dcs31);
+			if(used_lo)
+				ampl /= HDR_FACTOR;
 
-			if(ampl<4)
+			if((used_lo && ampl < 3) || ampl<4)
 			{
 				dist = 65534;
 			}
@@ -891,6 +811,7 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *d
 					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
 
 				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+				dist += kludge_corr; // Typical short exposure shows around 50mm too long results
 			}
 
 			// ampl /= HDR_FACTOR; 
@@ -957,10 +878,12 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint
 		{
 			int32_t dcs20, dcs31;
 
+			int used_lo = 0;
 			if(dcs20_hi < -3500 || dcs20_hi > 3500 || dcs31_hi < -3500 || dcs31_hi > 3500)
 			{
 				dcs20 = (int32_t)dcs20_lo*HDR_FACTOR;
 				dcs31 = (int32_t)dcs31_lo*HDR_FACTOR;
+				used_lo = 1;
 			}
 			else
 			{
@@ -971,14 +894,12 @@ void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint
 			dcs31 -= ((int64_t)dcs31_accum*(int64_t)flare_factor_narrow)>>8;
 			dcs20 -= ((int64_t)dcs20_accum*(int64_t)flare_factor_narrow)>>8;
 			
+			ampl = AMPL(dcs20, dcs31);
 
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/(23);// if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/(17);// if(ampl > 255) ampl = 255;
-			#endif
+			if(used_lo)
+				ampl /= HDR_FACTOR;
 
-			if(ampl<4)
+			if((used_lo && ampl < 3) || ampl<4)
 			{
 				dist = 65534;
 			}
@@ -1069,11 +990,9 @@ void compensated_tof_calc_dist_ampl(uint8_t *max_ampl_out, uint8_t *ampl_out, ui
 			#endif
 
 
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/23; if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
-			#endif
+			ampl = AMPL(dcs20, dcs31);
+
+			if(ampl > 255) ampl = 255;
 
 			if(ampl<4)
 			{
@@ -1181,11 +1100,8 @@ void compensated_tof_calc_dist_ampl_narrow(uint8_t *max_ampl_out, uint8_t *ampl_
 			#endif
 
 
-			#ifdef FAST_APPROX_AMPLITUDE
-				ampl = (abso(dcs20)+abso(dcs31))/23; if(ampl > 255) ampl = 255;
-			#else
-				ampl = sqrt(sq(dcs20)+sq(dcs31))/17; if(ampl > 255) ampl = 255;
-			#endif
+			ampl = AMPL(dcs20, dcs31);
+			if(ampl > 255) ampl = 255;
 
 //			if(ampl<4)
 //			{
@@ -1343,7 +1259,7 @@ void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
 }
 
 int adjustings = 0;
-#if 1
+#if 0
 void adjust()
 {
 	uint8_t cmd = uart_input();
@@ -1472,7 +1388,7 @@ const seg_limits_t seg_lims[12] =
 
 };
 
-static int chafind_enabled = 0;
+int chafind_enabled = 0;
 
 void tof_enable_chafind_datapoints()
 {
@@ -1547,13 +1463,14 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 		((lut_sin_from_u16(sensor_mounts[sidx].ang_rel_robot)*roll_ang)>>SIN_LUT_RESULT_SHIFT);
 
 	#ifdef DBGPRVOX
-
-		#define IN_01_DEG (ANG_0_1_DEG/65536)
-		DBG_PR_VAR_U16(sidx);
-		DBG_PR_VAR_I16((int16_t)sensor_mounts[sidx].vert_ang_rel_ground/IN_01_DEG);
-		DBG_PR_VAR_I16(pitch_ang/IN_01_DEG);
-		DBG_PR_VAR_I16(roll_ang/IN_01_DEG);
-		DBG_PR_VAR_I16((int16_t)global_sensor_ver_ang/IN_01_DEG);
+		if(sidx == DBGPRSIDX)
+		{
+			DBG_PR_VAR_U16(sidx);
+			DBG_PR_VAR_I16((int16_t)sensor_mounts[sidx].vert_ang_rel_ground/IN_01_DEG);
+			DBG_PR_VAR_I16(pitch_ang/IN_01_DEG);
+			DBG_PR_VAR_I16(roll_ang/IN_01_DEG);
+			DBG_PR_VAR_I16((int16_t)global_sensor_ver_ang/IN_01_DEG);
+		}
 	#endif
 
 
@@ -1578,16 +1495,19 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 
 
 	#ifdef DBGPRVOX
+		if(sidx == DBGPRSIDX)
+		{
 
-		DBG_PR_VAR_I32(robot_ang);
-		DBG_PR_VAR_I32(robot_x);
-		DBG_PR_VAR_I32(robot_y);
+			DBG_PR_VAR_I32(robot_ang/IN_01_DEG);
+			DBG_PR_VAR_I32(robot_x);
+			DBG_PR_VAR_I32(robot_y);
 
-		DBG_PR_VAR_I32(global_sensor_hor_ang);
-		DBG_PR_VAR_I32(global_sensor_ver_ang);
-		DBG_PR_VAR_I32(global_sensor_x);
-		DBG_PR_VAR_I32(global_sensor_y);
-		DBG_PR_VAR_I32(global_sensor_z);
+			DBG_PR_VAR_I32(global_sensor_hor_ang/IN_01_DEG);
+			DBG_PR_VAR_I32(global_sensor_ver_ang/IN_01_DEG);
+			DBG_PR_VAR_I32(global_sensor_x);
+			DBG_PR_VAR_I32(global_sensor_y);
+			DBG_PR_VAR_I32(global_sensor_z);
+		}
 	#endif
 
 
@@ -1623,12 +1543,36 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 			int32_t conform_avg = 0;
 			for(int i=0; i<5; i++)
 			{
-				if(ampls[i] >= ampl_accept_min && ampls[i] <= ampl_accept_max && dists[i] > avg-100 && dists[i] < avg+100)
+
+				#ifdef DBGPRVOX
+					if(sidx == DBGPRSIDX  && py*TOF_XS+px == PIX)
+					{
+
+						o_itoa32(dists[i], printbuf); uart_print_string_blocking(printbuf); 
+						uart_print_string_blocking("mm ("); 
+						o_itoa32(ampls[i], printbuf); uart_print_string_blocking(printbuf); 
+						uart_print_string_blocking(")  "); 
+					}
+				#endif
+
+				// Typical dataset maximum variance (spatial noise) on flat surface is around +/-20mm (40mm p-p)
+				// Accept +/- 70mm
+				if(ampls[i] >= ampl_accept_min && ampls[i] <= ampl_accept_max && dists[i] > avg-70 && dists[i] < avg+70)
 				{
 					n_conform++;
 					conform_avg += dists[i];
 				}
 			}
+
+			#ifdef DBGPRVOX
+				if(sidx == DBGPRSIDX  && py*TOF_XS+px == PIX)
+				{
+
+					uart_print_string_blocking("\r\n");
+					DBG_PR_VAR_I32(avg);
+					DBG_PR_VAR_I32(n_conform);
+				}
+			#endif
 
 			if(n_conform >= 5)
 			{
@@ -1637,8 +1581,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 				uint16_t hor_ang, ver_ang;
 
 				#ifdef DBGPRVOX
-
-					if(py*TOF_XS+px == PIX)
+					if(sidx == DBGPRSIDX && py*TOF_XS+px == PIX)
 						DBG_PR_VAR_I32(d);
 				#endif
 
@@ -1671,10 +1614,10 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 
 				#ifdef DBGPRVOX
 
-					if(py*TOF_XS+px == PIX)
+					if(sidx == DBGPRSIDX && py*TOF_XS+px == PIX)
 					{
-						DBG_PR_VAR_U16(hor_ang);
-						DBG_PR_VAR_U16(ver_ang);
+						DBG_PR_VAR_U16(hor_ang/IN_01_DEG);
+						DBG_PR_VAR_U16(ver_ang/IN_01_DEG);
 					}
 				#endif
 
@@ -1683,10 +1626,10 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 
 				#ifdef DBGPRVOX
 
-					if(py*TOF_XS+px == PIX)
+					if(sidx == DBGPRSIDX && py*TOF_XS+px == PIX)
 					{
-						DBG_PR_VAR_U16(comb_hor_ang);
-						DBG_PR_VAR_U16(comb_ver_ang);
+						DBG_PR_VAR_U16(comb_hor_ang/IN_01_DEG);
+						DBG_PR_VAR_U16(comb_ver_ang/IN_01_DEG);
 					}
 				#endif
 
@@ -1702,14 +1645,21 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 				int32_t local_y = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_sin_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_y;
 				int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
 
-
 				#ifdef DBGPRVOX
 
-					if(py*TOF_XS+px == PIX)
+					if(sidx == DBGPRSIDX && py*TOF_XS+px == PIX)
 					{
 						DBG_PR_VAR_I32(x);
 						DBG_PR_VAR_I32(y);
 						DBG_PR_VAR_I32(z);
+
+						DBG_PR_VAR_U16(local_sensor_hor_ang/IN_01_DEG);
+						DBG_PR_VAR_U16(local_sensor_ver_ang/IN_01_DEG);
+
+						DBG_PR_VAR_I32(local_x);
+						DBG_PR_VAR_I32(local_y);
+						DBG_PR_VAR_I32(local_z);
+
 					}
 				#endif
 
@@ -1719,7 +1669,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 				if(local_z < 200 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
 					continue;
 
-				#define OBST_MARGIN (100)
+				#define OBST_MARGIN (50)
 
 				#define OBST_AVOID_WIDTH (600+OBST_MARGIN)
 
@@ -1764,7 +1714,7 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 				if(local_z > 100 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
 					continue;
 
-				if(chafind_enabled && local_z > 120 && local_z < 240)
+				if(chafind_enabled && local_z > 170 && local_z < 230) // was 170..220
 				{
 					micronavi_point_in_chafind(local_x, local_y, local_z, 0, 0);
 				}
@@ -1789,10 +1739,12 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 							y /= reso;
 
 							#ifdef DBGPRVOX
-
-								DBG_PR_VAR_I32(seg);
-								DBG_PR_VAR_I32(x);
-								DBG_PR_VAR_I32(y);
+								if(sidx == DBGPRSIDX && py*TOF_XS+px == PIX)
+								{
+									DBG_PR_VAR_I32(seg);
+									DBG_PR_VAR_I32(x);
+									DBG_PR_VAR_I32(y);
+								}
 							#endif
 
 							if(x<0 || x >= VOX_SEG_XS || y<0 || y>= VOX_SEG_YS)
@@ -1816,7 +1768,11 @@ void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl
 	}
 
 	#ifdef DBGPRVOX
-		DBG_PR_VAR_I32(insertion_cnt);
+		if(sidx == DBGPRSIDX)
+		{
+			DBG_PR_VAR_I32(insertion_cnt);
+		}
+
 	#endif
 }
 void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max, int32_t ref_x, int32_t ref_y) __attribute__((section(".text_itcm")));
@@ -1880,7 +1836,7 @@ void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8
 		((lut_cos_from_u16(sensor_mounts[sidx].ang_rel_robot)*pitch_ang)>>SIN_LUT_RESULT_SHIFT) +
 		((lut_sin_from_u16(sensor_mounts[sidx].ang_rel_robot)*roll_ang)>>SIN_LUT_RESULT_SHIFT);
 
-	#ifdef DBGPRVOX
+	#ifdef DBGPRVOX_NARROW
 
 		#define IN_01_DEG (ANG_0_1_DEG/65536)
 		DBG_PR_VAR_U16(sidx);
@@ -1903,7 +1859,7 @@ void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8
 
 
 
-	#ifdef DBGPRVOX
+	#ifdef DBGPRVOX_NARROW
 
 		DBG_PR_VAR_I32(robot_ang);
 		DBG_PR_VAR_I32(robot_x);
@@ -1956,7 +1912,7 @@ void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8
 
 				uint16_t hor_ang, ver_ang;
 
-				#ifdef DBGPRVOX
+				#ifdef DBGPRVOX_NARROW
 
 					if(py*TOF_XS_NARROW+px == PIX_NARROW)
 						DBG_PR_VAR_I32(d);
@@ -1992,7 +1948,7 @@ void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8
 					default: error(145); while(1); // to tell the compiler we always set hor_ang, ver_ang
 				}
 
-				#ifdef DBGPRVOX
+				#ifdef DBGPRVOX_NARROW
 
 					if(py*TOF_XS_NARROW+px == PIX_NARROW)
 					{
@@ -2004,7 +1960,7 @@ void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8
 				uint16_t comb_hor_ang = hor_ang + global_sensor_hor_ang;
 				uint16_t comb_ver_ang = ver_ang + global_sensor_ver_ang;
 
-				#ifdef DBGPRVOX
+				#ifdef DBGPRVOX_NARROW
 
 					if(py*TOF_XS_NARROW+px == PIX_NARROW)
 					{
@@ -2017,7 +1973,7 @@ void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8
 				int32_t y = (((int64_t)d * (int64_t)lut_cos_from_u16(comb_ver_ang) * (int64_t)lut_sin_from_u16(comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + global_sensor_y;
 				int32_t z = (((int64_t)d * (int64_t)lut_sin_from_u16(comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + global_sensor_z;
 
-				#ifdef DBGPRVOX
+				#ifdef DBGPRVOX_NARROW
 
 					if(py*TOF_XS_NARROW+px == PIX_NARROW)
 					{
@@ -2047,7 +2003,7 @@ void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8
 							x /= reso;
 							y /= reso;
 
-							#ifdef DBGPRVOX
+							#ifdef DBGPRVOX_NARROW
 
 								DBG_PR_VAR_I32(seg);
 								DBG_PR_VAR_I32(x);
@@ -2074,7 +2030,7 @@ void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8
 		}
 	}
 
-	#ifdef DBGPRVOX
+	#ifdef DBGPRVOX_NARROW
 		DBG_PR_VAR_I32(insertion_cnt);
 	#endif
 }
@@ -2136,7 +2092,7 @@ void tof_to_obstacle_avoidance(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, 
 
 				uint16_t hor_ang, ver_ang;
 
-				#ifdef DBGPRVOX
+				#ifdef DBGPRVOX_AVOIDANCE
 
 					if(py*TOF_XS+px == PIX)
 						DBG_PR_VAR_I32(d);
@@ -2169,7 +2125,7 @@ void tof_to_obstacle_avoidance(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, 
 					default: error(145); while(1); // to tell the compiler we always set hor_ang, ver_ang
 				}
 
-				#ifdef DBGPRVOX
+				#ifdef DBGPRVOX_AVOIDANCE
 
 					if(py*TOF_XS+px == PIX)
 					{
@@ -2232,7 +2188,7 @@ void tof_to_obstacle_avoidance(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, 
 		}
 	}
 
-	#ifdef DBGPRVOX
+	#ifdef DBGPRVOX_AVOIDANCE
 		DBG_PR_VAR_I32(insertion_cnt);
 	#endif
 }
@@ -2334,11 +2290,8 @@ void compensated_2dcs_6mhz_ampl_dist(uint8_t *ampl_out, uint16_t *dist_out, epc_
 				if(dist_i < 0) dist_i += TOF_TBL_PERIOD;				
 				else if(dist_i >= TOF_TBL_PERIOD) dist_i -= TOF_TBL_PERIOD;
 
-				#ifdef FAST_APPROX_AMPLITUDE
-					ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-				#else
-					ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-				#endif
+				ampl = AMPL(dcs20, dcs31);
+				if(ampl > 255) ampl = 255;
 
 				dist = dist_i;
 			}
@@ -2442,11 +2395,8 @@ void compensated_2dcs_6mhz_ampl_dist_narrow(uint8_t *ampl_out, uint16_t *dist_ou
 					if(dist_i < 0) dist_i += TOF_TBL_PERIOD;				
 					else if(dist_i >= TOF_TBL_PERIOD) dist_i -= TOF_TBL_PERIOD;
 
-					#ifdef FAST_APPROX_AMPLITUDE
-						ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-					#else
-						ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-					#endif
+					ampl = AMPL(dcs20, dcs31);
+					if(ampl > 255) ampl = 255;
 
 					dist = dist_i;
 				}
@@ -2552,11 +2502,8 @@ void compensated_2dcs_6mhz_dist_masked(uint16_t *dist_out, epc_2dcs_t *in, epc_i
 				if(dist_i < 0) dist_i += TOF_TBL_PERIOD;				
 				else if(dist_i >= TOF_TBL_PERIOD) dist_i -= TOF_TBL_PERIOD;
 
-				#ifdef FAST_APPROX_AMPLITUDE
-					ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-				#else
-					ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-				#endif
+				ampl = AMPL(dcs20, dcs31);
+				if(ampl > 255) ampl = 255;
 
 				if(ampl < 3)
 					dist = 65534;
@@ -2664,11 +2611,8 @@ void compensated_2dcs_6mhz_dist_masked_narrow(uint16_t *dist_out, epc_2dcs_narro
 					if(dist_i < 0) dist_i += TOF_TBL_PERIOD;				
 					else if(dist_i >= TOF_TBL_PERIOD) dist_i -= TOF_TBL_PERIOD;
 
-					#ifdef FAST_APPROX_AMPLITUDE
-						ampl = (abso(dcs20)+abso(dcs31))/(23); if(ampl > 255) ampl = 255;
-					#else
-						ampl = sqrt(sq(dcs20)+sq(dcs31))/(17); if(ampl > 255) ampl = 255;
-					#endif
+					ampl = AMPL(dcs20, dcs31);
+					if(ampl > 255) ampl = 255;
 
 					if(ampl < 3)
 						dist = 65534;
