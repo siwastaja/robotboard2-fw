@@ -582,18 +582,30 @@ void stm32init(void)
 }
 
 
+extern void dump_scb();
+extern void dump_stack();
 void nmi_handler(void)
 {
+	SAFETY_SHUTDOWN();
+	dump_scb();
+	dump_stack();
+
 	error(2);
 }
 
 void hardfault_handler(void)
 {
+	SAFETY_SHUTDOWN();
+	dump_scb();
+	dump_stack();
 	error(3);
 }
 
 void memmanage_handler(void)
 {
+	SAFETY_SHUTDOWN();
+	dump_scb();
+	dump_stack();
 	error(4);
 }
 
