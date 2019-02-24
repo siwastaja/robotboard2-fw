@@ -191,6 +191,30 @@ void restart_voxmap()
 extern void adjust();
 
 /*
+	Takes in the latest chip temperature measurement.
+	Averages it (per sensor, keeps track of sensors internally) using an exponentially decaying running average
+	Returns the number of fine dll steps required, based on that average and sensor calibration parameters
+*/
+static int filt_calc_dll_steps(int sidx, int32_t chiptemp)
+{
+	static int32_t chiptemp_flt_x256[N_SENSORS];
+
+	if(sidx < 0 || sidx >= N_SENSORS)
+		error(1234);
+
+	chiptemp_flt_x256[sidx] = (7*chiptemp_flt_x256[sidx] + (chiptemp<<8))>>3;
+
+	int32_t chiptemp_flt = chiptemp_flt_x256[sidx]>>8;
+
+	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp_flt)*tof_calibs[sidx]->fine_steps_per_temp[0])>>8;
+	if(fine_steps < 0) fine_steps = 0;
+	else if(fine_steps > 799) fine_steps = 799;
+
+	return fine_steps;
+}
+
+
+/*
 
 BASIC SET	HDR_FACTOR	16						
 								
@@ -254,10 +278,7 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	int32_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
 
-	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp)*tof_calibs[sidx]->fine_steps_per_temp[0])>>8;
-	if(fine_steps < 0) fine_steps = 0;
-	else if(fine_steps > 799) fine_steps = 799;
-
+	int fine_steps = filt_calc_dll_steps(sidx, chiptemp);
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
 
 
@@ -324,7 +345,8 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 
 
 	// Process the supershort - shadow cal set = 0
-	compensated_nonhdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, img20[0], img31[0]);
+	// Supershort gives ~130mm too long results
+	compensated_nonhdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, img20[0], img31[0], -70);
 	tof_to_voxmap(wid_ampl, wid_dist, sidx, 5, 255, vox_ref_x, vox_ref_y);
 
 	copy_cal_to_shadow(sidx, 2);
@@ -349,27 +371,6 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 
 	// Do something here - shadow cal set = 2
 	compensated_2dcs_6mhz_dist_masked(lofreq_wid_dist, &dcs2, &mono_comp);
-
-	static int vittu = 0;
-
-	if(vittu == 0) vittu = 1; else vittu = 0;
-#if 1
-	if(vittu && sidx==5 && gen_data && tof_raw_dist)
-	{
-		tof_raw_dist->sensor_idx = 4;
-		tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
-		memcpy(tof_raw_dist->dist, lofreq_wid_dist, sizeof tof_raw_dist->dist);
-		memset(tof_raw_dist->dist_narrow, 0, sizeof tof_raw_dist->dist_narrow);
-	}
-
-	if(vittu && sidx==5 && gen_data && tof_raw_ampl8)
-	{
-		tof_raw_ampl8->sensor_idx = 4;
-		memset(tof_raw_ampl8->ampl, 0, sizeof tof_raw_ampl8->ampl);
-		memset(tof_raw_ampl8->ampl_narrow, 0, sizeof tof_raw_ampl8->ampl_narrow);
-	}
-#endif
-
 
 
 
@@ -405,17 +406,17 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 
 
 #if 1
-	if(!vittu && sidx==5 && gen_data && tof_raw_dist)
+	if(gen_data && tof_raw_dist)
 	{
-		tof_raw_dist->sensor_idx = 5;
+		tof_raw_dist->sensor_idx = sidx;
 		tof_raw_dist->sensor_orientation = sensor_mounts[sidx].mount_mode;
 		memcpy(tof_raw_dist->dist, wid_dist, sizeof tof_raw_dist->dist);
 		memset(tof_raw_dist->dist_narrow, 0, sizeof tof_raw_dist->dist_narrow);
 	}
 
-	if(!vittu && sidx==5 && gen_data && tof_raw_ampl8)
+	if(tof_raw_ampl8)
 	{
-		tof_raw_ampl8->sensor_idx = 5;
+		tof_raw_ampl8->sensor_idx = sidx;
 		memcpy(tof_raw_ampl8->ampl, wid_ampl, sizeof tof_raw_ampl8->ampl);
 		memset(tof_raw_ampl8->ampl_narrow, 0, sizeof tof_raw_ampl8->ampl_narrow);
 	}
@@ -481,10 +482,7 @@ static void test_set(int sidx)
 	int32_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
 
-	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp)*tof_calibs[sidx]->fine_steps_per_temp[0])>>8;
-	if(fine_steps < 0) fine_steps = 0;
-	else if(fine_steps > 799) fine_steps = 799;
-
+	int fine_steps = filt_calc_dll_steps(sidx, chiptemp);
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
 
 #define FREQ 0
@@ -557,7 +555,6 @@ static void test_set(int sidx)
 }
 #endif
 
-
 static void long_set(int sidx, int basic_long_exp, int nar_avg_ampl)
 {
 	// Compensation BW + chiptemp
@@ -579,10 +576,7 @@ static void long_set(int sidx, int basic_long_exp, int nar_avg_ampl)
 	int32_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
 
-	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp)*tof_calibs[sidx]->fine_steps_per_temp[0])>>8;
-	if(fine_steps < 0) fine_steps = 0;
-	else if(fine_steps > 799) fine_steps = 799;
-
+	int fine_steps = filt_calc_dll_steps(sidx, chiptemp);
 	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
 
 
@@ -674,7 +668,7 @@ static void long_set(int sidx, int basic_long_exp, int nar_avg_ampl)
 	// Process the previous wide stuff.
 	conv_4dcs_to_2dcs(img20[0], img31[0], &dcsa, &mono_comp);
 
-	compensated_nonhdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, img20[0], img31[0]);
+	compensated_nonhdr_tof_calc_dist_ampl_flarecomp(wid_ampl, wid_dist, img20[0], img31[0], 0);
 
 	dealias_10mhz(wid_dist, lofreq_wid_dist);
 
@@ -718,7 +712,7 @@ static void long_set(int sidx, int basic_long_exp, int nar_avg_ampl)
 
 	conv_4dcs_to_2dcs_narrow(img20[0], img31[0], &dcsa_narrow, &mono_comp);
 
-	compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(nar_ampl, nar_dist, img20[0], img31[0]);
+	compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(nar_ampl, nar_dist, img20[0], img31[0], 0);
 
 	dealias_10mhz_narrow(nar_dist, lofreq_nar_dist);
 
@@ -854,19 +848,23 @@ void run_cycle()
 
 	int bat_mv = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
 
-	if(bat_mv < 3100*6)
+	if(
+		(bat_mv < 3100*6 && !charger_is_running()) ||
+		(bat_mv < 2900*6) )
 	{
 		lowbat_die_cnt++;
+		beep_blocking(10, 4000, 2000);
 		if(lowbat_die_cnt > 20)
 		{
-			beep_blocking(10, 4000, 1500);
-			delay_ms(100);
-			beep_blocking(10, 4000, 1500);
-			delay_ms(100);
-			beep_blocking(50, 4000, 1500);
-			delay_ms(100);
+			SAFETY_SHUTDOWN();
+			beep_blocking(10, 4000, 2000);
+			delay_ms(200);
+			beep_blocking(10, 4000, 2000);
+			delay_ms(200);
+			beep_blocking(50, 4000, 2000);
+			delay_ms(200);
 			shutdown();
-
+			while(1);
 		}
 	}
 	else
@@ -947,13 +945,18 @@ void run_cycle()
 	if(basic_sidx == long_sidx_a || basic_sidx == long_sidx_b || basic_sidx == long_sidx_c)
 		take_long = 1;
 
-
 	#define VOXMAP_SEND_MASK 0b1111111110
 	static int voxmap_send_mask;
 	if(take_long)
 	{
 		voxmap_send_mask |= 1<<basic_sidx;
 	}
+
+
+	extern int chafind_enabled;
+	if(chafind_enabled)
+		take_long = 0; // Don't waste time doing the longs when aligning to charger
+
 
 	int send_voxmap = 0;
 	if((voxmap_send_mask & VOXMAP_SEND_MASK) == VOXMAP_SEND_MASK)
@@ -1040,61 +1043,64 @@ void run_cycle()
 
 
 
-
-	// Allow max three back-to-back obstacle images, to prevent starvation of round-robin measurements
-	for(int n_obst = 0; n_obst < 3; n_obst++)
+	// Take quick obstacle avoidance shots - don't do it if we are mounting to charger
+	if(!chafind_enabled)
 	{
-		int obst_sidx = -1;
-		int32_t lowest_margin = 99999999;
-		for(int i=0; i<N_SENSORS; i++)
+
+		// Allow max three back-to-back obstacle images, to prevent starvation of round-robin measurements
+		for(int n_obst = 0; n_obst < 3; n_obst++)
 		{
-			int32_t time_from_prev_img = cnt_100us - latest_timestamps[i];
-			int32_t margin = latency_targets[i] - time_from_prev_img; // negative margin = we are already late
-
-			//DBG_PR_VAR_I32(i);
-			//DBG_PR_VAR_I32(time_from_prev_img);
-			//DBG_PR_VAR_I32(margin);
-
-			if(sensors_in_use[i] && margin < lowest_margin)
+			int obst_sidx = -1;
+			int32_t lowest_margin = 99999999;
+			for(int i=0; i<N_SENSORS; i++)
 			{
-				lowest_margin = margin;
-				obst_sidx = i;
+				int32_t time_from_prev_img = cnt_100us - latest_timestamps[i];
+				int32_t margin = latency_targets[i] - time_from_prev_img; // negative margin = we are already late
+
+				//DBG_PR_VAR_I32(i);
+				//DBG_PR_VAR_I32(time_from_prev_img);
+				//DBG_PR_VAR_I32(margin);
+
+				if(sensors_in_use[i] && margin < lowest_margin)
+				{
+					lowest_margin = margin;
+					obst_sidx = i;
+				}
 			}
+
+			if(n_obst > 0)
+			{
+				// We already took one obst avoidance measurement - only take more
+				// if they are really getting late
+				if(lowest_margin > MS(20))
+					break;
+			}
+			else
+			{
+				// By all means take at least one obst avoidance image, even if it still isn't acutely urgent
+				if(lowest_margin > MS(100))
+					break;
+			}
+
+			if(obst_sidx < 0 || obst_sidx >= N_SENSORS)
+				error(555);
+
+			tof_mux_select(obst_sidx);
+
+
+			// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
+			if(basic_sidx == 6 || basic_sidx==9)
+				bubblegum = 2;
+			else
+				bubblegum = 1;
+
+			obstacle_set(obst_sidx);
+			latest_timestamps[obst_sidx] = cnt_100us;
+
+
 		}
-
-		if(n_obst > 0)
-		{
-			// We already took one obst avoidance measurement - only take more
-			// if they are really getting late
-			if(lowest_margin > MS(20))
-				break;
-		}
-		else
-		{
-			// By all means take at least one obst avoidance image, even if it still isn't acutely urgent
-			if(lowest_margin > MS(100))
-				break;
-		}
-
-		if(obst_sidx < 0 || obst_sidx >= N_SENSORS)
-			error(555);
-
-		tof_mux_select(obst_sidx);
-
-
-		// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
-		if(basic_sidx == 6 || basic_sidx==9)
-			bubblegum = 2;
-		else
-			bubblegum = 1;
-
-		obstacle_set(obst_sidx);
-		latest_timestamps[obst_sidx] = cnt_100us;
-
 
 	}
-
-
 
 
 /*	if(gen_data && tof_diagnostics)
