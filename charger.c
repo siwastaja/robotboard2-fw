@@ -1140,7 +1140,8 @@ void charger_test2()
 int combined_current_setpoint;
 int combined_max_output_current; // mA - use this to limit the output current to the batteries
 int combined_max_output_power; // mW - use this to limit power from the charger (remember to account for losses)
-#define CV_VOLTAGE 25190
+//#define CV_VOLTAGE 25190
+#define CV_VOLTAGE 24500 // 88.3%
 
 static volatile int was_running_cnt;
 
