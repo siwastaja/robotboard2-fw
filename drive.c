@@ -73,7 +73,7 @@ void set_top_speed_max(int old_style_value)
 	if(max_ang_speed < min_ang_speed) max_ang_speed = min_ang_speed;
 	if(max_lin_speed < min_lin_speed) max_lin_speed = min_lin_speed;
 	if(max_ang_speed > 13.0) max_ang_speed = 13.0;
-	if(max_lin_speed > 25.0) max_lin_speed = 25.0;
+	if(max_lin_speed > 60.0) max_lin_speed = 60.0;
 }
 
 static int mode_xy;
@@ -1460,7 +1460,7 @@ void drive_handler()
 		if(abso(ang_err) > 20*ANG_1_DEG)
 			max_lin_speed_by_ang_err = 0.0;
 		else
-			max_lin_speed_by_ang_err = ((double)ANG_1_DEG*150.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 15 units.
+			max_lin_speed_by_ang_err = ((double)ANG_1_DEG*180.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 18 units.
 	}
 	// Calculate the target wheel positions to correct the measured angular error
 	// In theory, this movement produces the "correct" end result automatically
