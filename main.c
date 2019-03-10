@@ -29,7 +29,13 @@
 #include "../robotboard2-fw-calibrator/tof_calibrator.h"
 #endif
 
+#ifdef EXT_VACUUM
 #include "ext_vacuum_boost.h"
+#else
+void ext_safety_shutdown()
+{
+}
+#endif
 
 #define DBG_UART
 
@@ -525,7 +531,9 @@ void main()
 
 
 
+#ifdef EXT_VACUUM
 	init_ext_vacuum_boost();
+#endif
 
 
 	extern void adc_test();
@@ -542,9 +550,14 @@ void main()
 	tof_ctrl_init();
 	uart_print_string_blocking("init ok\r\n"); 
 
-
 	#ifdef CALIBRATOR
-		init_tofcal_ambient();
+
+		#ifdef CALIBRATOR_BOX
+			init_tofcal_ambient();
+		#endif
+		#ifdef CALIBRATOR_WALL
+			init_tofcal_wall();
+		#endif
 	#endif
 
 //	extern void beep_test();

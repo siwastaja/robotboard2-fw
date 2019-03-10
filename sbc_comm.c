@@ -731,55 +731,59 @@ void parse_rx_packet()
 					calibrator_cmd_in((s2b_calibration_t*)p_data);
 				}
 				break;
+			
+			#else
+
+				case CMD_MOVE_ABS:
+				{
+					cmd_go_to((s2b_move_abs_t*)p_data);
+				}
+				break;
+
+				case CMD_MOTORS:
+				{
+					if(((s2b_motors_t*)p_data)->enabled)
+						cmd_motors(6000); // milliseconds watchdog
+					else
+						cmd_motors(0);
+				}
+				break;
+
+
+				case CMD_CORR_POS:
+				{
+					cmd_corr_pos((s2b_corr_pos_t*)p_data);
+				}
+				break;
+
+				case CMD_STOP_MOVEMENT:
+				{
+					cmd_stop_movement();
+				}
+				break;
+
+
+				case CMD_EXT_VACUUM:
+				{
+					ext_vacuum_cmd(((s2b_ext_vacuum_t*)p_data)->power, ((s2b_ext_vacuum_t*)p_data)->nozzle);
+				}
+				break;
+
+				case CMD_MOUNT_CHARGER:
+				{
+					find_charger();
+				}
+				break;
+
+
+				case CMD_SELF_CALIB_REQUEST:
+				{
+					self_calib();
+				}
+				break;
+
 			#endif
 
-			case CMD_MOVE_ABS:
-			{
-				cmd_go_to((s2b_move_abs_t*)p_data);
-			}
-			break;
-
-			case CMD_MOTORS:
-			{
-				if(((s2b_motors_t*)p_data)->enabled)
-					cmd_motors(6000); // milliseconds watchdog
-				else
-					cmd_motors(0);
-			}
-			break;
-
-
-			case CMD_CORR_POS:
-			{
-				cmd_corr_pos((s2b_corr_pos_t*)p_data);
-			}
-			break;
-
-			case CMD_STOP_MOVEMENT:
-			{
-				cmd_stop_movement();
-			}
-			break;
-
-
-			case CMD_EXT_VACUUM:
-			{
-				ext_vacuum_cmd(((s2b_ext_vacuum_t*)p_data)->power, ((s2b_ext_vacuum_t*)p_data)->nozzle);
-			}
-			break;
-
-			case CMD_MOUNT_CHARGER:
-			{
-				find_charger();
-			}
-			break;
-
-
-			case CMD_SELF_CALIB_REQUEST:
-			{
-				self_calib();
-			}
-			break;
 			
 			default:
 			{

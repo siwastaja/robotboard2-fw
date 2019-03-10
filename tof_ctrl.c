@@ -45,7 +45,7 @@
 
 // 1 or 0                                  0 1 2 3 4   5 6 7 8 9
 const uint8_t sensors_in_use[N_SENSORS] = 
-#ifdef CALIBRATOR
+#ifdef CALIBRATOR_BOX
 // 0 1 2 3 4   5 6 7 8 9
   {1,0,0,0,0,  0,0,0,0,0};
 #else

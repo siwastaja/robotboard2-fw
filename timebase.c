@@ -11,7 +11,9 @@ Timebase: 10kHz handler
 #include "charger.h"
 #include "pwrswitch.h"
 #include "adcs.h"
-#include "ext_vacuum_boost.h"
+#ifdef EXT_VACUUM
+	#include "ext_vacuum_boost.h"
+#endif
 #include "audio.h"
 
 volatile uint32_t cnt_100us;
@@ -56,7 +58,9 @@ void timebase_inthandler()
 	extern volatile int app_power_enabled;
 	if(cnt == 6)
 	{
-		ext_vacuum_fsm();
+		#ifdef EXT_VACUUM
+			ext_vacuum_fsm();
+		#endif
 	}
 	else if(cnt == 7)
 	{

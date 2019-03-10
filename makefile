@@ -2,25 +2,36 @@
 
 #DEVIP = 10.3.0.6
 #DEVIP = 192.168.43.59
-DEVIP = 10.42.0.242
-#DEVIP = 192.168.1.5
+#DEVIP = 10.42.0.242
+DEVIP = 192.168.1.5
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
 SIZE = arm-none-eabi-size
 OBJCOPY = arm-none-eabi-objcopy
 
-OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o ext_vacuum_boost.o
-#OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run.o ../robotboard2-fw-calibrator/tof_calibrator.o
-
-
-ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s tof_calibrator.s
-
 CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -Winline -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
 
 CFLAGS += -DFIRMWARE
+#CFLAGS += -DEXT_VACUUM
 
+#Standard compilation
+#OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o ext_vacuum_boost.o
+ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s tof_calibrator.s
+
+
+#Calibration: box
+#OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_box.o ../robotboard2-fw-calibrator/tof_calibrator.o
 #CFLAGS += -DCALIBRATOR
+#CFLAGS += -DCALIBRATOR_BOX
+
+#Calibration: wall
+OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_wall.o ../robotboard2-fw-calibrator/tof_calibrator.o
+CFLAGS += -DCALIBRATOR
+CFLAGS += -DCALIBRATOR_WALL
+
+
+
 
 CFLAGS += -DSBC_RASPI
 
