@@ -77,6 +77,7 @@ extern const uint8_t sensors_in_use[N_SENSORS];
 
 void rgb_update(uint32_t val);
 
+extern uint32_t sensor_silicon_ids[N_SENSORS];
 
 #define INTUS(x_) (((x_)*10)/6)
 

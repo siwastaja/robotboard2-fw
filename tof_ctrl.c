@@ -53,6 +53,8 @@ const uint8_t sensors_in_use[N_SENSORS] =
   {0,1,1,1,1,  1,1,1,1,1};
 #endif
 
+uint32_t sensor_silicon_ids[N_SENSORS];
+
 #define WR_DMA DMA1
 #define WR_DMA_STREAM DMA1_Stream2
 #define WR_DMA_STREAM_NUM 2
@@ -1038,6 +1040,25 @@ void init_sensors()
 		epc_enable_dll(); block_epc_i2c(0);
 		epc_coarse_dll_steps(0); block_epc_i2c(0);
 		epc_pll_steps(0); block_epc_i2c(4); // THIS ISN'T ZERO BY DEFAULT!!
+
+		// Read and store the unique chip id:
+
+		epc_start_read_eeprom(0xf6); block_epc_i2c(4);
+		uint8_t waferid_msb = epc_read_eeprom_byte(); 
+		uint8_t waferid_lsb = epc_read_eeprom_byte();
+
+		uint8_t chipid_msb = epc_read_eeprom_byte();
+		uint8_t chipid_lsb = epc_read_eeprom_byte();
+
+		uint16_t wafer_id = ((uint16_t)waferid_msb)<<8 | ((uint16_t)waferid_lsb);
+		uint16_t chip_id = ((uint16_t)chipid_msb)<<8 | ((uint16_t)chipid_lsb);
+
+//		DBG_PR_VAR_U16(wafer_id);
+//		DBG_PR_VAR_U16(chip_id);
+		uint32_t combined_id = ((uint32_t)wafer_id<<16) | (uint32_t)chip_id;
+//		DBG_PR_VAR_U32(combined_id);
+
+		sensor_silicon_ids[idx] = combined_id;
 
 		rgb_update(0);
 
