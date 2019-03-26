@@ -1061,3 +1061,67 @@ void init_bldc()
 	NVIC_EnableIRQ(TIM8_CC_IRQn);
 
 }
+
+void init_bldc_dummy()
+{
+	RCC->APB2ENR |= 0b11; // TIM8, TIM1
+	__DSB();
+
+	TIM1->CR1 = 0b01UL<<5 /*centermode 1*/;
+	TIM1->CR2 = 0b0010UL<<20 /*TRGO2: Update event*/ | 0b100UL<<4 /*TRGO: OC1REF*/;
+
+	TIM1->CCMR1 = 1UL<<3 /*OC1 Preload enable*/  | 0b110UL<<4  /*OC1 PWMmode 1*/ |
+	              1UL<<11 /*OC2 Preload Enable*/ | 0b110UL<<12 /*OC2 PWMmode 1*/;
+	TIM1->CCMR2 = 1UL<<3 /*OC3 Preload enable*/  | 0b110UL<<4  /*OC3 PWMmode 1*/;
+	TIM1->CCER =  1UL<<0 /*OC1 on*/ | 1UL<<2 /*OC1 complementary output enable*/ |
+	              1UL<<4 /*OC2 on*/ | 1UL<<6 /*OC2 complementary output enable*/ |
+		      1UL<<8 /*OC3 on*/ | 1UL<<10 /*OC3 complementary output enable*/;
+
+
+	TIM1->ARR = PWM_MAX;
+
+	// CCR1 is reused for the temporary purpose of sync-starting TIM8:
+	TIM1->CCR1 = PWM_MAX-10; // Sync pulse for 180 deg phase diff.
+	// Tested that "1" is actually long enough to sync. Using a bit wider pulse (-10) to be sure.
+
+	TIM1->CCR2 = PWM_MID;
+	TIM1->CCR3 = PWM_MID;
+	TIM1->CCR4 = PWM_MAX-400; // Interrupt trigger 2us after ADC trigger
+	// TIM1->BDTR = 1UL<<15 /*Main output enable*/ | 1UL /*21ns deadtime*/; <-- nope
+	TIM1->EGR |= 1; // Generate Reinit+update
+	__DSB();
+	TIM1->CR1 |= 1; // Enable the timer
+	__DSB();
+
+
+	TIM8->CR1 = 0b01UL<<5 /*centermode 1*/;
+	TIM8->SMCR = 0UL<<7 /*unclearly documented mystery bit, let's keep it off*/ | 
+		0UL<<16 | 0b110UL<<0 /*Slave mode 0110: Trigger mode: only start is triggered*/;
+		// ITR0 as trigger sourceby zeroes
+
+	TIM8->CCMR1 = 1UL<<3 /*OC1 Preload enable*/  | 0b110UL<<4  /*OC1 PWMmode 1*/ |
+	              1UL<<11 /*OC2 Preload Enable*/ | 0b110UL<<12 /*OC2 PWMmode 1*/;
+	TIM8->CCMR2 = 1UL<<3 /*OC3 Preload enable*/  | 0b110UL<<4  /*OC3 PWMmode 1*/;
+	TIM8->CCER =  1UL<<0 /*OC1 on*/ | 1UL<<2 /*OC1 complementary output enable*/ |
+	              1UL<<4 /*OC2 on*/ | 1UL<<6 /*OC2 complementary output enable*/ |
+		      1UL<<8 /*OC3 on*/ | 1UL<<10 /*OC3 complementary output enable*/;
+
+	TIM8->ARR = PWM_MAX;
+
+	TIM8->CCR1 = PWM_MID;
+	TIM8->CCR2 = PWM_MID;
+	TIM8->CCR3 = PWM_MID;
+	TIM8->CCR4 = PWM_MAX-400; // Interrupt trigger 2us after ADC trigger
+
+	// TIM8->BDTR = 1UL<<15 /*Main output enable*/ | 1UL /*21ns deadtime*/; <-- nope
+	TIM8->EGR |= 1; // Generate Reinit+update
+//	TIM8->DIER = 1UL /*Update interrupt enable*/;
+	__DSB();
+	// Don't enable the timer, let it sync to TIM1
+
+	while(!(TIM8->CR1 & 1UL)) ;
+	__DSB();
+
+	TIM1->CCR1 = PWM_MID; // CCR1 not needed for syncing anymore.
+
+}

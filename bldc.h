@@ -22,6 +22,7 @@
 #include <stdint.h>
 
 void init_bldc();
+void init_bldc_dummy(); // Generates ADC triggers required by other systems; otherwise doesn't init BLDC.
 
 // Puts the motor to the state of actively correcting location so that bldc_pos_set matches actual position (readable from bldc_pos):
 void motor_run(int m);

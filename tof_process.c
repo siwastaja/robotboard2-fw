@@ -341,7 +341,7 @@ void lens_model_narrow(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t
 int flare_factor = 17;
 int flare_factor_narrow = 7;
 
-#if 1
+#if 0
 void adjust()
 {
 	uint8_t cmd = uart_input();
@@ -1233,11 +1233,11 @@ sensor_mount_t sensor_mounts[N_SENSORS] =
 
  /*1:                */ { 1,   130,   103, DEGTOANG16(    24.4), DEGTOANG16( 4.4),       310  }, // -1
  /*2:                */ { 2,  -235,   215, DEGTOANG16(    66.4), DEGTOANG16( 1.4),       310  }, // -1
- /*3:                */ { 1,  -380,   215, DEGTOANG16(    86.5), DEGTOANG16( 1.9),       310  }, // -1
+ /*3:                */ { 2,  -415,   215, DEGTOANG16(    93.5), DEGTOANG16( 1.9),       310  }, // -1
  /*4:                */ { 2,  -522,   103, DEGTOANG16(   157.4), DEGTOANG16( 3.9),       280  }, // -1
- /*5:                */ { 1,  -522,    35, DEGTOANG16(   184.0), DEGTOANG16( 6.9),       260  }, // -1
+ /*5:                */ { 2,  -522,   -35, DEGTOANG16(   176.0), DEGTOANG16( 4.9),       290  }, // -1
  /*6:                */ { 1,  -522,  -103, DEGTOANG16(   206.0), DEGTOANG16( 4.4),       290  }, // -1
- /*7:                */ { 2,  -380,  -215, DEGTOANG16(   268.5), DEGTOANG16( 3.4),       280  }, // -1
+ /*7:                */ { 1,  -415,  -215, DEGTOANG16(   271.5), DEGTOANG16( 2.4),       280  }, // -1
  /*8:                */ { 1,  -235,  -215, DEGTOANG16(   294.9), DEGTOANG16( 4.4),       300  }, // -1
  /*9:                */ { 2,   130,  -103, DEGTOANG16(   334.9), DEGTOANG16( -0.9),      320  }  // 0
 };
@@ -1259,7 +1259,7 @@ void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
 }
 
 int adjustings = 0;
-#if 0
+#if 1
 void adjust()
 {
 	uint8_t cmd = uart_input();

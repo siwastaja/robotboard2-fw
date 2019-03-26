@@ -35,6 +35,9 @@ void epc_dis_leds();
 void epc_ena_wide_leds();
 void epc_ena_narrow_leds();
 void epc_ena_wide_and_narrow_leds();
+void epc_greyread_single_ended();
+void epc_greyread_differential();
+
 void epc_greyscale(); // OK to do while acquiring: shadow registered: applied to next trigger.
 void epc_2dcs(); // OK to do while acquiring: shadow registered: applied to next trigger.
 void epc_4dcs(); // OK to do while acquiring: shadow registered: applied to next trigger.
@@ -67,6 +70,8 @@ void block_epc_i2c(int err_idx);
 void dcmi_start_dma(void *data, int size);
 int poll_capt_with_timeout();
 int poll_capt_with_timeout_complete();
+int poll_data_transfer_start_with_timeout(int size);
+
 
 void dcmi_crop_narrow();
 void dcmi_crop_wide();

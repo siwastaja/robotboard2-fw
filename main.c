@@ -524,28 +524,25 @@ void main()
 
 
 
-	init_imu();
-	extern void timer_test();
-	init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
-	init_charger(); // Requires working ADC1 data, so init_bldc() first.
+	#ifndef CALIBRATOR
+		init_imu();
+		init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
+		init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
+		#ifdef EXT_VACUUM
+			init_ext_vacuum_boost();
+		#endif
+	
+	#else
+		init_bldc_dummy(); // Only for ADC triggers
 
+	#endif
 
-#ifdef EXT_VACUUM
-	init_ext_vacuum_boost();
-#endif
-
-
-	extern void adc_test();
-//	while(1)
-//		adc_test();
 
 	delay_ms(10);
 
 	init_cpu_profiler();
 
-	extern void bldc_test();
-//	bldc_test();
 
 	tof_ctrl_init();
 	uart_print_string_blocking("init ok\r\n"); 

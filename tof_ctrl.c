@@ -439,6 +439,20 @@ void epc_ena_wide_and_narrow_leds()
 	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
 }
 
+void epc_greyread_single_ended()
+{
+	epc_wrbuf[0] = 0x3a;
+	epc_wrbuf[1] = 0x10;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
+void epc_greyread_differential()
+{
+	epc_wrbuf[0] = 0x3a;
+	epc_wrbuf[1] = 0x00;
+	epc_i2c_write(i2c_addr, epc_wrbuf, 2);
+}
+
 
 void epc_greyscale() // OK to do while acquiring: shadow registered: applied to next trigger.
 {
@@ -711,6 +725,46 @@ void rgb_update(uint32_t val)
 }
 
 static int err_cnt = 0;
+
+int poll_data_transfer_start_with_timeout(int size)
+{
+	int timeout = 2*1600000;
+
+// DMA counter based implementation:
+#if 0
+	int orig_ndtr = size/4;
+	while(DCMI_DMA_STREAM->NDTR >= orig_ndtr && timeout>0)
+#endif
+
+// DCMI VSYNC status bit based implementation:
+#if 1
+	while((DCMI->SR & 2) /* "synchronization between frames" */ && timeout>0)	
+#endif
+	{
+//		DBG_PR_VAR_U16(DCMI_DMA_STREAM->NDTR);
+		timeout--;
+	}
+
+	if(timeout == 0)
+	{
+		// Disable the stream
+		DCMI_DMA_STREAM->CR = 1UL<<25 /*Channel*/ | 0b01UL<<16 /*med prio*/ |
+				   0b10UL<<13 /*32-bit mem*/ | 0b10UL<<11 /*32-bit periph*/ |
+			           1UL<<10 /*mem increment*/ | 0b00UL<<6 /*periph-to-mem*/;
+
+		DMA_CLEAR_INTFLAGS(DCMI_DMA, DCMI_DMA_STREAM_NUM);
+
+		err_cnt++;
+		if(err_cnt > 200)
+		{
+			error(68);
+		}
+		return 1;
+	}
+
+	return 0;
+
+}
 
 int poll_capt_with_timeout()
 {
@@ -1040,6 +1094,10 @@ void init_sensors()
 		epc_enable_dll(); block_epc_i2c(0);
 		epc_coarse_dll_steps(0); block_epc_i2c(0);
 		epc_pll_steps(0); block_epc_i2c(4); // THIS ISN'T ZERO BY DEFAULT!!
+
+
+		//epc_normalphase_or_int();
+
 
 		// Read and store the unique chip id:
 

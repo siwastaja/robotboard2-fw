@@ -976,6 +976,11 @@ void run_cycle()
 		if(charger_is_full())
 			pwr_status->flags |= PWR_STATUS_FLAG_FULL;
 
+		extern volatile int main_power_enabled;
+
+		if(main_power_enabled == 1)
+			pwr_status->flags |= PWR_STATUS_FLAG_TURNOFF;
+
 		pwr_status->bat_mv = bat_mv; //filtered_bat_mv_x256>>8;
 		pwr_status->bat_percent = conv_bat_percent(bat_mv);
 		pwr_status->charger_input_mv = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
