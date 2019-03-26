@@ -143,7 +143,7 @@ void dealias_10mhz_narrow(uint16_t *hf_dist, uint16_t *lf_dist);
 #define WID_N_PIXGROUPS 12
 #define NAR_N_PIXGROUPS 8
 
-#define TOF_TBL_SEG_LEN 96
+#define TOF_TBL_SEG_LEN 96 // actual table is one longer
 
 #define COMP_AMBIENT_INTLEN_US 100 // it's important to follow this in both calibration and runtime
 
@@ -160,10 +160,10 @@ typedef struct __attribute__((packed))
 	
 	*/
 	uint8_t  wid_lut_group_ids[TOF_XS*TOF_YS/2];
-	uint16_t wid_luts[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
+	uint16_t wid_luts[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN+1]; // Table is one longer, to handle the fairly rare case of equality dcs31==dcs20 without extra code.
 
 	uint8_t  nar_lut_group_ids[TOF_XS_NARROW*TOF_YS_NARROW/2];
-	uint16_t nar_luts[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
+	uint16_t nar_luts[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN+1];
 
 
 	/*
