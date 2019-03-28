@@ -66,6 +66,12 @@ typedef struct __attribute__((packed))
 } epc_2dcs_narrow_t;
 
 
+#define DIST_OVEREXP 0
+#define DIST_UNDEREXP 2047
+
+#define DIST_SHIFT_BASIC 3
+#define DIST_SHIFT_LONG 4
+
 #define SIZEOF_MONO (sizeof(epc_img_t))
 #define SIZEOF_2DCS (sizeof(epc_2dcs_t))
 #define SIZEOF_2DCS_NARROW (sizeof(epc_2dcs_narrow_t))
@@ -73,23 +79,8 @@ typedef struct __attribute__((packed))
 #define SIZEOF_4DCS_NARROW (sizeof(epc_4dcs_narrow_t))
 
 
-void tof_calc_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_t *in, int offset_mm, int clk_div);
-void tof_calc_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, epc_4dcs_narrow_t *in, int offset_mm, int clk_div);
-void tof_calc_ampl_hdr(uint8_t *ampl_out, uint8_t* long_in, uint8_t* short_in);
-void calc_toofar_ignore_from_2dcs(uint8_t *ignore_out, epc_4dcs_t *in, int threshold /*mm*/, int offset_mm, int clk_div);
-void calc_interference_ignore_from_2dcs(uint8_t *ignore_out, epc_4dcs_t *in, int threshold);
-void tof_calc_dist_3hdr_with_ignore(uint16_t* dist_out, uint8_t* ampl, uint16_t* dist, uint8_t* ignore_in);
-void tof_calc_dist_3hdr_with_ignore_with_straycomp(uint16_t* dist_out, uint8_t* ampl, uint16_t* dist, uint8_t* ignore_in, uint16_t stray_ampl, uint16_t stray_dist);
-void tof_remove_midliers(uint16_t* out, uint16_t* in);
-void process_bw(uint8_t *out, epc_img_t *in);
-void process_dcs(int16_t *out, epc_img_t *in);
-void process_dcs_narrow(int16_t *out, epc_img_narrow_t *in);
-
 
 void copy_cal_to_shadow(int sid, int f);
-
-int32_t calc_widnar_correction(int32_t* corr, uint8_t *wid_ampl, uint16_t *wid_dist, uint8_t *nar_ampl, uint16_t *nar_dist);
-
 
 
 void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg);
@@ -99,12 +90,6 @@ int calc_avg_ampl_x256_narrow(int16_t* dcs20_in, int16_t* dcs31_in);
 int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in);
 
 
-void hdr_combine(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-void hdr_combine_narrow(int16_t* dcs20_out, int16_t* dcs31_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-void lens_model(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t* dcs20_in, int16_t* dcs31_in);
-void lens_model_narrow(int16_t* dcs20_blur_out, int16_t* dcs31_blur_out, int16_t* dcs20_in, int16_t* dcs31_in);
-void compensated_dist_ampl(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in);
-void compensated_dist_ampl_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_in, int16_t* dcs31_in, int16_t* dcs20_flare_in, int16_t* dcs31_flare_in);
 void compensated_2dcs_6mhz_ampl_dist(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg);
 void compensated_2dcs_6mhz_ampl_dist_narrow(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_narrow_t *in, epc_img_t *bwimg);
 void compensated_2dcs_6mhz_dist_masked(uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg);
@@ -112,10 +97,8 @@ void compensated_2dcs_6mhz_dist_masked_narrow(uint16_t *dist_out, epc_2dcs_narro
 
 
 
-void compensated_hdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-void compensated_hdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in);
-void compensated_nonhdr_tof_calc_dist_ampl_flarecomp(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int kludge_corr);
-void compensated_nonhdr_tof_calc_dist_ampl_flarecomp_narrow(uint8_t *ampl_out, uint16_t *dist_out, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int kludge_corr);
+void compensated_2hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor, int islong);
+void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_mid_in, int16_t* dcs31_mid_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor_lomid, int hdr_factor_midhi, int islong);
 
 void dealias_20mhz(uint16_t *hf_dist, uint16_t *lf_dist);
 void dealias_20mhz_narrow(uint16_t *hf_dist, uint16_t *lf_dist);
