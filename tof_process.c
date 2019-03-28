@@ -84,18 +84,19 @@ static inline uint16_t lookup_dist(int beam, int g, int16_t d31, int16_t d20)
 {
 	int s;
 	int i;
+	// SEG_LEN -1 for compatibility. Remove -1.
 	if(d31 >= 0)
 	{
 		if(d20 >= 0)
 		{
-			if(d31 > d20) {s=5; i=((TOF_TBL_SEG_LEN)*d20)/d31;}
-			else          {s=4; i=((TOF_TBL_SEG_LEN)*d31)/d20;}
+			if(d31 > d20) {s=5; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=4; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
 		}
 		else
 		{
 			d20 *= -1;
-			if(d31 > d20) {s=6; i=((TOF_TBL_SEG_LEN)*d20)/d31;}
-			else          {s=7; i=((TOF_TBL_SEG_LEN)*d31)/d20;}
+			if(d31 > d20) {s=6; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=7; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
 		}		
 	}
 	else
@@ -103,14 +104,14 @@ static inline uint16_t lookup_dist(int beam, int g, int16_t d31, int16_t d20)
 		d31 *= -1;
 		if(d20 >= 0)
 		{
-			if(d31 > d20) {s=2; i=((TOF_TBL_SEG_LEN)*d20)/d31;}
-			else          {s=3; i=((TOF_TBL_SEG_LEN)*d31)/d20;}
+			if(d31 > d20) {s=2; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=3; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
 		}
 		else
 		{
 			d20 *= -1;
-			if(d31 > d20) {s=1; i=((TOF_TBL_SEG_LEN)*d20)/d31;}
-			else          {s=0; i=((TOF_TBL_SEG_LEN)*d31)/d20;}
+			if(d31 > d20) {s=1; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
+			else          {s=0; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
 		}		
 
 	}
