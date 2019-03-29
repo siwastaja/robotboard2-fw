@@ -854,6 +854,7 @@ void run_cycle()
 	{
 		tof_slam_set->flags = 0 | TOF_SLAM_SET_FLAG_VALID;
 		tof_slam_set->sidx = basic_sidx;
+		tof_slam_set->sensor_orientation = sensor_mounts[basic_sidx].mount_mode;
 	}
 
 
