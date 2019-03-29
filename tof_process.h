@@ -66,11 +66,11 @@ typedef struct __attribute__((packed))
 } epc_2dcs_narrow_t;
 
 
-#define DIST_OVEREXP 0
-#define DIST_UNDEREXP 2047
+#define DIST_OVEREXP 1
+#define DIST_UNDEREXP 0
 
-#define DIST_SHIFT_BASIC 3
-#define DIST_SHIFT_LONG 4
+#define DIST_SHIFT 3  // shift from/to millimeters: 8mm resolution
+#define DIST_MASK 0x0fff
 
 #define SIZEOF_MONO (sizeof(epc_img_t))
 #define SIZEOF_2DCS (sizeof(epc_2dcs_t))
@@ -90,15 +90,13 @@ int calc_avg_ampl_x256_narrow(int16_t* dcs20_in, int16_t* dcs31_in);
 int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in);
 
 
-void compensated_2dcs_6mhz_ampl_dist(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg);
-void compensated_2dcs_6mhz_ampl_dist_narrow(uint8_t *ampl_out, uint16_t *dist_out, epc_2dcs_narrow_t *in, epc_img_t *bwimg);
-void compensated_2dcs_6mhz_dist_masked(uint16_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg);
-void compensated_2dcs_6mhz_dist_masked_narrow(uint16_t *dist_out, epc_2dcs_narrow_t *in, epc_img_t *bwimg);
+void compensated_2dcs_6mhz_dist_masked(uint8_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg);
+void compensated_2dcs_6mhz_dist_masked_narrow(uint8_t *dist_out, epc_2dcs_narrow_t *in, epc_img_t *bwimg);
 
 
 
-void compensated_2hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor, int islong);
-void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_mid_in, int16_t* dcs31_mid_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor_lomid, int hdr_factor_midhi, int islong);
+void compensated_2hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor, uint8_t* dealias_dist, int freq);
+void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_mid_in, int16_t* dcs31_mid_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor_lomid, int hdr_factor_midhi, uint8_t* dealias_dist, int freq);
 
 void dealias_20mhz(uint16_t *hf_dist, uint16_t *lf_dist);
 void dealias_20mhz_narrow(uint16_t *hf_dist, uint16_t *lf_dist);
@@ -296,16 +294,8 @@ typedef struct
 extern /*const*/ sensor_mount_t sensor_mounts[N_SENSORS];
 
 #include "../robotsoft/api_board_to_soft.h"
-typedef struct __attribute__((packed))
-{
-	uint16_t segs[12][VOX_SEG_XS*VOX_SEG_YS];
-} full_voxel_map_t;
 
-extern full_voxel_map_t voxmap;
-
-void tof_to_voxmap(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max, int32_t ref_x, int32_t ref_y);
-void tof_to_obstacle_avoidance(uint8_t *wid_ampl, uint16_t *wid_dist, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max);
-void tof_to_voxmap_narrow(uint8_t *nar_ampl, uint16_t *nar_dist, int sidx, uint8_t ampl_accept_min, uint8_t ampl_accept_max, int32_t ref_x, int32_t ref_y);
+void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx);
 
 void tof_enable_chafind_datapoints();
 void tof_disable_chafind_datapoints();

@@ -34,8 +34,19 @@ static inline int is_robot_moving()
 	return moving;
 }
 
+void hires_pos_to_hw_pose(hw_pose_t* out, hires_pos_t* in)
+{
+	out->ang = in->ang;
+	out->pitch = in->pitch;
+	out->roll = in->roll;
+	out->x = in->x>>16;
+	out->y = in->y>>16;
+}
+
+
 hires_pos_t cur_pos;
 hires_pos_t target_pos;
+
 
 void new_target(hires_pos_t pos)
 {
@@ -1285,14 +1296,8 @@ void drive_handler()
 
 	if(hw_pose)
 	{
-		hw_pose->ang = cur_pos.ang;
-		hw_pose->pitch = cur_pos.pitch;
-		hw_pose->roll = cur_pos.roll;
-		hw_pose->x = cur_pos.x>>16;
-		hw_pose->y = cur_pos.y>>16;
+		hires_pos_to_hw_pose(hw_pose, &cur_pos);
 	}
-
-
 
 
 

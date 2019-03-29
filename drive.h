@@ -12,6 +12,8 @@ typedef struct
 	int64_t y;   // 1/65536 mm
 } hires_pos_t;
 
+void hires_pos_to_hw_pose(hw_pose_t* out, hires_pos_t* in);
+
 extern hires_pos_t cur_pos;
 
 
