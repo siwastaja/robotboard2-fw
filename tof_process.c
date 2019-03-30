@@ -418,6 +418,7 @@ void compensated_2hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 						pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
 
 					dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+					if(dist < 2) dist = 2;
 
 				}
 				else // is narrow
@@ -428,6 +429,7 @@ void compensated_2hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 						pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2]>>4;
 
 					dist = lookup_dist(1, pixgroup, dcs31, dcs20);
+					if(dist < 2) dist = 2;
 
 				}
 
@@ -442,21 +444,23 @@ void compensated_2hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 					int err1 = abso(hf_wrap1 - lfdist_mm);
 					int err2 = abso(hf_wrap2 - lfdist_mm);
 
-					if(err0 < DEALIAS_THRESHOLD)
-						; // Keep hf as is
+					if(dealias_dist[i] == DIST_UNDEREXP)
+						dist = DIST_UNDEREXP;
+					else if(dealias_dist[i] == DIST_OVEREXP || err0 < DEALIAS_THRESHOLD)
+						dist = dist>>DIST_SHIFT; // Keep hf as is
 					else if(err1 < DEALIAS_THRESHOLD)
-						dist = hf_wrap1;
+						dist = hf_wrap1>>DIST_SHIFT;
 					else if(err2 < DEALIAS_THRESHOLD)
-						dist = hf_wrap2;
+						dist = hf_wrap2>>DIST_SHIFT;
 					else
 						dist = DIST_UNDEREXP;
 
 				}
+				else
+					dist>>=DIST_SHIFT;
 
-				dist>>=DIST_SHIFT;
-
-				if(dist < 1) dist = 1;
-				else if(dist > DIST_UNDEREXP) dist = DIST_UNDEREXP;
+				if(dist < 0) dist = 0;
+				else if(dist > MAX_DISTVAL) dist = DIST_UNDEREXP;
 			}
 
 			ampl/=16;
@@ -486,7 +490,6 @@ static inline int32_t hdrize(int16_t val1, int16_t val2, int16_t val3, int ratio
 
 	return val_out;
 }
-
 
 
 void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_mid_in, int16_t* dcs31_mid_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor_lomid, int hdr_factor_midhi, uint8_t* dealias_dist, int freq)   __attribute__((section(".text_itcm")));
@@ -532,6 +535,7 @@ void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 		{
 			ampl = 15;
 			dist = DIST_OVEREXP;
+
 		}
 		else
 		{
@@ -540,14 +544,42 @@ void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 			dcs20 = hdrize(dcs20_lo_in[i], dcs20_mid_in[i], dcs20_hi_in[i], hdr_factor_lomid, hdr_factor_midhi);
 			dcs31 = hdrize(dcs31_lo_in[i], dcs31_mid_in[i], dcs31_hi_in[i], hdr_factor_lomid, hdr_factor_midhi);
 
-			dcs31 -= ((int64_t)dcs31_accum*(int64_t)flare_factors[is_narrow])>>8;
+#if 0
+			{
+				DBG_PR_VAR_I32(dcs20_lo_in[i]);
+				DBG_PR_VAR_I32(dcs31_lo_in[i]);
+
+				DBG_PR_VAR_I32(dcs20_mid_in[i]);
+				DBG_PR_VAR_I32(dcs31_mid_in[i]);
+
+				DBG_PR_VAR_I32(dcs20_hi_in[i]);
+				DBG_PR_VAR_I32(dcs31_hi_in[i]);
+
+				DBG_PR_VAR_I32(dcs20);
+				DBG_PR_VAR_I32(dcs31);
+
+			}
+#endif
+
 			dcs20 -= ((int64_t)dcs20_accum*(int64_t)flare_factors[is_narrow])>>8;
+			dcs31 -= ((int64_t)dcs31_accum*(int64_t)flare_factors[is_narrow])>>8;
 
 			ampl = AMPL(dcs20_hi_in[i], dcs31_hi_in[i]);
+
+#if 0
+			{
+				DBG_PR_VAR_I32(ampl);
+
+				DBG_PR_VAR_I32(dcs20);
+				DBG_PR_VAR_I32(dcs31);
+
+			}
+#endif
 
 			if(ampl<4)
 			{
 				dist = DIST_UNDEREXP;
+
 			}
 			else
 			{
@@ -560,6 +592,7 @@ void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 						pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
 
 					dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+					if(dist < 2) dist = 2;
 
 				}
 				else // is_narrow
@@ -570,8 +603,15 @@ void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 						pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2]>>4;
 
 					dist = lookup_dist(1, pixgroup, dcs31, dcs20);
+					if(dist < 2) dist = 2;
 
 				}
+
+#if 0
+				{
+					DBG_PR_VAR_I32(dist);
+				}
+#endif
 
 				if(dealias_dist != NULL)
 				{
@@ -584,21 +624,26 @@ void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 					int err1 = abso(hf_wrap1 - lfdist_mm);
 					int err2 = abso(hf_wrap2 - lfdist_mm);
 
-					if(err0 < DEALIAS_THRESHOLD)
-						; // Keep hf as is
+
+					if(dealias_dist[i] == DIST_UNDEREXP)
+						dist = DIST_UNDEREXP;
+					else if(dealias_dist[i] == DIST_OVEREXP || err0 < DEALIAS_THRESHOLD)
+						dist = dist>>DIST_SHIFT; // Keep hf as is
 					else if(err1 < DEALIAS_THRESHOLD)
-						dist = hf_wrap1;
+						dist = hf_wrap1>>DIST_SHIFT;
 					else if(err2 < DEALIAS_THRESHOLD)
-						dist = hf_wrap2;
+						dist = hf_wrap2>>DIST_SHIFT;
 					else
 						dist = DIST_UNDEREXP;
 
 				}
+				else
+					dist>>=DIST_SHIFT;
 
-				dist>>=DIST_SHIFT;
+				if(dist < 0) dist = 0;
+				else if(dist > MAX_DISTVAL) dist = DIST_UNDEREXP;
 
-				if(dist < 1) dist = 1;
-				else if(dist > DIST_UNDEREXP) dist = DIST_UNDEREXP;
+
 			}
 
 			ampl/=16;
@@ -782,14 +827,14 @@ void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx)
 			int32_t conform_avg = 0;
 			for(int i=0; i<5; i++)
 			{
-				if(dists[i] > avg-120 && dists[i] < avg+120)
+				if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
 				{
 					n_conform++;
 					conform_avg += dists[i];
 				}
 			}
 
-			if(n_conform >= 4)
+			if(n_conform >= 5)
 			{
 				int32_t d = conform_avg / n_conform;
 
@@ -1006,7 +1051,10 @@ void compensated_2dcs_6mhz_dist_masked(uint8_t *dist_out, epc_2dcs_t *in, epc_im
 				if(ampl < 3)
 					dist = DIST_UNDEREXP;
 				else
+				{
 					dist = dist_i>>7;
+					if(dist < 2) dist = 2;
+				}
 			}
 
 		}
@@ -1116,7 +1164,10 @@ void compensated_2dcs_6mhz_dist_masked_narrow(uint8_t *dist_out, epc_2dcs_narrow
 					if(ampl < 3)
 						dist = DIST_UNDEREXP;
 					else
+					{
 						dist = dist_i>>7;
+						if(dist < 2) dist = 2;
+					}
 				}
 
 			}

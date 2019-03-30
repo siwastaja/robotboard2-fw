@@ -72,6 +72,8 @@ typedef struct __attribute__((packed))
 #define DIST_SHIFT 3  // shift from/to millimeters: 8mm resolution
 #define DIST_MASK 0x0fff
 
+#define MAX_DISTVAL (4095)
+
 #define SIZEOF_MONO (sizeof(epc_img_t))
 #define SIZEOF_2DCS (sizeof(epc_2dcs_t))
 #define SIZEOF_2DCS_NARROW (sizeof(epc_2dcs_narrow_t))

@@ -28,8 +28,8 @@ static int bubblegum = 1; // Temporary bodge to increase exposure times on two h
 static int gen_data;
 
 
-static int16_t img20[2][TOF_XS*TOF_YS] __attribute__((section(".dtcm_bss")));
-static int16_t img31[2][TOF_XS*TOF_YS];
+static int16_t img20[3][TOF_XS*TOF_YS] __attribute__((section(".dtcm_bss")));
+static int16_t img31[3][TOF_XS*TOF_YS];
 
 static uint8_t lofreq_dist[TOF_XS*TOF_YS];
 
@@ -320,7 +320,6 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
-
 	conv_4dcs_to_2dcs(img20[1], img31[1], &dcsa, NULL);
 
 	// HDR long exp
@@ -341,6 +340,7 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	compensated_3hdr_tof_calc_ampldist_flarecomp(0, ampldist, 
 		img20[0], img31[0], img20[1], img31[1], img20[2], img31[2], first_hdr_factor, 16, lofreq_dist, 0);
 
+
 	tof_to_obstacle_avoidance(ampldist, sidx);
 
 	if(tof_slam_set)
@@ -349,6 +349,7 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	}
 
 	adjust();
+
 
 }
 

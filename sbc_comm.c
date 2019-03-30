@@ -139,12 +139,15 @@ void update_subs(uint64_t *subs_vector)
 				{
 					// Trying to add a non-existing message
 					// TODO: error recovery & reporting
+					SAFETY_SHUTDOWN();
+					DBG_PR_VAR_I32(i);
+					DBG_PR_VAR_I32(s);
 					error(21); 
 				}				
 				if(offs + b2s_msgs[s].size > B2S_MAX_LEN-FOOTER_LEN)
 				{
 					// requested subscription doesn't fit: stop adding subscriptions.
-					break;
+					goto BREAK_SUB_ADD;
 				}
 
 				subs[i] |= 1ULL<<(s-i*64);
@@ -154,6 +157,7 @@ void update_subs(uint64_t *subs_vector)
 			t >>= 1;
 		}
 	}
+	BREAK_SUB_ADD:;
 
 	stored_offs = offs;
 /*
