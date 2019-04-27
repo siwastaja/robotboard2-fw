@@ -4,6 +4,7 @@
 
 #include "tof_muxing.h"
 
+// All pins are the same for REV2A, REV2B
 
 #define MUX0S0_PORT GPIOH
 #define MUX0S0_BIT  (11)

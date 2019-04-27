@@ -13,6 +13,14 @@ OBJCOPY = arm-none-eabi-objcopy
 CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -Winline -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
 
 CFLAGS += -DFIRMWARE
+
+# PCB revision. Valid values:
+# -DREV2A (the single existing prototype)
+# -DREV2B (first 50pcs production batch, quite a few IO remappings compared to REV2A)
+CFLAGS += -DREV2B
+
+
+# Hard-compiled application(s):
 CFLAGS += -DEXT_VACUUM
 
 #Standard compilation

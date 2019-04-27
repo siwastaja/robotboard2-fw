@@ -17,23 +17,45 @@
 
 #include "tof_muxing.h"
 
-#define RSTN_HIGH()     HI(GPIOA,13)
-#define RSTN_LOW()      LO(GPIOA,13)
+// Same for REV2A, REV2B
+#define RSTN_HIGH()     do{HI(GPIOA,13);}while(0)
+#define RSTN_LOW()      do{LO(GPIOA,13);}while(0)
 
-#define LEDWIDE_ON()    HI(GPIOD,12)
-#define LEDWIDE_OFF()   LO(GPIOD,12)
+#ifdef REV2A
 
-#define LEDNARROW_ON()  HI(GPIOD,11)
-#define LEDNARROW_OFF() LO(GPIOD,11)
+	// REV2A has separate supplies for wide and narrow LEDs:
 
-#define PLUS3V3_ON()    LO(GPIOH,13)
-#define PLUS3V3_OFF()   HI(GPIOH,13)
+	#define LEDWIDE_ON()    do{HI(GPIOD,12);}while(0)
+	#define LEDWIDE_OFF()   do{LO(GPIOD,12);}while(0)
 
-#define PLUS10V_ON()    HI(GPIOH,14)
-#define PLUS10V_OFF()   LO(GPIOH,14)
+	#define LEDNARROW_ON()  do{HI(GPIOD,11);}while(0)
+	#define LEDNARROW_OFF() do{LO(GPIOD,11);}while(0)
 
-#define MINUS10V_ON()   HI(GPIOD,13)
-#define MINUS10V_OFF()  LO(GPIOD,13)
+	#define LEDSUP_ON()	do{LEDWIDE_ON(); LEDNARROW_ON();}while(0)
+	#define LEDSUP_OFF()	do{LEDWIDE_OFF(); LEDNARROW_OFF();}while(0)
+
+#endif
+
+#ifdef REV2B
+
+	#define LEDSUP_ON()	do{HI(GPIOD,12);}while(0)
+	#define LEDSUP_OFF()	do{LO(GPIOD,12);}while(0)
+
+#endif
+
+
+
+// Same for REV2A, REV2B
+#define PLUS3V3_ON()    do{LO(GPIOH,13);}while(0)
+#define PLUS3V3_OFF()   do{HI(GPIOH,13);}while(0)
+
+// Same for REV2A, REV2B
+#define PLUS10V_ON()    do{HI(GPIOH,14);}while(0)
+#define PLUS10V_OFF()   do{LO(GPIOH,14);}while(0)
+
+// Same for REV2A, REV2B
+#define MINUS10V_ON()   do{HI(GPIOD,13);}while(0)
+#define MINUS10V_OFF()  do{LO(GPIOD,13);}while(0)
 
 
 
@@ -96,8 +118,7 @@ void epc_safety_shutdown()
 	MINUS10V_OFF();
 	PLUS10V_OFF();
 	tof_mux_all_off();
-	LEDWIDE_OFF();
-	LEDNARROW_OFF();
+	LEDSUP_OFF();
 //	delay_ms(100);
 //	PLUS3V3_OFF();
 }
@@ -112,8 +133,7 @@ void epc_shutdown()
 	MINUS10V_OFF();
 	PLUS10V_OFF();
 	tof_mux_all_off();
-	LEDWIDE_OFF();
-	LEDNARROW_OFF();
+	LEDSUP_OFF();
 	delay_ms(100);
 	PLUS3V3_OFF();
 }
@@ -942,8 +962,7 @@ void init_sensors()
 	RSTN_HIGH();
 
 
-	LEDWIDE_ON();
-	LEDNARROW_ON();
+	LEDSUP_ON();
 
 	uart_print_string_blocking("Power init done\r\n");
 	delay_ms(50);
@@ -1170,7 +1189,9 @@ void tof_ctrl_init()
 	// Reset and power supplies:
 	IO_TO_GPO(GPIOA,13);
 	IO_TO_GPO(GPIOD,12);
-	IO_TO_GPO(GPIOD,11);
+	#ifdef REV2A
+		IO_TO_GPO(GPIOD,11); // VLED_NARROW
+	#endif
 	IO_TO_GPO(GPIOH,13);
 	IO_TO_GPO(GPIOH,14);
 	IO_TO_GPO(GPIOD,13);

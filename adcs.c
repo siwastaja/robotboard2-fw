@@ -9,7 +9,6 @@
 
 
 volatile adc1_group_t adc1 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
-//volatile adc2_group_t adc2 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 volatile adc3_group_t adc3 __attribute__((aligned(4))) __attribute__((section(".sram3_bss")));
 
 // 4.4494 << 13  = 36449.87
@@ -18,8 +17,9 @@ uint32_t cha_vinbus_mult = 36450;
 uint32_t cha_vin_mult = 37200;
 // 1.611343 << 13  = 13200.13
 uint32_t vbat_mult = 13200;
-uint32_t vapp_mult = 13200/4;
 
+// vapp and vgapp oversample by ADC HW by 4x; hence /4
+uint32_t vapp_mult = 13200/4;
 // 3300/(10000/(300000+10000) *2^14) = 6.24389.   <<13 -> 51150
 uint32_t vgapp_mult = 51150/4;
 
@@ -176,9 +176,21 @@ static inline void CONF_ADC_SMPTIMES(ADC_TypeDef* adc,
 	adc->SMPR2 = c19<<27 | c18<<24 | c17<<21 | c16<<18 | c15<<15 | c14<<12 | c13<<9 | c12<<6 | c11<<3 | c10;
 }
 
-// If differential measurements will be used, remember to add a calibration cycle for diff meas.
+// If differential measurements were going to be used, remember to add a calibration cycle for diff meas.
 static void init_calib_adc(ADC_TypeDef *adc)
 {
+	// Clear DEEPPWD
+	// ADVREGEN = 1
+	// Wait for TADCVREG_STUP (10 us min)
+	
+	// ADCALDIF = 0
+	// ADCALLIN = 1
+	// ADCAL = 1
+	// Wait until ADCAL goes 0
+	// ADC_ISR write 1 to ADRDY
+	// ADEN = 1
+	// Wait until ADRDY goes 1
+
 	adc->CR = 0; // DEEPPWD (deep power down) mode off (reset state is bit29 high).
 	adc->CR = 1UL<<28; // Voltage regulator on
 	__DSB();
@@ -344,39 +356,52 @@ void init_adcs()
 	RCC->AHB4ENR |= 1UL<<24; // ADC3
 	__DSB();
 
-	IO_TO_ANALOG(GPIOF,11);
-	IO_TO_ANALOG(GPIOA,7);
-	IO_TO_ANALOG(GPIOA,0);
-	IO_TO_ANALOG(GPIOA,1);
-	IO_TO_ANALOG(GPIOC,4);
-	IO_TO_ANALOG(GPIOA,3);
-	IO_TO_ANALOG(GPIOA,2);
-	IO_TO_ANALOG(GPIOA,4);
-	IO_TO_ANALOG(GPIOC,2);
-	IO_TO_ANALOG(GPIOC,5);
-	IO_TO_ANALOG(GPIOB,0);
-	IO_TO_ANALOG(GPIOB,1);
-	IO_TO_ANALOG(GPIOF,3);
-	IO_TO_ANALOG(GPIOF,10);
-	IO_TO_ANALOG(GPIOC,0);
-	IO_TO_ANALOG(GPIOC,3);
-	IO_TO_ANALOG(GPIOH,3);
-	IO_TO_ANALOG(GPIOH,4);
-	IO_TO_ANALOG(GPIOH,5);
-	IO_TO_ANALOG(GPIOH,2);
 
+	#ifdef REV1A
+		IO_TO_ANALOG(GPIOA,3);
+		IO_TO_ANALOG(GPIOA,2);
+		IO_TO_ANALOG(GPIOA,1);
+		IO_TO_ANALOG(GPIOC,4);
+		IO_TO_ANALOG(GPIOF,11);
+		IO_TO_ANALOG(GPIOA,7);
+		IO_TO_ANALOG(GPIOA,4);
+		IO_TO_ANALOG(GPIOC,5);
 
-	// Clear DEEPPWD
-	// ADVREGEN = 1
-	// Wait for TADCVREG_STUP (10 us min)
-	
-	// ADCALDIF = 0
-	// ADCALLIN = 1
-	// ADCAL = 1
-	// Wait until ADCAL goes 0
-	// ADC_ISR write 1 to ADRDY
-	// ADEN = 1
-	// Wait until ADRDY goes 1
+		IO_TO_ANALOG(GPIOB,0);
+		IO_TO_ANALOG(GPIOB,1);
+
+		IO_TO_ANALOG(GPIOF,3);
+		IO_TO_ANALOG(GPIOF,10);
+		IO_TO_ANALOG(GPIOC,0);
+		IO_TO_ANALOG(GPIOC,3);
+		IO_TO_ANALOG(GPIOH,2);
+		IO_TO_ANALOG(GPIOC,2);
+		IO_TO_ANALOG(GPIOH,3);
+		IO_TO_ANALOG(GPIOH,5);
+	#endif
+
+	#ifdef REV1B
+		IO_TO_ANALOG(GPIOA,1);
+		IO_TO_ANALOG(GPIOA,0);
+		IO_TO_ANALOG(GPIOA,3);
+		IO_TO_ANALOG(GPIOC,4);
+		IO_TO_ANALOG(GPIOF,11);
+		IO_TO_ANALOG(GPIOA,7);
+		IO_TO_ANALOG(GPIOA,4);
+		IO_TO_ANALOG(GPIOC,5);
+
+		IO_TO_ANALOG(GPIOB,0);
+		IO_TO_ANALOG(GPIOB,1);
+
+		IO_TO_ANALOG(GPIOF,3);
+		IO_TO_ANALOG(GPIOF,10);
+		IO_TO_ANALOG(GPIOC,0);
+		IO_TO_ANALOG(GPIOC,3);
+		IO_TO_ANALOG(GPIOH,2);
+		IO_TO_ANALOG(GPIOH,3);
+		IO_TO_ANALOG(GPIOH,5);
+		IO_TO_ANALOG(GPIOF,4);
+	#endif
 
 
 	init_calib_adc(ADC1);
@@ -443,10 +468,20 @@ void init_adcs()
 
 	// Injected reg:  SW trigger. needs to be written after CFGR
 	ADC3->JSQR = (2UL/*len*/  -1UL) |
+
+		#ifdef REV1A
+
 			16UL<<9 | /*Injected1: channel 16 (Vapp_meas)*/
 			14UL<<15; /*Injected2: channel 14 (appfet_g_meas)*/
-			//<<21
-			//<<27
+
+		#endif
+
+		#ifdef REV1B
+
+			9UL<<9 | /*Injected1: channel 9 (Vapp_meas)*/
+			16UL<<15; /*Injected2: channel 16 (appfet_g_meas)*/
+
+		#endif
 
 
 	ADC3->CFGR2 = (4UL/*oversampling ratio*/   -1UL)<<16 | 1UL<<1 /*enable oversampling on injected channels*/;

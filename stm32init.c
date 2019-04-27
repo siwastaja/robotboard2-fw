@@ -492,7 +492,7 @@ void init_delay_us(uint32_t i)
 // Get the bare minimum ready ASAP so that the charge pump can start.
 void stm32init(void)
 {
-//	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
+	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
 //	IO_TO_GPO(GPIOC, 13); // LED
 
 	PWR->CR1 |= 1UL<<8; // Enable write access to the backup SRAM, and the PWR->CR2 register
@@ -513,16 +513,27 @@ void stm32init(void)
 
 	RCC->AHB4ENR |= 1UL<<28; // Enable backup ram access clock.
 
+#ifdef REV2A
+
 	IO_TO_GPI(GPIOE,2); // power switch sense
 	#define PWRSWITCH_PRESSED (!IN(GPIOE,2))
+
+#endif
+
+#ifdef REV2B
+
+	IO_TO_GPI(GPIOI,11); // power switch sense
+	#define PWRSWITCH_PRESSED (!IN(GPIOI,11))
+#endif
+
 
 	if(backup_ram.immediate_5v == 0x420b1a5e && !PWRSWITCH_PRESSED)
 	{
 		// If the power switch is pressed, the backup ram is wrong
 		RCC->AHB4ENR |= 1UL<<5;
-		IO_TO_GPO(GPIOF, 5);
+		IO_TO_GPO(GPIOF, 5); // 5Vbig - same pin in REV2A, REV2B
 		BIG5V_ON();
-		backup_ram.immediate_5v = 0;		
+		backup_ram.immediate_5v = 0;
 		backup_ram.immediate_5v; // dummy read, see flash.c
 	}
 

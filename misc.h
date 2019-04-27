@@ -11,10 +11,11 @@ void delay_tenth_us(uint32_t i) __attribute__((section(".text_itcm")));
 void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
 
 
+// REV2A, REV2B same IO
 #define LED_ON()  do{HI(GPIOC, 13);}while(0)
 #define LED_OFF() do{LO(GPIOC, 13);}while(0)
 
-
+// REV2A, REV2B same IO
 #define BIG5V_ON()  do{HI(GPIOF, 5);}while(0)
 #define BIG5V_OFF()  do{HI(GPIOF, 5);}while(0)
 

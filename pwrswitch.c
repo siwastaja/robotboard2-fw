@@ -69,25 +69,52 @@
 
 void pwrswitch_chargepump_init()
 {
-	RCC->AHB4ENR |= 1UL<<1;
-	LO(GPIOB, 2);
-	IO_TO_GPO(GPIOB, 2);
+	#ifdef REV2A
+		RCC->AHB4ENR |= 1UL<<1;
+		LO(GPIOB, 2);
+		IO_TO_GPO(GPIOB, 2);
+	#endif
+
+	#ifdef REV2B
+		RCC->AHB4ENR |= 1UL<<7;
+		LO(GPIOH, 4);
+		IO_TO_GPO(GPIOH, 4);
+	#endif
+
 }
 
 void init_pwrswitch_and_led()
 {
-	RCC->AHB4ENR |= 1UL<<4 | 1UL<<5; // PE and PF
+	#ifdef REV2A
+		RCC->AHB4ENR |= 1UL<<4 | 1UL<<5; // PE and PF
 
-	IO_TO_GPI(GPIOE,2); // power switch sense
+		IO_TO_GPI(GPIOE,2); // power switch sense
 
-	IO_TO_GPO(GPIOF,2); // power switch LED
-	IO_OPENDRAIN(GPIOF,2);
+		IO_TO_GPO(GPIOF,2); // power switch LED
+		IO_OPENDRAIN(GPIOF,2);
 
-	APP_CP_LO();
-	IO_TO_GPO(GPIOF,12); // APP charge pump
+		APP_CP_LO();
+		IO_TO_GPO(GPIOF,12); // APP charge pump
 
-	APP_EN_DESAT_PROT();
-	IO_TO_GPO(GPIOE,15); // App desat protection disable output
+		APP_EN_DESAT_PROT();
+		IO_TO_GPO(GPIOE,15); // App desat protection disable output
+	#endif
+
+	#ifdef REV2B
+		RCC->AHB4ENR |= 1UL<<0 | 1UL<<5 | 1UL<<6 | 1UL<<8; // PA, PF, PG, and PI
+
+		IO_TO_GPI(GPIOI,11); // power switch sense
+
+		IO_TO_GPO(GPIOF,2); // power switch LED
+		IO_OPENDRAIN(GPIOF,2);
+
+		APP_CP_LO();
+		IO_TO_GPO(GPIOG,3); // APP charge pump
+
+		APP_EN_DESAT_PROT();
+		IO_TO_GPO(GPIOA,2); // App desat protection disable output
+	#endif
+
 	
 }
 

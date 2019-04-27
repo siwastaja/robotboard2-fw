@@ -3,7 +3,7 @@
 	
 	ADC module: configures the three on-chip ADCs and relevant DMA channels
 
-	(c) 2017-2018 Pulu Robotics and other contributors
+	(c) 2017-2019 Pulu Robotics and other contributors
 	Maintainer: Antti Alhonen <antti.alhonen@iki.fi>
 
 	This program is free software; you can redistribute it and/or modify
@@ -169,105 +169,170 @@ extern uint32_t vbat_per_vinbus_mult;
 	#error Please recheck AWD_CHA_VINBUS settings.
 #endif
 
-#define ADC1_SEQ_LEN 10
-#define ADC1_SEQ 15,14,16,17, 4,2,7,12,18, 8, 0, 0, 0, 0, 0, 0
-#define ADC1_DISCONTINUOUS_GROUP_LEN 5
+#define ADC1_SEQ_LEN 8
+#define ADC1_DISCONTINUOUS_GROUP_LEN 4
 
-// Which channels are used? LSb = ch 0
-#define ADC1_CHANNELS_IN_USE ((1<<2)|(1<<7)|(1<<16)|(1<<17)|(1<<4)|(1<<15)|(1<<14)|(1<<18)|(1<<12)|(1<<8))
+
+#ifdef REV2A
+	#define ADC1_SEQ 15,14,17, 4,2,7,18, 8, 0, 0, 0, 0, 0, 0, 0, 0
+	// Which channels are used? LSb = ch 0
+	#define ADC1_CHANNELS_IN_USE ((1<<15)|(1<<14)|(1<<17)|(1<<4)|(1<<2)|(1<<7)|(1<<18)|(1<<8))
+#endif
+#ifdef REV2B
+	#define ADC1_SEQ 17,16,15, 4,2,7,18, 8, 0, 0, 0, 0, 0, 0, 0, 0
+	#define ADC1_CHANNELS_IN_USE ((1<<17)|(1<<16)|(1<<15)|(1<<4)|(1<<2)|(1<<7)|(1<<18)|(1<<8))
+#endif
+
 
 #define ADC2_SEQ_LEN 2
 #define ADC2_SEQ  9, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 #define ADC2_DISCONTINUOUS_GROUP_LEN 1
 #define ADC2_CHANNELS_IN_USE ((1<<9)|(1<<5))
 
+
 #define ADC3_SEQ_LEN 7
-#define ADC3_SEQ  5, 6,10, 1,15,13,18,0,0,0,0,0,0,0,0,0
-#define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<14)|(1<<15)|(1<<16)|(1<<13)|(1<<18))
+
+#ifdef REV2A
+	#define ADC3_SEQ  5, 6,10, 1,13,12,18,0,0,0,0,0,0,0,0,0
+	#define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<13)|(1<<12)|(1<<18))
+#endif
+
+#ifdef REV2B
+	#define ADC3_SEQ  5, 6,10, 1,13,14,18,0,0,0,0,0,0,0,0,0
+	#define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<13)|(1<<14)|(1<<18))
+#endif
+
 
 typedef union
 {
 	struct __attribute__((packed))
 	{
-		// CONVERSION GROUP 1: 5 items
+		// CONVERSION GROUP 1: 4 items
 
-		uint16_t mc1_imeasb;            // ADC12  15+ PA3   Motor controller 1 phase B current measurement
-		uint16_t mc1_imeasc;            // ADC12  14+ PA2   Motor controller 1 phase C current measurement
+		// Motor controller 1 phase B current measurement
+		// REV2A: ADC12  15+ PA3
+		// REV2B: ADC1   17+ PA1  (DIFFERENT!)
+		uint16_t mc1_imeasb;
 
-		uint16_t bms_temp_contacts;     // ADC1   16+ PA0   Charger contact temperature NTC
-		uint16_t bms_temp_plat_mosfets; // ADC1   17+ PA1   Platform power switch MOSFET&fuse temperature NTC
-		uint16_t cha_vin_meas;          // ADC12  4+  PC4   Charger input voltage
+		// Motor controller 1 phase C current measurement
+		// REV2A: ADC12  14+ PA2
+		// REV2B: ADC1   16+ PA0  (DIFFERENT!)
+		uint16_t mc1_imeasc;
 
-		// CONVERSION GROUP 2: 5 items
+		// Platform power switch MOSFET&fuse temperature NTC
+		// REV2A: ADC1   17+ PA1
+		// REV2B: ADC12  15+ PA3  (DIFFERENT!)
+		uint16_t bms_temp_plat_mosfets; 
 
-		uint16_t mc0_imeasb;            // ADC1   2+  PF11  Motor controller 0 phase B current measurement
-		uint16_t mc0_imeasc;            // ADC12  7+  PA7   Motor controller 0 phase C current measurement
+		// Charger input voltage
+		// REV2A: ADC12  4+  PC4
+		// REV2B: ADC12  4+  PC4  (same)
+		uint16_t cha_vin_meas;
 
-		uint16_t bms_temp_battery;      // ADC123 12+ PC2   Battery temperature NTC
+
+
+		// CONVERSION GROUP 2: 4 items
+
+		// Motor controller 0 phase B current measurement
+		// REV2A: ADC1   2+  PF11
+		// REV2B: ADC1   2+  PF11  (same)
+		uint16_t mc0_imeasb;
+
+		// Motor controller 0 phase C current measurement
+		// REV2A: ADC12  7+  PA7
+		// REV2B: ADC12  7+  PA7  (same)
+		uint16_t mc0_imeasc;
 
 		// Super important:
-		// vbat and cha_vinbus need to be next to each other, vbat first, and aligned(4), meaning there
+		// vbat_meas and cha_vinbus_meas need to be next to each other, vbat first, and aligned(4), meaning there
 		// MUST BE AN EVEN NUMBER of entries before these two guys here.
-		// These two are used in a very timing-critical part in charger to calculate their relationship
+		// These two are used in a very timing-critical part in charger to calculate their ratio
 		// (vbat/cha_vinbus), and being able to load them using one instruction is critical.
-		uint16_t vbat_meas;             // ADC12  18+ PA4   Battery voltage
-		uint16_t cha_vinbus_meas;       // ADC12  8+  PC5   Charger input voltage after the input ideal diode MOSFET
+		// See the "quick" union field below.
+
+		// Battery voltage
+		// REV2A: ADC12  18+ PA4
+		// REV2B: ADC12  18+ PA4  (same)
+		uint16_t vbat_meas;
+
+		// Charger input voltage after the input ideal diode MOSFET
+		// REV2A: ADC12  8+  PC5
+		// REV2B: ADC12  8+  PC5  (same)
+		uint16_t cha_vinbus_meas;
 	} s;
 
 	uint16_t b[ADC1_SEQ_LEN];
 
 	struct __attribute__((packed))
 	{
-		uint16_t dummy[8];
+		uint16_t dummy[6];
 		uint32_t vbat_and_vinbus;
 	} quick;	
 } adc1_group_t;
 extern volatile adc1_group_t adc1;
 
 // Sample times from channel 0 to channel 19
+// Longer time for vbat_meas, same channel (18) for REV2A, REV2B
 #define ADC1_SMPTIMES 2,2,2,2,2, \
                       2,2,2,2,2, \
                       2,2,2,2,2, \
                       2,2,2,3,2
 
-#if 0
-typedef union
-{
-	struct __attribute__((packed))
-	{
-		// CONVERSION GROUP 1:
-		uint16_t cha_currmeasa[3];      // ADC12  9+  PB0   Charger sync buck phase A inductor current
-		// free time to convert other things
 
-		// CONVERSION GROUP 2:
-		uint16_t cha_currmeasb[3];      // ADC12  5+  PB1   Charger sync buck phase B inductor current
-		// free time to convert other things
 
-	} s;
-	uint16_t b[ADC2_SEQ_LEN];
-} adc2_group_t;
-extern volatile adc2_group_t adc2;
-#endif
-
+// ADC2 is configured separately, in a different way, utilizing HW oversampling mode.
+// DMA is not used, data registers are read directly in charger control ISR, so there is
+// no data structure.
 // Sample times from channel 0 to channel 19
 #define ADC2_SMPTIMES 1,1,1,1,1, \
                       1,1,1,1,1, \
                       1,1,1,1,1, \
                       1,1,1,1,1
 
+
+
+// ADC3 freeruns, some channels use a long sampling time. Nothing timing-critical here.
+// bms_appfet_g_meas and vapp_meas are missing on purpose - they, as the only timing-critical entities, 
+// are in the injected sequence
+
 typedef union
 {
 	struct __attribute__((packed))
 	{
-		uint16_t epc_stray_estimate;    // ADC3   5+  PF3   3DTOF sensor stray light estimate measurement (phototransistor), muxed from active sensor
-		uint16_t eb_analog1;            // ADC3   6+  PF10  Extension B analog in 1
-		uint16_t eb_analog2;            // ADC123 10+ PC0   Extension B analog in 2
-		uint16_t bms_mainfet_g_meas;    // ADC3   1+  PC3   Main power switch MOSFET gate voltage
-//		uint16_t bms_appfet_g_meas;     // ADC3   14+ PH3   Application power switch MOSFET gate voltage         <--- IN INJECTED SEQUENCE
-		uint16_t bms_vref3;             // ADC3   15+ PH4   (not connected, was related to the removed TI BMS chip)
-//		uint16_t vapp_meas;             // ADC3   16+ PH5   App voltage meas (was originally TI BMS chip Vcell)  <--- IN INJECTED SEQUENCE
-		uint16_t bms_temp_app_mosfets;  // ADC3   13+ PH2   Application power switch MOSFET&fuse temperature NTC
-		uint16_t cpu_temp;              // ADC3   18+ internal
+		// 3DTOF sensor stray light estimate measurement (phototransistor), muxed from active sensor
+		// REV2A: ADC3   5+  PF3
+		// REV2B: ADC3   5+  PF3  (same)
+		uint16_t epc_stray_estimate;
+    
+		// Extension B analog in 1
+		// REV2A: ADC3   6+  PF10
+		// REV2B: ADC3   6+  PF10  (same)
+		uint16_t eb_analog1;
+
+		// Extension B analog in 2
+		// REV2A: ADC123 10+ PC0
+		// REV2B: ADC123 10+ PC0  (same)
+		uint16_t eb_analog2;
+
+		// Main power switch MOSFET gate voltage
+		// REV2A: ADC3   1+  PC3
+		// REV2B: ADC3   1+  PC3  (same)
+		uint16_t bms_mainfet_g_meas;
+
+		// Application power switch MOSFET&fuse temperature NTC
+		// REV2A: ADC3   13+ PH2
+		// REV2B: ADC3   13+ PH2  (same)
+		uint16_t bms_temp_app_mosfets;
+
+		// Battery temperature NTC
+		// REV2A: ADC123 12+ PC2
+		// REV2B: ADC123 14+ PH3  (DIFFERENT!)
+		uint16_t bms_temp_battery;
+
+		// CPU temperature (on-chip sensor)
+		// REV2A: ADC3   18+ internal
+		// REV2A: ADC3   18+ internal  (same)
+		uint16_t cpu_temp; 
 	} s;
 	uint16_t b[ADC3_SEQ_LEN];
 
@@ -275,61 +340,67 @@ typedef union
 extern volatile adc3_group_t adc3;
 
 
+// Injected channels:
+// Application power switch MOSFET gate voltage         <--- IN INJECTED SEQUENCE
+// REV2A: ADC3   14+ PH3   
+// REV2B: ADC3   16+ PH5  (DIFFERENT!)
+
+// App voltage meas   <--- IN INJECTED SEQUENCE
+// REV2A: ADC3   16+ PH5
+// REV2B: ADC3   9+  PF4  (DIFFERENT!)
+
+
 #define ADC3_VAPP_DATAREG  (ADC3->JDR1)
 #define ADC3_VGAPP_DATAREG (ADC3->JDR2)
 
 
 // Sample times from channel 0 to channel 19
+// CPU_TEMP absolutely needs the long sample time, it's a high-impedance source with no
+// amplifier nor a capacitor.
+
+// All channels use a very long sample time, to purposedly slow down the
+// ADC. The channels (except internal CPU_TEMP) do have 100nF caps to provide
+// low AC impedance, so they could be sampled quickly, but this cap diminishes if sampled
+// too frequently, so need to limit sample rate anyway. Easiest way is to use long sampling
+// and let the ADC free run. It could be possible to later cost-optimize the 100n caps away.
 #define ADC3_SMPTIMES 6,6,6,6,6, \
                       6,6,6,6,6, \
-                      6,6,6,6,1, \
-                      6,1,6,6,6
+                      6,6,6,6,6, \
+                      6,6,6,6,6
 
-#ifdef DEFINE_VARS
-const char* const adc1_names[ADC1_SEQ_LEN] =
-{
-	"mc0_imeasb",
-	"mc0_imeasc",
-	"bms_temp_contacts",
-	"bms_temp_plat_mosfets",
-	"cha_vin_meas",
-	"mc1_imeasb",
-	"mc1_imeasc",
-	"bms_temp_battery",
-	"vbat_meas",
-	"cha_vinbus_meas"
-};
 
 #if 0
-const char* const adc2_names[ADC2_SEQ_LEN] =
-{
-	"cha_currmeasa[0]",
-	"cha_currmeasa[1]",
-	"cha_currmeasb[0]",
-	"cha_currmeasb[1]"
-};
+	// Convenient in testing, if everything fails:
+	#ifdef DEFINE_VARS
+	const char* const adc1_names[ADC1_SEQ_LEN] =
+	{
+		"mc1_imeasb",
+		"mc1_imeasc",
+		"bms_temp_plat_mosfets",
+		"cha_vin_meas",
+		"mc0_imeasb",
+		"mc0_imeasc",
+		"vbat_meas",
+		"cha_vinbus_meas"
+	};
+
+	const char* const adc3_names[ADC3_SEQ_LEN] =
+	{
+		"epc_stray_estimate",
+		"eb_analog1",
+		"eb_analog2",
+		"bms_mainfet_g_meas",
+		"bms_temp_app_mosfets",
+		"bms_temp_battery",
+		"cpu_temp"
+	};
+
+	#else
+	extern const char* const adc1_names[ADC1_SEQ_LEN];
+	extern const char* const adc3_names[ADC3_SEQ_LEN];
+
+	#endif
 #endif
-
-const char* const adc3_names[ADC3_SEQ_LEN] =
-{
-	"epc_stray_estimate",
-	"eb_analog1",
-	"eb_analog2",
-	"bms_mainfet_g_meas",
-//	"bms_appfet_g_meas",
-	"bms_vref3",
-//	"vapp_meas",
-	"bms_temp_app_mosfets",
-	"cpu_temp"
-};
-
-#else
-extern const char* const adc1_names[ADC1_SEQ_LEN];
-//extern const char* const adc2_names[ADC2_SEQ_LEN];
-extern const char* const adc3_names[ADC3_SEQ_LEN];
-
-#endif
-
 
 #define ADC1_DMA DMA2
 #define ADC1_DMA_STREAM DMA2_Stream1

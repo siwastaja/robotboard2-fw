@@ -303,7 +303,7 @@ void main()
 
 	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
 
-	IO_TO_GPO(GPIOC, 13); // LED
+	IO_TO_GPO(GPIOC, 13); // LED - same pin REV2A, REV2B
 
 	LED_ON();
 	delay_ms(6/6);
@@ -343,6 +343,9 @@ void main()
 	PLL1_P: 400MHz: sysck (cpu, etc.)
 	PLL1_Q: 100MHz: SPI1,2,3
 	PLL2_P: 33.33MHz:  ADC1,2, ADC3
+
+	TODO: WARNING: The new STM32H7 chip revision V will have a /2 divider inside the ADC - 
+		if the new chip revision is assembled, need to change PLL2_P to 66.67MHz.
 	
 */
 	RCC->CR |= 1UL<<16; // HSE clock on
@@ -423,6 +426,7 @@ void main()
 
 		/*
 			USART1 = the raspi USART @ APB2 = 100 MHz
+			Same mapping in REV2A, REV2B
 		*/
 
 		RCC->APB2ENR |= 1UL<<4;
@@ -501,7 +505,7 @@ void main()
 
 	beep_blocking(100, 250, 1000);
 
-	IO_TO_GPO(GPIOF, 5);
+	IO_TO_GPO(GPIOF, 5); // 5Vbig, same for REV2A, REV2B
 	BIG5V_ON();
 
 
@@ -557,13 +561,9 @@ void main()
 		#endif
 	#endif
 
-//	extern void beep_test();
-//	beep_test();
-
 	while(1)
 	{
 		run_cycle();
 	}
 
-//	while(1);
 }
