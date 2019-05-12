@@ -357,7 +357,7 @@ void init_adcs()
 	__DSB();
 
 
-	#ifdef REV1A
+	#ifdef REV2A
 		IO_TO_ANALOG(GPIOA,3);
 		IO_TO_ANALOG(GPIOA,2);
 		IO_TO_ANALOG(GPIOA,1);
@@ -380,7 +380,7 @@ void init_adcs()
 		IO_TO_ANALOG(GPIOH,5);
 	#endif
 
-	#ifdef REV1B
+	#ifdef REV2B
 		IO_TO_ANALOG(GPIOA,1);
 		IO_TO_ANALOG(GPIOA,0);
 		IO_TO_ANALOG(GPIOA,3);
@@ -469,14 +469,14 @@ void init_adcs()
 	// Injected reg:  SW trigger. needs to be written after CFGR
 	ADC3->JSQR = (2UL/*len*/  -1UL) |
 
-		#ifdef REV1A
+		#ifdef REV2A
 
 			16UL<<9 | /*Injected1: channel 16 (Vapp_meas)*/
 			14UL<<15; /*Injected2: channel 14 (appfet_g_meas)*/
 
 		#endif
 
-		#ifdef REV1B
+		#ifdef REV2B
 
 			9UL<<9 | /*Injected1: channel 9 (Vapp_meas)*/
 			16UL<<15; /*Injected2: channel 16 (appfet_g_meas)*/

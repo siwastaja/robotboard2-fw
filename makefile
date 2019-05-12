@@ -17,7 +17,7 @@ CFLAGS += -DFIRMWARE
 # PCB revision. Valid values:
 # -DREV2A (the single existing prototype)
 # -DREV2B (first 50pcs production batch, quite a few IO remappings compared to REV2A)
-CFLAGS += -DREV2B
+CFLAGS += -DREV2A
 
 
 # Hard-compiled application(s):

@@ -69,8 +69,10 @@ typedef struct __attribute__((packed))
 #define DIST_OVEREXP 1
 #define DIST_UNDEREXP 0
 
-#define DIST_SHIFT 3  // shift from/to millimeters: 8mm resolution
-#define DIST_MASK 0x0fff
+#ifndef DIST_MASK
+	#define DIST_SHIFT 3  // shift from/to millimeters: 8mm resolution
+	#define DIST_MASK 0x0fff
+#endif
 
 #define MAX_DISTVAL (4095)
 
