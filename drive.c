@@ -1716,8 +1716,8 @@ void drive_handler()
 		if(stop_indicators == 0)
 			beep(150, 800, -300, 50);
 
-		motor_torque_lim(0, 90);
-		motor_torque_lim(1, 90);
+		motor_torque_lim(0, 85);
+		motor_torque_lim(1, 85);
 		motor_run(0);
 		motor_run(1);
 		ang_speed = min_ang_speed;
@@ -1730,6 +1730,20 @@ void drive_handler()
 		motor_let_stop(0);
 		motor_let_stop(1);
 	}
+
+
+	{
+		int torq0 = get_motor_torque(0);
+		int torq1 = get_motor_torque(1);
+
+		if(torq0 > 50 || torq1 > 50)
+		{
+			beep(500, 100, 0, 70);
+			stop_indicators = 125;
+		}
+
+	}
+
 
 	prev_run = run;
 
