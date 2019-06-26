@@ -82,8 +82,8 @@ void audio_10khz()
 void beep(int len_ms, int hz_start, int sweep, int volume) __attribute__((section(".text_itcm")));
 void beep(int len_ms, int hz_start, int sweep, int volume) // len milliseconds, hz initial freq, sweep: positive sweeps down, negative sweeps up, volume 0-100
 {
-	volume *= 15;
-	if(volume > 1500) volume = 1500; else if(volume < 50) volume = 50;
+	volume *= 10;
+	if(volume > 700) volume = 700; else if(volume < 50) volume = 50;
 	state = 1;
 
 	vol = volume;
@@ -137,7 +137,8 @@ void beep_test()
 
 void beep_blocking(int pulses, int us, int volume)
 {
-	if(volume > 1500) volume = 1500; else if(volume < 50) volume = 50;
+	volume /= 2;
+	if(volume > 700) volume = 700; else if(volume < 50) volume = 50;
 
 	AUDIO_DAC = 2048;
 	HI(GPIOH, 12);
