@@ -24,6 +24,7 @@ volatile int packet_cnt;
 
 #define SPI_CLKDIV_REGVAL (0b011UL) // 6.25MHz SPI clock. Datasheet maximum: 10MHz
 
+// Same mappings for REV2A,B
 #define IMU024_G_NCS_PORT GPIOA
 #define IMU024_G_NCS_PIN  14
 #define IMU024_A_NCS_PORT GPIOC
@@ -52,7 +53,7 @@ volatile int packet_cnt;
 #define SEL_M135()   do{LO(IMU135_M_NCS_PORT,IMU135_M_NCS_PIN); __DSB();}while(0)
 #define DESEL_M135() do{HI(IMU135_M_NCS_PORT,IMU135_M_NCS_PIN); __DSB();}while(0)
 
-
+// Same mappings for REV2A,B
 #define AGM01_SPI SPI4
 #define AGM01_SPI_IRQ SPI4_IRQn
 
@@ -1657,6 +1658,7 @@ static void ag_sensor_init(int bunch)
 
 void init_imu()
 {
+	// All pin mappings are the same for REV2A,B
 	SET_TIM3_VECTOR(inthandler12);
 
 	#if defined(IMU0_PRESENT) || defined(IMU1_PRESENT)

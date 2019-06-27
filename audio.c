@@ -3,6 +3,8 @@
 #include "stm32_cmsis_extension.h"
 #include "misc.h"
 
+// Audio pin mapping same for REV2A,B
+
 #define AUDIO_DAC (DAC1->DHR12R2)
 
 void init_audio()

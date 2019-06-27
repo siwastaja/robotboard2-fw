@@ -13,6 +13,7 @@
 #define MAX_FREQ 100*65536
 
 // Gates enabled, or just freewheeling.
+// Same mappings for REV2A,B
 #define MC0_EN_GATE()  HI(GPIOG,8)
 #define MC0_DIS_GATE() LO(GPIOG,8)
 
@@ -20,6 +21,7 @@
 #define MC1_DIS_GATE() LO(GPIOI,4)
 
 // Read hall sensor signals HALLC,HALLB,HALLA and concatenate to a 3-bit value, to index a table
+// Same mappings for REV2A,B
 #define MC0_HALL_CBA() ( ((GPIOD->IDR & (0b11<<14))>>14) | (GPIOG->IDR & (1<<2)) )
 #define MC1_HALL_CBA() ( ((GPIOE->IDR & (0b11<<5))>>5)   | ((GPIOI->IDR & (1<<8))>>6) )
 
@@ -180,7 +182,8 @@ volatile int32_t pid_int_info;
 int run[2] = {0};
 int wanna_stop[2] = {0};
 
-
+#if 0
+// Old test code
 volatile int go;
 volatile int gospeed = 12;
 void bldc_1khz()
@@ -202,7 +205,7 @@ void bldc_1khz()
 		}
 	}
 }
-
+#endif
 
 #define STOP_LEN 6000 // approx half a second.
 #define STOP_THRESHOLD (SUBSTEPS*3/2)
@@ -960,6 +963,7 @@ to be! We can use separate interrupt triggers for both timers.
 */
 void init_bldc()
 {
+	// Same enable and hall pins for REV2A,B
 	MC0_DIS_GATE();
 	MC1_DIS_GATE();
 	IO_TO_GPO(GPIOG,8);
@@ -1042,6 +1046,7 @@ void init_bldc()
 	delay_us(100); // Make sure CCR1 updates before turning on outputs:
 	// Now both timers are running OK, enable the output signals:
 
+	// Same timer mapping for REV2A,B
 	// TIM1:
 	IO_ALTFUNC(GPIOA,8,  1);
 	IO_ALTFUNC(GPIOA,9,  1);

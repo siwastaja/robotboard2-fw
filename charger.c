@@ -1448,6 +1448,7 @@ void start_phab(int start_b)
 	HRTIM_CHD.RSTx1R = 1UL<<3 /*CMP1*/;  // CMP1 turns off bottom FET -> current starts increasing
 
 
+	// Same mappings for REV2A,B
 	IO_ALTFUNC(GPIOG,  6,  2); // CHE1: PHA LOFET
 	IO_ALTFUNC(GPIOG,  7,  2); // CHE2: PHA HIFET
 	IO_ALTFUNC(GPIOA, 11,  2); // CHD1: PHB LOFET
@@ -1568,6 +1569,7 @@ void stop_phab()
 	pulseout_0();
 
 	// disconnect gate signals from HRTIM:
+	// Same mapping for REV2A,B
 	IO_TO_GPI(GPIOG, 6);
 	IO_TO_GPI(GPIOG, 7);
 	IO_TO_GPI(GPIOA, 11);

@@ -25,6 +25,12 @@
 #endif
 
 
+
+
+// All pin mappings for sbc_comm are the same for REV2A,B
+
+
+
 /*
 define SPI_DMA_1BYTE_AT_TIME to force the SPI communication peripheral & DMA use 8-bit transfers. 
 Bus bandwidth usage will be 4 times more, but transfer sizes not multiples of four will work
