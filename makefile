@@ -2,8 +2,8 @@
 
 #DEVIP = 10.3.0.6
 #DEVIP = 192.168.43.59
-DEVIP = 10.42.0.242
-#DEVIP = 192.168.1.5
+#DEVIP = 10.42.0.222
+DEVIP = 192.168.1.6
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
@@ -17,21 +17,21 @@ CFLAGS += -DFIRMWARE
 # PCB revision. Valid values:
 # -DREV2A (the single existing prototype)
 # -DREV2B (first 50pcs production batch, quite a few IO remappings compared to REV2A)
-CFLAGS += -DREV2A
+CFLAGS += -DREV2B
 
 
 # Hard-compiled application(s):
-CFLAGS += -DEXT_VACUUM
+#CFLAGS += -DEXT_VACUUM
 
 #Standard compilation
-OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o ext_vacuum_boost.o
-ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s tof_calibrator.s
+#OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o ext_vacuum_boost.o
+#ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s tof_calibrator.s
 
 
 #Calibration: box
-#OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_box.o ../robotboard2-fw-calibrator/tof_calibrator.o
-#CFLAGS += -DCALIBRATOR
-#CFLAGS += -DCALIBRATOR_BOX
+OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_box.o ../robotboard2-fw-calibrator/tof_calibrator.o
+CFLAGS += -DCALIBRATOR
+CFLAGS += -DCALIBRATOR_BOX
 
 #Calibration: wall
 #OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_wall.o ../robotboard2-fw-calibrator/tof_calibrator.o
@@ -78,7 +78,7 @@ f: main.bin
 	scp main_full.bin pulu@$(robot):~/main_full.bin
 
 flash: main.bin
-	stm32sprog -b 115200 -vw main_full.bin
+	stm32flash -b 115200 -w main_full.bin -v /dev/ttyUSB0
 
 stack:
 	cat *.su

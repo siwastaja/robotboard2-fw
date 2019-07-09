@@ -414,7 +414,7 @@ void main()
 
 	NVIC_SetPriorityGrouping(0);
 
-	init_pwrswitch_and_led();
+ 	init_pwrswitch_and_led();
 	init_timebase();
 	
 
@@ -448,6 +448,8 @@ void main()
 
 	extern int main_power_enabled;
 
+	// require battery & gate driver check only for production work,
+	// calibrators run with power supplies & main power switch bypassed
 	int vgplat = VGPLAT_MEAS_TO_MV(adc3.s.bms_mainfet_g_meas);
 	uart_print_string_blocking("Vgplat converted mV = ");
 	o_utoa16(vgplat, printbuf); uart_print_string_blocking(printbuf);
@@ -457,6 +459,7 @@ void main()
 		main_power_enabled = 1; // blink and die
 		while(1);
 	}
+
 	main_power_enabled = 2;
 
 
@@ -505,11 +508,13 @@ void main()
 
 	beep_blocking(100, 250, 1000);
 
-	IO_TO_GPO(GPIOF, 5); // 5Vbig, same for REV2A, REV2B
+	delay_ms(1000);
+
 	BIG5V_ON();
+	IO_TO_GPO(GPIOF, 5); // 5Vbig, same for REV2A, REV2B
 
 
-	delay_ms(2000);
+	delay_ms(1000);
 
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 

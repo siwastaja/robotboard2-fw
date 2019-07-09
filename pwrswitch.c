@@ -113,11 +113,39 @@ void init_pwrswitch_and_led()
 
 		APP_EN_DESAT_PROT();
 		IO_TO_GPO(GPIOA,2); // App desat protection disable output
-	#endif
 
+	#endif
 	
 }
 
+void init_power_outputs()
+{
+	#ifdef REV2A
+		error(222);
+	#endif
+
+	#ifdef REV2B
+		RCC->AHB4ENR |= 1UL<<1 | 1UL<<2 | 1UL<<6 | 1UL<<8; // PB, PC, PG, PI
+
+		PO1_OFF();
+		PO1_OFF();
+		PO2_OFF();
+		PO3_OFF();
+		PO4_OFF();
+		PO5_OFF();
+		PO6_OFF();
+
+		IO_TO_GPO(GPIOG,0); // PO1
+		IO_TO_GPO(GPIOG,1); // PO2
+		IO_TO_GPO(GPIOC,2); // PO3
+		IO_TO_GPO(GPIOC,1); // PO4
+		IO_TO_GPO(GPIOI,9); // PO5
+		IO_TO_GPO(GPIOI,10); // PO6
+
+		IO_TO_GPI(GPIOB,2); // 1,2,3,4 status
+		IO_PULLUP_ON(GPIOB,2); // 1,2,3,4 status
+	#endif
+}
 
 // Vgs decays below 7.0V (25.0V, Vbat=18.0V) in 9ms after the pulse generation stops.
 // Before the proper timer is initialize, call this frequently enough.

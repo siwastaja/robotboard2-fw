@@ -21,6 +21,9 @@
 
 #pragma once
 #include <stdint.h>
+#include "ext_include/stm32h7xx.h"
+#include "stm32_cmsis_extension.h"
+
 
 
 void pwrswitch_chargepump_init();
@@ -35,6 +38,8 @@ void shutdown();
 
 int app_power_on();
 void app_power_off();
+
+void init_power_outputs();
 
 
 #ifdef REV2A
@@ -51,8 +56,8 @@ void app_power_off();
 #endif
 
 #ifdef REV2B
-	#define PWRLED_ON()  do{LO(GPIOC, 13);}while(0)
-	#define PWRLED_OFF() do{HI(GPIOC, 13);}while(0)
+	#define PWRLED_ON()  do{LO(GPIOF, 2);}while(0)
+	#define PWRLED_OFF() do{HI(GPIOF, 2);}while(0)
 
 	#define PWRSWITCH_PRESSED (!IN(GPIOI,11))
 
@@ -61,6 +66,23 @@ void app_power_off();
 
 	#define APP_CP_LO() do{LO(GPIOG, 3);}while(0)
 	#define APP_CP_HI() do{HI(GPIOG, 3);}while(0)
+
+	// True if any of the power outputs PO1,PO2,PO3,PO4 has overcurrent or overtemperature event, and turned off as a result.
+	#define PO1234_PROTECTED (!IN(GPIOB,2))
+
+	#define PO1_ON()  do{HI(GPIOG, 0);}while(0)
+	#define PO1_OFF() do{LO(GPIOG, 0);}while(0)
+	#define PO2_ON()  do{HI(GPIOG, 1);}while(0)
+	#define PO2_OFF() do{LO(GPIOG, 1);}while(0)
+	#define PO3_ON()  do{HI(GPIOC, 2);}while(0)
+	#define PO3_OFF() do{LO(GPIOC, 2);}while(0)
+	#define PO4_ON()  do{HI(GPIOC, 1);}while(0)
+	#define PO4_OFF() do{LO(GPIOC, 1);}while(0)
+	#define PO5_ON()  do{HI(GPIOI, 9);}while(0)
+	#define PO5_OFF() do{LO(GPIOI, 9);}while(0)
+	#define PO6_ON()  do{HI(GPIOI,10);}while(0)
+	#define PO6_OFF() do{LO(GPIOI,10);}while(0)
+
 #endif
 
 

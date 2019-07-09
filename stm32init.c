@@ -531,8 +531,8 @@ void stm32init(void)
 	{
 		// If the power switch is pressed, the backup ram is wrong
 		RCC->AHB4ENR |= 1UL<<5;
-		IO_TO_GPO(GPIOF, 5); // 5Vbig - same pin in REV2A, REV2B
 		BIG5V_ON();
+		IO_TO_GPO(GPIOF, 5); // 5Vbig - same pin in REV2A, REV2B
 		backup_ram.immediate_5v = 0;
 		backup_ram.immediate_5v; // dummy read, see flash.c
 	}
