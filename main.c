@@ -566,6 +566,8 @@ void main()
 		#endif
 	#endif
 
+	verify_calibration();
+
 	while(1)
 	{
 		run_cycle();

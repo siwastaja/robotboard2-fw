@@ -38,5 +38,6 @@ void obstacle_avoidance_ignore(int dir, int ms);
 
 int32_t get_remaining_lin();
 
+int drive_is_robot_moving();
 
 void self_calib();

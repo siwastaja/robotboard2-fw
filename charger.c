@@ -689,8 +689,11 @@ int phb_err_integral;
 
 void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 
-#define ERR_INTEGRAL_MIN (-31*256)
-#define ERR_INTEGRAL_MAX (10*256)
+//#define ERR_INTEGRAL_MIN (-31*256)
+//#define ERR_INTEGRAL_MAX (10*256)
+
+#define ERR_INTEGRAL_MIN (-35*256)
+#define ERR_INTEGRAL_MAX (14*256)
 
 // 66.27% CPU
 // Changed pid_i and bit_p to fixed shifts:
@@ -1234,6 +1237,10 @@ void charger_freerunning_fsm()
 				start_phab(1);
 				beep(30, 1000, -800, 100);
 
+				if(vin > 42000)
+				{
+					combined_max_output_power = 400000.0*0.92;
+				}
 
 				if(!charger_is_running())
 				{

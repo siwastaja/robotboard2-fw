@@ -772,12 +772,13 @@ void parse_rx_packet()
 				}
 				break;
 
-
-				case CMD_EXT_VACUUM:
-				{
-					ext_vacuum_cmd(((s2b_ext_vacuum_t*)p_data)->power, ((s2b_ext_vacuum_t*)p_data)->nozzle);
-				}
-				break;
+				#ifdef EXT_VACUUM
+					case CMD_EXT_VACUUM:
+					{
+						ext_vacuum_cmd(((s2b_ext_vacuum_t*)p_data)->power, ((s2b_ext_vacuum_t*)p_data)->nozzle);
+					}
+					break;
+				#endif
 
 				case CMD_MOUNT_CHARGER:
 				{

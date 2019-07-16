@@ -28,7 +28,7 @@ static int bubblegum = 1; // Temporary bodge to increase exposure times on two h
 static int gen_data;
 
 
-static int16_t img20[3][TOF_XS*TOF_YS] __attribute__((section(".dtcm_bss")));
+static int16_t img20[3][TOF_XS*TOF_YS]; // __attribute__((section(".dtcm_bss")));
 static int16_t img31[3][TOF_XS*TOF_YS];
 
 static uint8_t lofreq_dist[TOF_XS*TOF_YS];
@@ -110,9 +110,13 @@ void update_led(int sidx)
 			int g = (led_colors[sidx]&0x00ff00)>>8;
 			int b = (led_colors[sidx]&0x0000ff)>>0;
 	
-			r = (r*7)>>3;
-			g = (g*7)>>3;
-			b = (b*7)>>3;
+			//r = (r*7)>>3;
+			//g = (g*7)>>3;
+			//b = (b*7)>>3;
+			r = (r*3)>>2;
+			g = (g*3)>>2;
+			b = (b*3)>>2;
+
 			if(r < 2 && g < 2 && b < 2)
 				led_colors[sidx] = 0;
 			else
@@ -158,10 +162,13 @@ uint16_t measure_stray()
 	return stray;
 }
 
-#define IFDBG if(sidx == 7)
+#define IFDBG if(sidx == 99)
 
 
-extern void adjust();
+void adjust()
+{
+	return;
+}
 
 /*
 	Takes in the latest chip temperature measurement.
@@ -246,7 +253,7 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	
 	int mid_exp = SUPERSHORT_US + sq(400 - ss_saturated)/888; // max exposures: 192, 3072
 
-	if(mid_exp < 24) mid_exp = 24;
+	if(mid_exp < 12) mid_exp = 12;
 
 	// mid exp 24..192
 	// long exp 384..3072
@@ -262,11 +269,13 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	if(mid_exp_out) *mid_exp_out = mid_exp;
 	if(long_exp_out) *long_exp_out = long_exp;
 
-//	DBG_PR_VAR_I32(sidx);
-//	DBG_PR_VAR_I32(supershort_avg_ampl_x256);
-//	DBG_PR_VAR_I32(mid_exp);
-//	DBG_PR_VAR_I32(long_exp);
-
+	IFDBG
+	{
+		DBG_PR_VAR_I32(sidx);
+		DBG_PR_VAR_I32(supershort_avg_ampl_x256);
+		DBG_PR_VAR_I32(mid_exp);
+		DBG_PR_VAR_I32(long_exp);
+	}
 
 	// 6.66MHz 2dcs for dealiasing - same inttime as the long HDR exp
 	// (Going from 20MHz to 6.66MHz gives amplitude gain of at least 2, enough to compensate
@@ -679,6 +688,8 @@ int32_t latency_targets[N_SENSORS] =
 void run_cycle()  __attribute__((section(".text_itcm")));
 void run_cycle()
 {
+	charger_freerunning_fsm();
+
 	for(int i=0; i<10; i++)
 	{
 		if(!sensors_in_use[i])
@@ -688,10 +699,6 @@ void run_cycle()
 		update_led(i);
 	}
 
-
-
-
-	charger_freerunning_fsm();
 
 
 
@@ -723,6 +730,22 @@ void run_cycle()
 	}
 	else
 		lowbat_die_cnt = 0;
+
+
+	if(is_tx_overrun())
+	{
+		//uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
+		gen_data = 0;
+	}
+	else
+		gen_data = 1;
+
+
+	if(!drive_is_robot_moving())
+	{
+		delay_ms(40);
+		goto SKIP_TOF;
+	}
 
 //	static int filtered_bat_mv_x256; 
 //	filtered_bat_mv_x256 = ((bat_mv<<8) + 15*filtered_bat_mv_x256)>>4;
@@ -787,15 +810,6 @@ void run_cycle()
 
 
 
-	if(is_tx_overrun())
-	{
-		//uart_print_string_blocking("\r\nTX buffer overrun! Skipping data generation.\r\n"); 
-		gen_data = 0;
-	}
-	else
-		gen_data = 1;
-
-
 	int take_wid_long = 0;
 	int take_nar_long = 0;
 	for(int i=0; i<N_LONG_SLOTS; i++)
@@ -817,35 +831,13 @@ void run_cycle()
 		take_nar_long = 0;
 	}
 
-
-	if(gen_data && pwr_status)
-	{
-		pwr_status->flags = 0;
-
-		if(charger_is_running())
-			pwr_status->flags |= PWR_STATUS_FLAG_CHARGING;
-
-		if(charger_is_full())
-			pwr_status->flags |= PWR_STATUS_FLAG_FULL;
-
-		extern volatile int main_power_enabled;
-
-		if(main_power_enabled == 1)
-			pwr_status->flags |= PWR_STATUS_FLAG_TURNOFF;
-
-		pwr_status->bat_mv = bat_mv; //filtered_bat_mv_x256>>8;
-		pwr_status->bat_percent = conv_bat_percent(bat_mv);
-		pwr_status->charger_input_mv = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
-		pwr_status->pha_charging_current_ma = charger_get_latest_cur_pha();
-		pwr_status->phb_charging_current_ma = charger_get_latest_cur_phb();
-	}
-
 	// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
-	if(basic_sidx == 6 || basic_sidx==9)
-		bubblegum = 2;
-	else
-		bubblegum = 1;
-
+	#ifdef REV2A
+		if(basic_sidx == 6 || basic_sidx==9)
+			bubblegum = 2;
+		else
+			bubblegum = 1;
+	#endif
 
 	tof_mux_select(basic_sidx);
 	adjust();
@@ -855,7 +847,7 @@ void run_cycle()
 	{
 		tof_slam_set->flags = 0 | TOF_SLAM_SET_FLAG_VALID;
 		tof_slam_set->sidx = basic_sidx;
-		tof_slam_set->sensor_orientation = sensor_mounts[basic_sidx].mount_mode;
+		tof_slam_set->sensor_orientation = tof_calibs[basic_sidx]->mount.mount_mode;
 	}
 
 
@@ -872,35 +864,45 @@ void run_cycle()
 
 	}
 
-	if(take_nar_long && basic_sidx != 1) // prototype issue: sensor 1 has one of the narrow leds shorted, don't use it.
+	if(take_nar_long 
+		#ifdef REV2A
+			&& basic_sidx != 1) // prototype issue: sensor 1 has one of the narrow leds shorted, don't use it.
+		#else
+			)
+		#endif
 	{
 
-		// Temporary fix: turn off RGB leds during narrow beam imaging - the power supply is undersized to run both
-		// (fixed on production PCB)
-		
-		for(int i=0; i<10; i++)
-		{
-			if(!sensors_in_use[i])
-				continue;
+		#ifdef REV2A
+			// Temporary fix: turn off RGB leds during narrow beam imaging - the power supply is undersized to run both
+			// (fixed on production PCB)
+			
+			for(int i=0; i<10; i++)
+			{
+				if(!sensors_in_use[i])
+					continue;
 
-			tof_mux_select(i);
-			rgb_update(0);
-		}
+				tof_mux_select(i);
+				rgb_update(0);
+			}
+		#endif
 
 		tof_mux_select(basic_sidx);
 
 		long_narrow_set(basic_sidx, narrow_avg_ampl);
 
-		// Turn LEDs back on:
-		for(int i=0; i<10; i++)
-		{
-			if(!sensors_in_use[i])
-				continue;
 
-			tof_mux_select(i);
-			restart_led(i);
-		}
+		#ifdef REV2A
 
+			// Turn LEDs back on:
+			for(int i=0; i<10; i++)
+			{
+				if(!sensors_in_use[i])
+					continue;
+
+				tof_mux_select(i);
+				restart_led(i);
+			}
+		#endif
 	}
 
 
@@ -951,11 +953,12 @@ void run_cycle()
 
 
 			// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
-			if(basic_sidx == 6 || basic_sidx==9)
-				bubblegum = 2;
-			else
-				bubblegum = 1;
-
+			#ifdef REV2A
+				if(basic_sidx == 6 || basic_sidx==9)
+					bubblegum = 2;
+				else
+					bubblegum = 1;
+			#endif
 			obstacle_set(obst_sidx);
 			latest_timestamps[obst_sidx] = cnt_100us;
 
@@ -971,9 +974,30 @@ void run_cycle()
 
 	micronavi_fsm();
 
+	SKIP_TOF:;
 
+	if(gen_data && pwr_status)
+	{
+		pwr_status->flags = 0;
 
-//	SKIP_TOF:;
+		if(charger_is_running())
+			pwr_status->flags |= PWR_STATUS_FLAG_CHARGING;
+
+		if(charger_is_full())
+			pwr_status->flags |= PWR_STATUS_FLAG_FULL;
+
+		extern volatile int main_power_enabled;
+
+		if(main_power_enabled == 1)
+			pwr_status->flags |= PWR_STATUS_FLAG_TURNOFF;
+
+		pwr_status->bat_mv = bat_mv; //filtered_bat_mv_x256>>8;
+		pwr_status->bat_percent = conv_bat_percent(bat_mv);
+		pwr_status->charger_input_mv = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
+		pwr_status->pha_charging_current_ma = charger_get_latest_cur_pha();
+		pwr_status->phb_charging_current_ma = charger_get_latest_cur_phb();
+	}
+
 
 	if(gen_data)
 	{

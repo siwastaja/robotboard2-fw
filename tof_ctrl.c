@@ -72,7 +72,11 @@ const uint8_t sensors_in_use[N_SENSORS] =
   {1,0,0,0,0,  0,0,0,0,0};
 #else
 // 0 1 2 3 4   5 6 7 8 9
+#ifdef EXT_VACUUM
   {0,1,1,1,1,  1,1,1,1,1};
+#else
+  {1,1,1,1,1,  1,1,1,1,1};
+#endif
 #endif
 
 uint32_t sensor_silicon_ids[N_SENSORS];

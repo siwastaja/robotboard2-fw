@@ -124,19 +124,18 @@ void dealias_10mhz_narrow(uint16_t *hf_dist, uint16_t *lf_dist);
 	All 4-bit fields follow little endianness: the first pixel index is stored in &0x0f, the second in &0xf0.
 */
 
-// For compatibility for some time still:
-#define WID_N_PIXGROUPS 12
-#define NAR_N_PIXGROUPS 8
-
-#define TOF_TBL_SEG_LEN 96
-
-/*
-To be used soon:
-#define WID_N_PIXGROUPS 14
-#define NAR_N_PIXGROUPS 12
-
-#define TOF_TBL_SEG_LEN 112 // actual table is one longer
-*/
+// For compatibility with the first vacuum proto (only one unit exists):
+#ifdef REV2A
+	#define WID_N_PIXGROUPS 12
+	#define NAR_N_PIXGROUPS 8
+	#define TOF_TBL_SEG_LEN 96
+	#define TOF_TBL_SEG_LEN_MULT (TOF_TBL_SEG_LEN-1)
+#else
+	#define WID_N_PIXGROUPS 14
+	#define NAR_N_PIXGROUPS 12
+	#define TOF_TBL_SEG_LEN 125 // actual table is one longer, for optimization
+	#define TOF_TBL_SEG_LEN_MULT (TOF_TBL_SEG_LEN)
+#endif
 
 #define COMP_AMBIENT_INTLEN_US 100 // it's important to follow this in both calibration and runtime
 
@@ -154,18 +153,19 @@ typedef struct __attribute__((packed))
 	*/
 	uint8_t  wid_lut_group_ids[TOF_XS*TOF_YS/2];
 
-	// For compatibility
-	uint16_t wid_luts[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
-	// To be used soon:
-	//uint16_t wid_luts[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN+1]; // Table is one longer, to handle the fairly rare case of equality dcs31==dcs20 without extra code.
+	#ifdef REV2A // For compatibility with the first vacuum proto
+		uint16_t wid_luts[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
+	#else
+		uint16_t wid_luts[WID_N_PIXGROUPS][8][TOF_TBL_SEG_LEN+1]; // Table is one longer, to handle the fairly rare case of equality dcs31==dcs20 without extra code.
+	#endif
 
 	uint8_t  nar_lut_group_ids[TOF_XS_NARROW*TOF_YS_NARROW/2];
 
-	// For compatibility
-	uint16_t nar_luts[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
-	// To be used soon:
-	//uint16_t nar_luts[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN+1];
-
+	#ifdef REV2A
+		uint16_t nar_luts[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN];
+	#else
+		uint16_t nar_luts[NAR_N_PIXGROUPS][8][TOF_TBL_SEG_LEN+1];
+	#endif
 
 	/*
 		Ambient light correction.
@@ -209,6 +209,72 @@ typedef struct __attribute__((packed))
 
 } chipcal_lofreq_t;
 
+/*
+	Sensor mount position 1:
+	 _ _
+	| | |
+	| |L|
+	|O|L|
+	| |L|
+	|_|_|  (front view)
+
+	Sensor mount position 2:
+	 _ _
+	| | |
+	|L| |
+	|L|O|
+	|L| |
+	|_|_|  (front view)
+
+	Sensor mount position 3:
+
+	-------------
+	|  L  L  L  |
+	-------------
+	|     O     |
+	-------------
+
+	Sensor mount position 4:
+
+	-------------
+	|     O     |
+	-------------
+	|  L  L  L  |
+	-------------
+*/
+
+typedef struct __attribute__((packed))
+{
+	int16_t mount_mode;             // mount position 1,2,3 or 4
+	int16_t x_rel_robot;          // zero = robot origin. Positive = robot front (forward)
+	int16_t y_rel_robot;          // zero = robot origin. Positive = to the right of the robot
+	uint16_t ang_rel_robot;        // zero = robot forward direction. positive = ccw
+	uint16_t vert_ang_rel_ground;  // zero = looks directly forward. positive = looks up. negative = looks down
+	int16_t z_rel_ground;         // sensor height from the ground	
+} sensor_mount_t;
+
+#define BLUR_PARAMS_RATIO_X 5
+#define BLUR_PARAMS_RATIO_Y 5
+#define BLUR_PARAMS_XS (TOF_XS/BLUR_PARAMS_RATIO_X)
+#define BLUR_PARAMS_YS (TOF_YS/BLUR_PARAMS_RATIO_Y)
+
+/*
+	d: box blur mix ratio, 6 bits
+
+	convolution params:
+	a: 10 bits, unsigned
+	b: int8
+	c: int8
+*/
+
+#define BLUR_PARAM_D(x_) ((x_).d_a >> 10)
+#define BLUR_PARAM_A(x_) ((x_).d_a & 0x3ff)
+typedef struct __attribute__((packed))
+{
+	uint16_t d_a; // Access macros above
+	int8_t b;
+	int8_t c;
+} mcu_blur_params_t;
 
 typedef struct __attribute__((packed))
 {
@@ -218,8 +284,8 @@ typedef struct __attribute__((packed))
 	uint32_t calib_info;
 	uint32_t reserved;
 
-	chipcal_hifreq_t hif[2];
-	chipcal_lofreq_t lof[2];
+	chipcal_hifreq_t hif[2]; // 20 MHz, 10 MHz, in 4DCS mode
+	chipcal_lofreq_t lof[1]; // 6.66MHz in 2DCS mode
 
 	/*
 		No temperature correction table at this time.
@@ -231,7 +297,7 @@ typedef struct __attribute__((packed))
 	// Calibration temperature
 	int16_t ref_temp; // in 0.1 degC
 	int16_t zerofine_temp; // in 0.1 degC
-	int32_t fine_steps_per_temp[4]; // Required fine-DLL shift is ((zerofine_temp-latest_temp)*fine_steps_per_temp[freq])>>8
+	int32_t fine_steps_per_temp[3]; // Required fine-DLL shift is ((zerofine_temp-latest_temp)*fine_steps_per_temp[freq])>>8
 
 	/*
 		Optical calibration for a sensor.
@@ -247,7 +313,8 @@ typedef struct __attribute__((packed))
 	*/
 
 	/*
-		Angles the pixels point at.
+		Lens geometry model:
+		The angles the pixels point at.
 
 		The final point is calculated by:
 		x = d * cos(pix_ver_ang + sensor_ver_ang) * cos(pix_hor_ang + sensor_hor_ang) + sensor_x;
@@ -260,19 +327,46 @@ typedef struct __attribute__((packed))
 		Angle unit is, like everywhere, so that full data type range corresponds for 360 degrees.
 		These angles are, naturally, limited between -90...+90 degrees, so we could add one bit of extra precision by shifting, but no need
 		for it right now - with 16-bit range, the resolution is about 0.005 degrees.
+
+		Datapoints are reduced in half, both vertically and horizontally (4x reduction)
+		[pix 0] = [0]
+		[pix 1] = ([0] + [1])/2
+		[pix 2] = [1]
+		...
 	*/
 
-	int16_t perpix_ver_angs[TOF_XS*TOF_YS/4];
-	int16_t perpix_hor_angs[TOF_XS*TOF_YS/4];
+	sensor_mount_t mount;
+
+	uint16_t hor_angs[TOF_XS*TOF_YS/4];
+	uint16_t ver_angs[TOF_XS*TOF_YS/4];
 
 	/*
-		TODO:
+		Lens blur/flare model
 
-		Parameters for lens blur & stray light model. Brute-forcing/lookup-tabling these would get huge; so
-		they will be simple, small parameters generating a "good enough" model. Not expecting much memory
-		footprint for this.
+		Blur / close-range flare model uses a combination of a small convolution kernel, and a larger box blur,
+		parameterized by mcu_blur_params_t (4 bytes). Different areas of image have their own parameters.
 	*/
 
+	mcu_blur_params_t blur_params[BLUR_PARAMS_XS*BLUR_PARAMS_YS];
+
+	/*
+		After compensating close range error, remaining far-away blur/flare is compensated with a brute-force
+		table: each input section is averaged and correlated against each output section with a coefficient of error
+		(8 bits per coeff)
+
+		Input area coordinates are variable and stored in resical_bounds.
+		[0] is always 0 and [last] is always the last pixel index
+	*/
+
+#define RESICAL_IN_XS 15
+#define RESICAL_IN_YS 7
+#define RESICAL_OUT_XS 16
+#define RESICAL_OUT_YS 6
+#define GET_RESICAL_COEFF(cal_, ix_, iy_, ox_, oy_) ((cal_).resical_coeffs[(iy_)*RESICAL_IN_XS+(ix_)][(oy_)*RESICAL_OUT_XS+(ox_)])
+
+	uint8_t resical_bounds_x[RESICAL_IN_XS+1];
+	uint8_t resical_bounds_y[RESICAL_IN_YS+1];
+	uint8_t resical_coeffs[RESICAL_IN_XS*RESICAL_IN_YS][RESICAL_OUT_XS*RESICAL_OUT_YS];
 
 } tof_calib_t;
 
@@ -280,26 +374,16 @@ typedef struct __attribute__((packed))
 extern const tof_calib_t * const tof_calibs[N_SENSORS];
 
 
-typedef struct
-{
-	int32_t mount_mode;             // mount position 1,2,3 or 4
-	int32_t x_rel_robot;          // zero = robot origin. Positive = robot front (forward)
-	int32_t y_rel_robot;          // zero = robot origin. Positive = to the right of the robot
-	uint16_t ang_rel_robot;        // zero = robot forward direction. positive = ccw
-	uint16_t vert_ang_rel_ground;  // zero = looks directly forward. positive = looks up. negative = looks down
-	int32_t z_rel_ground;         // sensor height from the ground	
-} sensor_mount_t;
-
 //#define M_PI 3.141592653
 #define RADTODEG(x) ((x)*(360.0/(2.0*M_PI)))
 #define DEGTORAD(x) ((x)*((2.0*M_PI)/360.0))
 #define DEGTOANG16(x)  ((uint16_t)((float)(x)/(360.0)*65536.0))
 
-extern /*const*/ sensor_mount_t sensor_mounts[N_SENSORS];
 
 #include "../robotsoft/api_board_to_soft.h"
 
 void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx);
+void verify_calibration();
 
 void tof_enable_chafind_datapoints();
 void tof_disable_chafind_datapoints();

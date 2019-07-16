@@ -43,6 +43,24 @@ const tof_calib_t * const tof_calibs[N_SENSORS] =
 	(tof_calib_t*)(FLASH_SENSOR5 + 4*TOFCAL_SIZE)
 };
 
+void verify_calibration()
+{
+	for(int s=0; s<N_SENSORS; s++)
+	{
+		if(!sensors_in_use[s])
+			continue;
+
+		if(tof_calibs[s]->chip_id != sensor_silicon_ids[s])
+		{
+			SAFETY_SHUTDOWN();
+			DBG_PR_VAR_U16(s);
+			DBG_PR_VAR_U32_HEX(tof_calibs[s]->chip_id);
+			DBG_PR_VAR_U32_HEX(sensor_silicon_ids[s]);
+			error(393);
+		}
+	}
+}
+
 // Transferred from flash by DMA. Can share the same memory, used alternately
 // For once, I'm using union for what is was originally meant in the C standard!! :).
 union
@@ -54,12 +72,9 @@ union
 // To be replaced with DMA
 void copy_cal_to_shadow(int sid, int f)
 {
-	if(f<0 || f>3) error(123);
+	if(f<0 || f>2) error(123);
 	if(f<2)
 	{
-//		DBG_PR_VAR_U32_HEX((uint32_t)&tof_calibs[sid]->hif[f]);
-//		DBG_PR_VAR_U32_HEX((uint32_t)&shadow_luts.hif);
-//		DBG_PR_VAR_U32((uint32_t)sizeof tof_calibs[0]->hif[0]);
 		memcpy(&shadow_luts.hif, &tof_calibs[sid]->hif[f], sizeof shadow_luts.hif);
 	}
 	else
@@ -67,6 +82,8 @@ void copy_cal_to_shadow(int sid, int f)
 		memcpy(&shadow_luts.lof, &tof_calibs[sid]->lof[f-2], sizeof shadow_luts.lof);
 	}
 }
+
+
 
 /*
 	lookup_dist:
@@ -79,25 +96,24 @@ void copy_cal_to_shadow(int sid, int f)
 */
 
 // beam must be compile-time constants to optimize out
-// d20, d31 must be small enough so that multiplying by TOF_TBL_SEG_LEN doesn't overflow
+// d20, d31 must be small enough so that multiplying by TOF_TBL_SEG_LEN_MULT (max. 257 by design) doesn't overflow (easily satisfied with 16-bit data)
 static inline uint16_t lookup_dist(int beam, int g, int32_t d31, int32_t d20) __attribute__((always_inline));
 static inline uint16_t lookup_dist(int beam, int g, int32_t d31, int32_t d20)
 {
 	int s;
 	int i;
-	// SEG_LEN -1 for compatibility. Remove -1.
 	if(d31 >= 0)
 	{
 		if(d20 >= 0)
 		{
-			if(d31 > d20) {s=5; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
-			else          {s=4; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+			if(d31 > d20) {s=5; i=(TOF_TBL_SEG_LEN_MULT*d20)/d31;}
+			else          {s=4; i=(TOF_TBL_SEG_LEN_MULT*d31)/d20;}
 		}
 		else
 		{
 			d20 *= -1;
-			if(d31 > d20) {s=6; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
-			else          {s=7; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+			if(d31 > d20) {s=6; i=(TOF_TBL_SEG_LEN_MULT*d20)/d31;}
+			else          {s=7; i=(TOF_TBL_SEG_LEN_MULT*d31)/d20;}
 		}		
 	}
 	else
@@ -105,14 +121,14 @@ static inline uint16_t lookup_dist(int beam, int g, int32_t d31, int32_t d20)
 		d31 *= -1;
 		if(d20 >= 0)
 		{
-			if(d31 > d20) {s=2; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
-			else          {s=3; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+			if(d31 > d20) {s=2; i=(TOF_TBL_SEG_LEN_MULT*d20)/d31;}
+			else          {s=3; i=(TOF_TBL_SEG_LEN_MULT*d31)/d20;}
 		}
 		else
 		{
 			d20 *= -1;
-			if(d31 > d20) {s=1; i=((TOF_TBL_SEG_LEN-1)*d20)/d31;}
-			else          {s=0; i=((TOF_TBL_SEG_LEN-1)*d31)/d20;}
+			if(d31 > d20) {s=1; i=(TOF_TBL_SEG_LEN_MULT*d20)/d31;}
+			else          {s=0; i=(TOF_TBL_SEG_LEN_MULT*d31)/d20;}
 		}		
 
 	}
@@ -276,6 +292,114 @@ int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in)
 	uint32_t avg = (256*accum)/(TOF_XS_NARROW*TOF_YS_NARROW);
 	return avg;
 }
+
+#if 0
+#define BLUR_R 6
+#define BLUR_DIV (2*BLUR_R+1)
+static void boxblur_h(int16_t* in, int16_t* out)
+{
+	for(int i=0; i<TOF_YS; i++)
+	{
+		int ti = i*TOF_XS;
+		int li = ti;
+		int ri = ti+BLUR_R;
+
+		int fv = 0; //in[ti];
+		int lv = 0; //in[ti+TOF_XS-1];
+		int val = (BLUR_R+1)*fv;
+		for(int j=0; j<BLUR_R; j++) val += in[ti+j];
+		for(int j=0  ; j<=BLUR_R ; j++) { val += in[ri++] - fv      ;   out[ti++] = val/BLUR_DIV; }
+		for(int j=BLUR_R+1; j<TOF_XS-BLUR_R; j++) { val += in[ri++] - in[li++];   out[ti++] = val/BLUR_DIV; }
+		for(int j=TOF_XS-BLUR_R; j<TOF_XS  ; j++) { val += lv       - in[li++];   out[ti++] = val/BLUR_DIV; }
+	}
+}
+
+static void boxblur_t(int16_t* in, int16_t* out)
+{
+	for(int i=0; i<TOF_XS; i++)
+	{
+		int ti = i;
+		int li = ti;
+		int ri = ti+BLUR_R*TOF_XS;
+
+		int fv = 0; //in[ti];
+		int lv = 0; //in[ti+TOF_XS*(TOF_YS-1)];
+		int val = (BLUR_R+1)*fv;
+		for(int j=0; j<BLUR_R; j++) val += in[ti+j*TOF_XS];
+		for(int j=0  ; j<=BLUR_R ; j++) { val += in[ri] - fv     ;  out[ti] = val/BLUR_DIV;  ri+=TOF_XS; ti+=TOF_XS; }
+		for(int j=BLUR_R+1; j<TOF_YS-BLUR_R; j++) { val += in[ri] - in[li];  out[ti] = val/BLUR_DIV;  li+=TOF_XS; ri+=TOF_XS; ti+=TOF_XS; }
+		for(int j=TOF_YS-BLUR_R; j<TOF_YS  ; j++) { val += lv      - in[li];  out[ti] = val/BLUR_DIV;  li+=TOF_XS; ti+=TOF_XS; }
+	}
+}
+
+static void boxblur(int16_t* in, int16_t* out)
+{
+	static int16_t tmp[TOF_XS*TOF_YS];
+
+	boxblur_h(in, tmp);
+	boxblur_t(tmp, out);
+}
+
+static void blur_5_convol_biased(int16_t* in, int16_t* out, blur_params_t* blur_params)
+{
+/*
+	Convolution matrix:
+
+	        b+c  
+	b-c      a      b-c
+	        b+c
+
+*/
+	for(int yy=1; yy<TOF_YS-1; yy++)
+	{
+		for(int xx=1; xx<TOF_XS-1; xx++)
+		{
+			int bx = xx/OUTPUT_BLUR_PARAMS_RATIO_X;			
+			int by = yy/OUTPUT_BLUR_PARAMS_RATIO_Y;
+			int a = blur_params[OBPC(bx,by)].a;
+			int b = blur_params[OBPC(bx,by)].b;
+			int c = blur_params[OBPC(bx,by)].c;
+
+			int32_t val = 
+				(int32_t)in[TC(xx  , yy-1)] * (int32_t)(b+c) +
+				(int32_t)in[TC(xx-1, yy  )] * (int32_t)(b-c) +
+				(int32_t)in[TC(xx  , yy  )] * (int32_t)a +
+				(int32_t)in[TC(xx+1, yy  )] * (int32_t)(b-c) +
+				(int32_t)in[TC(xx  , yy+1)] * (int32_t)(b+c);
+
+			val /= 256;
+
+			out[TC(xx, yy)] = val;
+		}
+	}
+}
+
+
+static void run_blur_model(int16_t* in, int16_t* out, blur_params_t* blur_params)
+{
+	static int16_t tmp[TOF_XS*TOF_YS];
+
+	// Temporarily use "out" as a buffer
+	boxblur(in, out);
+	boxblur(out, tmp);
+
+	// Mix input ("in") and blurred input ("tmp") together - store result to "in"
+	for(int yy=0; yy<TOF_YS; yy++)
+	{
+		for(int xx=0; xx<TOF_XS; xx++)
+		{
+			int bx = xx/OUTPUT_BLUR_PARAMS_RATIO_X;			
+			int by = yy/OUTPUT_BLUR_PARAMS_RATIO_Y;
+			int d = blur_params[OBPC(bx,by)].d;
+			in[TC(xx,yy)] -= (d*tmp[TC(xx,yy)])/1024;
+		}
+	}
+
+
+	blur_5_convol_biased(in, out, blur_params);
+}
+#endif
+
 
 int flare_factors[2] = {17, 7}; // wide, narrow
 
@@ -655,126 +779,6 @@ void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampld
 }
 
 
-/*
-typedef struct
-{
-	int32_t mount_mode;             // mount position 1,2,3 or 4
-	int32_t x_rel_robot;          // zero = robot origin. Positive = robot front (forward)
-	int32_t y_rel_robot;          // zero = robot origin. Positive = to the right of the robot
-	uint16_t ang_rel_robot;        // zero = robot forward direction. positive = ccw
-	uint16_t vert_ang_rel_ground;  // zero = looks directly forward. positive = looks up. negative = looks down
-	int32_t z_rel_ground;         // sensor height from the ground	
-} sensor_mount_t;
-*/
-
-/*
-	Sensor mount position 1:
-	 _ _
-	| | |
-	| |L|
-	|O|L|
-	| |L|
-	|_|_|  (front view)
-
-	Sensor mount position 2:
-	 _ _
-	| | |
-	|L| |
-	|L|O|
-	|L| |
-	|_|_|  (front view)
-
-	Sensor mount position 3:
-
-	-------------
-	|  L  L  L  |
-	-------------
-	|     O     |
-	-------------
-
-	Sensor mount position 4:
-
-	-------------
-	|     O     |
-	-------------
-	|  L  L  L  |
-	-------------
-*/
-
-
-
-// const
-sensor_mount_t sensor_mounts[N_SENSORS] =
-{          //      mountmode    x     y       hor ang           ver ang      height    
- /*0:                */ { 0,     0,     0, DEGTOANG16(       0), DEGTOANG16( 2),         300 },
-
- /*1:                */ { 1,   130,   103, DEGTOANG16(    24.4), DEGTOANG16( 4.4),       310  }, // -1
- /*2:                */ { 2,  -235,   215, DEGTOANG16(    66.4), DEGTOANG16( 1.4),       310  }, // -1
- /*3:                */ { 2,  -415,   215, DEGTOANG16(    93.5), DEGTOANG16( 1.9),       310  }, // -1
- /*4:                */ { 2,  -522,   103, DEGTOANG16(   157.4), DEGTOANG16( 3.9),       280  }, // -1
- /*5:                */ { 2,  -522,   -35, DEGTOANG16(   176.0), DEGTOANG16( 4.9),       290  }, // -1
- /*6:                */ { 1,  -522,  -103, DEGTOANG16(   206.0), DEGTOANG16( 4.4),       290  }, // -1
- /*7:                */ { 1,  -415,  -215, DEGTOANG16(   271.5), DEGTOANG16( 2.4),       280  }, // -1
- /*8:                */ { 1,  -235,  -215, DEGTOANG16(   294.9), DEGTOANG16( 4.4),       300  }, // -1
- /*9:                */ { 2,   130,  -103, DEGTOANG16(   334.9), DEGTOANG16( -0.9),      320  }  // 0
-};
-
-void recalc_sensor_mounts(int idx, int d_hor_ang, int d_ver_ang, int d_z)
-{
-	sensor_mounts[idx].ang_rel_robot += d_hor_ang;
-	sensor_mounts[idx].vert_ang_rel_ground += d_ver_ang;
-	sensor_mounts[idx].z_rel_ground += d_z;
-
-	DBG_PR_VAR_I32(idx);
-	uint32_t ang_rel_robot = (uint32_t)sensor_mounts[idx].ang_rel_robot*65536;
-	int32_t vert_ang_rel_robot = (int32_t)((int16_t)sensor_mounts[idx].vert_ang_rel_ground)*65536;
-	int z_rel_ground = sensor_mounts[idx].z_rel_ground;
-
-	DBG_PR_VAR_U32(ang_rel_robot/ANG_0_1_DEG);
-	DBG_PR_VAR_I32(vert_ang_rel_robot/ANG_0_1_DEG);
-	DBG_PR_VAR_I32(z_rel_ground);
-}
-
-int adjustings = 0;
-#if 1
-void adjust()
-{
-	uint8_t cmd = uart_input();
-
-	if(cmd >= '0' && cmd <= '9')
-	{
-		adjustings = cmd-'0';
-		recalc_sensor_mounts(adjustings, 0, 0, 0);
-	}
-	else if(cmd == 'a')
-	{
-		recalc_sensor_mounts(adjustings, 0, 91, 0);
-	}
-	else if(cmd == 'z')
-	{
-		recalc_sensor_mounts(adjustings, 0, -91, 0);
-	}
-	else if(cmd == 's')
-	{
-		recalc_sensor_mounts(adjustings, 0, 0, 10);
-	}
-	else if(cmd == 'x')
-	{
-		recalc_sensor_mounts(adjustings, 0, 0, -10);
-	}
-	else if(cmd == 'q')
-	{
-		recalc_sensor_mounts(adjustings, 91, 0, 0);
-	}
-	else if(cmd == 'w')
-	{
-		recalc_sensor_mounts(adjustings, -91, 0, 0);
-	}
-
-}
-#endif
-
-
 int chafind_enabled = 0;
 
 void tof_enable_chafind_datapoints()
@@ -787,160 +791,367 @@ void tof_disable_chafind_datapoints()
 	chafind_enabled = 0;
 }
 
+#ifdef REV2A
 
-#define NOZZLE_WIDTH 760
-#define OBST_MARGIN (50)
-#define OBST_AVOID_WIDTH (600+OBST_MARGIN)
-void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx) __attribute__((section(".text_itcm")));
-void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx)
-{
-	if(sidx < 0 || sidx >= N_SENSORS) error(150);
+	#define NOZZLE_WIDTH 760
+	#define OBST_MARGIN (50)
+	#define OBST_AVOID_WIDTH (600+OBST_MARGIN)
 
-
-	uint16_t local_sensor_hor_ang = sensor_mounts[sidx].ang_rel_robot;
-	uint16_t local_sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
-
-
-	int32_t  local_sensor_x = sensor_mounts[sidx].x_rel_robot;
-	int32_t  local_sensor_y = sensor_mounts[sidx].y_rel_robot;
-	int32_t  local_sensor_z = sensor_mounts[sidx].z_rel_ground;
-
-
-	extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
-	extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
-
-	for(int py=1; py<TOF_YS-1; py++)
+	void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx) __attribute__((section(".text_itcm")));
+	void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx)
 	{
-		for(int px=1; px<TOF_XS-1; px++)
+		if(sidx < 0 || sidx >= N_SENSORS) error(150);
+
+
+		uint16_t local_sensor_hor_ang = sensor_mounts[sidx].ang_rel_robot;
+		uint16_t local_sensor_ver_ang = sensor_mounts[sidx].vert_ang_rel_ground;
+
+
+		int32_t  local_sensor_x = sensor_mounts[sidx].x_rel_robot;
+		int32_t  local_sensor_y = sensor_mounts[sidx].y_rel_robot;
+		int32_t  local_sensor_z = sensor_mounts[sidx].z_rel_ground;
+
+
+		extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
+		extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
+
+		for(int py=1; py<TOF_YS-1; py++)
 		{
-			int32_t dists[5];
-
-			dists[0] = (ampldist[(py+0)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
-			dists[1] = (ampldist[(py-1)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
-			dists[2] = (ampldist[(py+1)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
-			dists[3] = (ampldist[(py+0)*TOF_XS+(px+1)]&DIST_MASK)<<DIST_SHIFT;
-			dists[4] = (ampldist[(py+0)*TOF_XS+(px-1)]&DIST_MASK)<<DIST_SHIFT;
-
-			int32_t avg = (dists[0]+dists[1]+dists[2]+dists[3]+dists[4])/5;
-
-			int n_conform = 0;
-			int32_t conform_avg = 0;
-			for(int i=0; i<5; i++)
+			for(int px=1; px<TOF_XS-1; px++)
 			{
-				if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+				int32_t dists[5];
+
+				dists[0] = (ampldist[(py+0)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
+				dists[1] = (ampldist[(py-1)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
+				dists[2] = (ampldist[(py+1)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
+				dists[3] = (ampldist[(py+0)*TOF_XS+(px+1)]&DIST_MASK)<<DIST_SHIFT;
+				dists[4] = (ampldist[(py+0)*TOF_XS+(px-1)]&DIST_MASK)<<DIST_SHIFT;
+
+				int32_t avg = (dists[0]+dists[1]+dists[2]+dists[3]+dists[4])/5;
+
+				int n_conform = 0;
+				int32_t conform_avg = 0;
+				for(int i=0; i<5; i++)
 				{
-					n_conform++;
-					conform_avg += dists[i];
-				}
-			}
-
-			if(n_conform >= 5)
-			{
-				int32_t d = conform_avg / n_conform;
-
-				uint16_t hor_ang, ver_ang;
-
-				#ifdef DBGPRVOX_AVOIDANCE
-
-					if(py*TOF_XS+px == PIX)
-						DBG_PR_VAR_I32(d);
-				#endif
-
-				// TODO: This optimizes out once we have sensor-by-sensor geometric tables;
-				// they can be pre-built to the actual mount_mode.
-				switch(sensor_mounts[sidx].mount_mode)
-				{
-					case 1: 
-					hor_ang = -1*geocoords[py*TOF_XS+px].yang;
-					ver_ang = geocoords[py*TOF_XS+px].xang;
-					break;
-
-					case 2: 
-					hor_ang = geocoords[py*TOF_XS+px].yang;
-					ver_ang = -1*geocoords[py*TOF_XS+px].xang;
-					break;
-
-					case 3:
-					hor_ang = -1*geocoords[py*TOF_XS+px].xang;
-					ver_ang = geocoords[py*TOF_XS+px].yang;
-					break;
-
-					case 4:
-					hor_ang = geocoords[py*TOF_XS+px].xang;
-					ver_ang = -1*geocoords[py*TOF_XS+px].yang;
-					break;
-
-					default: error(145); while(1); // to tell the compiler we always set hor_ang, ver_ang
+					if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+					{
+						n_conform++;
+						conform_avg += dists[i];
+					}
 				}
 
-				#ifdef DBGPRVOX_AVOIDANCE
-
-					if(py*TOF_XS+px == PIX)
-					{
-						DBG_PR_VAR_U16(hor_ang);
-						DBG_PR_VAR_U16(ver_ang);
-					}
-				#endif
-
-
-				uint16_t local_comb_hor_ang = hor_ang + local_sensor_hor_ang;
-				uint16_t local_comb_ver_ang = ver_ang + local_sensor_ver_ang;
-
-
-				int32_t local_x = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_cos_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_x;
-				int32_t local_y = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_sin_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_y;
-				int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
-
-
-				// VACUUM APP: Ignore the nozzle
-				if(local_z < 200 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
-					continue;
-
-				if(local_z > 120 && local_z < 1200)
+				if(n_conform >= 5)
 				{
-					if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
-					{
-						if(local_x >= 100 && local_x < 450+OBST_MARGIN)
-							obstacle_front_near++;
-						if(local_x >= 450+OBST_MARGIN && local_x < 650+OBST_MARGIN)
-							obstacle_front_far++;
+					int32_t d = conform_avg / n_conform;
 
-						if(local_x <= -450 && local_x > -700-OBST_MARGIN)
-							obstacle_back_near++;
-						if(local_x <= -700-OBST_MARGIN && local_x > -900-OBST_MARGIN)
-							obstacle_back_far++;
+					uint16_t hor_ang, ver_ang;
+
+					#ifdef DBGPRVOX_AVOIDANCE
+
+						if(py*TOF_XS+px == PIX)
+							DBG_PR_VAR_I32(d);
+					#endif
+
+					// TODO: This optimizes out once we have sensor-by-sensor geometric tables;
+					// they can be pre-built to the actual mount_mode.
+					switch(sensor_mounts[sidx].mount_mode)
+					{
+						case 1: 
+						hor_ang = -1*geocoords[py*TOF_XS+px].yang;
+						ver_ang = geocoords[py*TOF_XS+px].xang;
+						break;
+
+						case 2: 
+						hor_ang = geocoords[py*TOF_XS+px].yang;
+						ver_ang = -1*geocoords[py*TOF_XS+px].xang;
+						break;
+
+						case 3:
+						hor_ang = -1*geocoords[py*TOF_XS+px].xang;
+						ver_ang = geocoords[py*TOF_XS+px].yang;
+						break;
+
+						case 4:
+						hor_ang = geocoords[py*TOF_XS+px].xang;
+						ver_ang = -1*geocoords[py*TOF_XS+px].yang;
+						break;
+
+						default: error(145); while(1); // to tell the compiler we always set hor_ang, ver_ang
 					}
 
-					if(local_x > -490 && local_x < -200)
+					#ifdef DBGPRVOX_AVOIDANCE
+
+						if(py*TOF_XS+px == PIX)
+						{
+							DBG_PR_VAR_U16(hor_ang);
+							DBG_PR_VAR_U16(ver_ang);
+						}
+					#endif
+
+
+					uint16_t local_comb_hor_ang = hor_ang + local_sensor_hor_ang;
+					uint16_t local_comb_ver_ang = ver_ang + local_sensor_ver_ang;
+
+
+					int32_t local_x = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_cos_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_x;
+					int32_t local_y = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_sin_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_y;
+					int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
+
+
+					// VACUUM APP: Ignore the nozzle
+					if(local_z < 200 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+						continue;
+
+					if(local_z > 120 && local_z < 1200)
 					{
-						if(local_y >= 200+OBST_MARGIN && local_y < 400+OBST_MARGIN)
-							obstacle_left_near++;
+						if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
+						{
+							if(local_x >= 100 && local_x < 300+OBST_MARGIN)
+							{
+								obstacle_front_near++;
+							/*	o_itoa32(local_x, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("  ");
+								o_itoa32(local_y, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("  ");
+								o_itoa32(local_z, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("   FN\r\n");*/
+							}
+							if(local_x >= 300+OBST_MARGIN && local_x < 450+OBST_MARGIN)
+							{
+								obstacle_front_far++;
+							/*	o_itoa32(local_x, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("  ");
+								o_itoa32(local_y, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("  ");
+								o_itoa32(local_z, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("   FF\r\n");*/
+							}
 
-						if(local_y <= -200 && local_y > -400-OBST_MARGIN)
-							obstacle_right_near++;
-					}
+							if(local_x <= -450 && local_x > -650-OBST_MARGIN)
+							{
+								obstacle_back_near++;
+
+							}
+							if(local_x <= -650-OBST_MARGIN && local_x > -800-OBST_MARGIN)
+							{
+								obstacle_back_far++;
+
+							}
+						}
+
+						if(local_x > -490 && local_x < -200)
+						{
+							if(local_y >= 200+OBST_MARGIN && local_y < 350+OBST_MARGIN)
+							{
+								obstacle_left_near++;
+							}
+
+							if(local_y <= -200 && local_y > -350-OBST_MARGIN)
+							{
+								obstacle_right_near++;
+							}
+						}
 
 
-					if(local_x > -440 && local_x < -200)
-					{
+						if(local_x > -440 && local_x < -200)
+						{
 
-						if(local_y <= -400-OBST_MARGIN && local_y > -500-OBST_MARGIN)
-							obstacle_right_far++;
+							if(local_y <= -350-OBST_MARGIN && local_y > -450-OBST_MARGIN)
+							{
+								obstacle_right_far++;
+							}
 
-						if(local_y >= 400+OBST_MARGIN && local_y < 500+OBST_MARGIN)
-							obstacle_left_far++;
+							if(local_y >= 350+OBST_MARGIN && local_y < 450+OBST_MARGIN)
+							{
+								obstacle_left_far++;
+							}
 
+						}
 					}
 				}
 			}
 		}
+
+		#ifdef DBGPRVOX_AVOIDANCE
+			DBG_PR_VAR_I32(insertion_cnt);
+		#endif
 	}
+#else // individually calibrated sensors:
 
-	#ifdef DBGPRVOX_AVOIDANCE
-		DBG_PR_VAR_I32(insertion_cnt);
-	#endif
-}
+	#define OBST_MARGIN (0)
+	#define OBST_AVOID_WIDTH (480+OBST_MARGIN)
 
+	void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx) __attribute__((section(".text_itcm")));
+	void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx)
+	{
+		if(sidx < 0 || sidx >= N_SENSORS) error(150);
+
+//		uart_print_string_blocking("\r\n");
+
+		//if(sidx != 0) return;
+
+		uint16_t local_sensor_hor_ang = tof_calibs[sidx]->mount.ang_rel_robot;
+		uint16_t local_sensor_ver_ang = tof_calibs[sidx]->mount.vert_ang_rel_ground;
+
+
+		int32_t  local_sensor_x = tof_calibs[sidx]->mount.x_rel_robot;
+		int32_t  local_sensor_y = tof_calibs[sidx]->mount.y_rel_robot;
+		int32_t  local_sensor_z = tof_calibs[sidx]->mount.z_rel_ground;
+
+
+		extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
+		extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
+
+		for(int py=2; py<TOF_YS-2; py+=2)
+		{
+			for(int px=2; px<TOF_XS-2; px+=2)
+			{
+				int32_t dists[5];
+
+				dists[0] = (ampldist[(py+0)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
+				dists[1] = (ampldist[(py-1)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
+				dists[2] = (ampldist[(py+1)*TOF_XS+(px+0)]&DIST_MASK)<<DIST_SHIFT;
+				dists[3] = (ampldist[(py+0)*TOF_XS+(px+1)]&DIST_MASK)<<DIST_SHIFT;
+				dists[4] = (ampldist[(py+0)*TOF_XS+(px-1)]&DIST_MASK)<<DIST_SHIFT;
+
+				int32_t avg = (dists[0]+dists[1]+dists[2]+dists[3]+dists[4])/5;
+
+				int n_conform = 0;
+				int32_t conform_avg = 0;
+				for(int i=0; i<5; i++)
+				{
+					if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+					{
+						n_conform++;
+						conform_avg += dists[i];
+					}
+				}
+
+				if(n_conform >= 4)
+				{
+					int32_t d = conform_avg / n_conform;
+
+					d+=70; // fuck
+
+					uint16_t hor_ang, ver_ang;
+
+					hor_ang = tof_calibs[sidx]->hor_angs[(py/2)*(TOF_XS/2)+(px/2)];
+					ver_ang = tof_calibs[sidx]->ver_angs[(py/2)*(TOF_XS/2)+(px/2)];
+
+					#ifdef DBGPRVOX_AVOIDANCE
+
+						if(py*TOF_XS+px == PIX)
+							DBG_PR_VAR_I32(d);
+
+						if(py*TOF_XS+px == PIX)
+						{
+							DBG_PR_VAR_U16(hor_ang);
+							DBG_PR_VAR_U16(ver_ang);
+						}
+					#endif
+
+
+					uint16_t local_comb_hor_ang = hor_ang + local_sensor_hor_ang;
+					uint16_t local_comb_ver_ang = ver_ang + local_sensor_ver_ang;
+
+
+					int32_t local_x = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_cos_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_x;
+					int32_t local_y = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_sin_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_y;
+					int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
+
+
+					#ifdef EXT_VACUUM
+						// VACUUM APP: Ignore the nozzle
+						if(local_z < 200 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+							continue;
+					#endif
+
+					if(local_z > 120 && local_z < 1200)
+					{
+						if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
+						{
+							if(local_x >= 100 && local_x < 300+OBST_MARGIN)
+							{
+								obstacle_front_near++;
+								led_status(sidx, RED, LED_MODE_FADE);
+								//DBG_PR_VAR_U16(sidx);
+/*								o_itoa32(local_x, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("  ");
+								o_itoa32(local_y, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("  ");
+								o_itoa32(local_z, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("   FN\r\n");*/
+							}
+							if(local_x >= 300+OBST_MARGIN && local_x < 500+OBST_MARGIN)
+							{
+								obstacle_front_far++;
+/*
+								o_itoa32(local_x, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("  ");
+								o_itoa32(local_y, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("  ");
+								o_itoa32(local_z, printbuf); uart_print_string_blocking(printbuf); 
+								uart_print_string_blocking("   FF\r\n");*/
+							}
+
+							if(local_x <= -450 && local_x > -700-OBST_MARGIN)
+							{
+								//DBG_PR_VAR_U16(sidx);
+								led_status(sidx, RED, LED_MODE_FADE);
+								obstacle_back_near++;
+
+							}
+							if(local_x <= -700-OBST_MARGIN && local_x > -900-OBST_MARGIN)
+							{
+								obstacle_back_far++;
+
+							}
+						}
+
+						if(local_x > -490 && local_x < -200)
+						{
+							if(local_y >= 200+OBST_MARGIN && local_y < 350+OBST_MARGIN)
+							{
+								//DBG_PR_VAR_U16(sidx);
+								led_status(sidx, RED, LED_MODE_FADE);
+
+								obstacle_left_near++;
+							}
+
+							if(local_y <= -200 && local_y > -350-OBST_MARGIN)
+							{
+								//DBG_PR_VAR_U16(sidx);
+								led_status(sidx, RED, LED_MODE_FADE);
+
+								obstacle_right_near++;
+							}
+						}
+
+
+						if(local_x > -440 && local_x < -200)
+						{
+
+							if(local_y <= -350-OBST_MARGIN && local_y > -450-OBST_MARGIN)
+							{
+								obstacle_right_far++;
+							}
+
+							if(local_y >= 350+OBST_MARGIN && local_y < 450+OBST_MARGIN)
+							{
+								obstacle_left_far++;
+							}
+
+						}
+					}
+				}
+			}
+		}
+
+		#ifdef DBGPRVOX_AVOIDANCE
+			DBG_PR_VAR_I32(insertion_cnt);
+		#endif
+	}
+#endif
 
 /*
 	2DCS -> amplitude&distance conversion for 6.67MHz modulation frequency.

@@ -12,9 +12,10 @@
 #include "audio.h"
 #include "tof_ctrl.h" // for N_SENSORS
 
+//#define STOP_LEDS_ON
 #define LEDS_ON
 
-#define G_DC_MOTDET_TH 300 // 100 generates false noise detections about every 2-3 seconds
+#define G_DC_MOTDET_TH 400 // 100 generates false noise detections about every 2-3 seconds
 #define G_AC_MOTDET_TH (200*256) // threshold after DC offset correction
 
 #define GYRO_X_BLANKING_TH (100*256)
@@ -26,13 +27,19 @@
 static int moving = 250;
 static inline void robot_moves()
 {
-	moving = 250; // 1 seconds
+	moving = 500; // 2 seconds
 }
 
 static inline int is_robot_moving()
 {
 	return moving;
 }
+
+int drive_is_robot_moving()
+{
+	return moving;
+}
+
 
 void hires_pos_to_hw_pose(hw_pose_t* out, hires_pos_t* in)
 {
@@ -99,6 +106,7 @@ static int accurot;
 
 void cmd_go_to(s2b_move_abs_t* m)
 {
+	robot_moves();
 	stop_chafind();
 	lock_processing = 1;
 	set_top_speed_max(60);
@@ -147,6 +155,8 @@ int32_t get_remaining_lin()
 
 void straight_rel(int32_t mm)
 {
+	robot_moves();
+
 //	uart_print_string_blocking("straight_rel\r\n");
 //	DBG_PR_VAR_I32(mm);
 	ang_to_target = cur_pos.ang;
@@ -163,6 +173,8 @@ void straight_rel(int32_t mm)
 
 void rotate_rel(int32_t ang32)
 {
+	robot_moves();
+
 //	uart_print_string_blocking("rotate_rel\r\n");
 //	DBG_PR_VAR_I32(ang32);
 	ang_to_target = cur_pos.ang + (uint32_t)ang32;
@@ -179,6 +191,8 @@ void rotate_rel(int32_t ang32)
 
 void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_first)
 {
+	robot_moves();
+
 //	uart_print_string_blocking("rotate_and_straight_rel\r\n");
 //	DBG_PR_VAR_I32(ang32);
 //	DBG_PR_VAR_I32(mm);
@@ -1263,6 +1277,15 @@ void drive_handler()
 	mpos[0] = bldc_pos[0];
 	mpos[1] = bldc_pos[1];
 
+	static uint32_t prev_mpos[2];
+
+	if(prev_mpos[0] != mpos[0] || prev_mpos[1] != mpos[1])
+		robot_moves();
+
+
+	prev_mpos[0] = mpos[0];
+	prev_mpos[1] = mpos[1];
+
 //	int32_t mpos_err[2];
 //	mpos_err[0] = bldc_pos[0] - bldc_pos_set[0];
 //	mpos_err[1] = bldc_pos[1] - bldc_pos_set[1];
@@ -1601,6 +1624,7 @@ void drive_handler()
 
 
 #define OBST_THRESHOLD 4
+#define OBST_THRESHOLD_FAR 99999
 
 	// All stopping conditions first:
 	if(!motors_enabled)
@@ -1632,12 +1656,12 @@ void drive_handler()
 
 	}
 
-	if(ignore_front==0 && run && correcting_linear && ((lin_err > 50*65536 && obstacle_front_near > OBST_THRESHOLD) || (lin_err > 180*65536 && obstacle_front_far > OBST_THRESHOLD)))
+	if(ignore_front==0 && run && correcting_linear && ((lin_err > 50*65536 && obstacle_front_near > OBST_THRESHOLD) || (lin_err > 300*65536 && obstacle_front_far > OBST_THRESHOLD_FAR)))
 	{
 		{
 			beep(500, 100, 0, 70);
 			stop_indicators = 125;
-			#ifdef LEDS_ON
+			#ifdef STOP_LEDS_ON
 			led_status(9, RED, LED_MODE_FADE);
 			led_status(0, RED, LED_MODE_FADE);
 			led_status(1, RED, LED_MODE_FADE);
@@ -1647,12 +1671,12 @@ void drive_handler()
 		stop();
 
 	}
-	else if(ignore_back==0 && run && correcting_linear && ((lin_err < -50*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_err < -180*65536 && obstacle_back_far > OBST_THRESHOLD)))
+	else if(ignore_back==0 && run && correcting_linear && ((lin_err < -50*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_err < -300*65536 && obstacle_back_far > OBST_THRESHOLD_FAR)))
 	{
 		{
 			beep(500, 100, 0, 70);
 			stop_indicators = 125;
-			#ifdef LEDS_ON
+			#ifdef STOP_LEDS_ON
 			led_status(4, RED, LED_MODE_FADE);
 			led_status(5, RED, LED_MODE_FADE);
 			led_status(6, RED, LED_MODE_FADE);
@@ -1662,12 +1686,12 @@ void drive_handler()
 		micronavi_status |= 1UL<<0;
 		stop();
 	}
-	else if(ignore_left==0 && run && correcting_angle && ((ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 18*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD)))
+	else if(ignore_left==0 && run && correcting_angle && ((ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 25*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD_FAR)))
 	{
 		{
 			beep(500, 100, 0, 70);
 			stop_indicators = 125;
-			#ifdef LEDS_ON
+			#ifdef STOP_LEDS_ON
 			led_status(2, RED, LED_MODE_FADE);
 			led_status(3, RED, LED_MODE_FADE);
 			#endif
@@ -1676,12 +1700,12 @@ void drive_handler()
 		micronavi_status |= 1UL<<2;
 		stop();
 	}
-	else if(ignore_right==0 && run && correcting_angle && ((ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -18*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD)))
+	else if(ignore_right==0 && run && correcting_angle && ((ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -25*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD_FAR)))
 	{
 		{
 			beep(500, 100, 0, 70);
 			stop_indicators = 125;
-			#ifdef LEDS_ON
+			#ifdef STOP_LEDS_ON
 			led_status(7, RED, LED_MODE_FADE);
 			led_status(8, RED, LED_MODE_FADE);
 			#endif

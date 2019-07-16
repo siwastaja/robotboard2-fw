@@ -11,6 +11,10 @@
 
 	SRAM1,SRAM2,SRAM3 form a contiguous, linear address space, so they
 	can be joined together for simple usage
+
+	DTCM:
+	sin_lut 8192
+	shadow_luts 62720
 */
 
 MEMORY
