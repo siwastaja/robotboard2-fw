@@ -741,6 +741,11 @@ void run_cycle()
 		gen_data = 1;
 
 
+	if(gen_data && tof_slam_set)
+	{
+		tof_slam_set->flags = 0;
+	}
+
 	if(!drive_is_robot_moving())
 	{
 		delay_ms(40);

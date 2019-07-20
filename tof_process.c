@@ -1035,7 +1035,7 @@ void tof_disable_chafind_datapoints()
 
 					uint16_t hor_ang, ver_ang;
 
-					hor_ang = tof_calibs[sidx]->hor_angs[(py/2)*(TOF_XS/2)+(px/2)];
+					hor_ang = -tof_calibs[sidx]->hor_angs[(py/2)*(TOF_XS/2)+(px/2)];
 					ver_ang = tof_calibs[sidx]->ver_angs[(py/2)*(TOF_XS/2)+(px/2)];
 
 					#ifdef DBGPRVOX_AVOIDANCE

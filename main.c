@@ -566,7 +566,9 @@ void main()
 		#endif
 	#endif
 
-	verify_calibration();
+	#ifndef CALIBRATOR
+		verify_calibration();
+	#endif
 
 	while(1)
 	{

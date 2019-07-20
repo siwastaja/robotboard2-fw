@@ -1,9 +1,10 @@
 # This makefile is made to work with the toolchain downloadable at https://launchpad.net/gcc-arm-embedded
 
+DEVUSR = pulu
 #DEVIP = 10.3.0.6
 #DEVIP = 192.168.43.59
-#DEVIP = 10.42.0.222
-DEVIP = 192.168.1.6
+DEVIP = 10.42.0.231
+#DEVIP = 192.168.1.6
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
@@ -69,14 +70,11 @@ main.bin: $(OBJ)
 # Since bss sections have nothing to do in the binary, we can just as well remove them from the output file.
 # .settings is also removed - this makes the binary small, and keeps the old settings through reflash process
 ff: main.bin
-	scp main_full.bin $(DEVIP):~/robotsoft/main_full.bin
-	ssh $(DEVIP) ~/robotsoft/spiprog r 10 ~/robotsoft/main_full.bin
+	scp main_full.bin $(DEVUSR)@$(DEVIP):/home/$(DEVUSR)/robotsoft/main_full.bin
+	ssh $(DEVUSR)@$(DEVIP) /home/$(DEVUSR)/robotsoft/spiprog r 10 /home/$(DEVUSR)/robotsoft/main_full.bin
 
 fr:
-	ssh $(DEVIP) ~/spiprog r
-
-f: main.bin
-	scp main_full.bin pulu@$(robot):~/main_full.bin
+	ssh $(DEVUSR)@$(DEVIP) /home/$(DEVUSR)/robotsoft/spiprog r
 
 flash: main.bin
 	stm32flash -b 115200 -w main_full.bin -v /dev/ttyUSB0
