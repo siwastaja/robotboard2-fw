@@ -1,4 +1,6 @@
 # This makefile is made to work with the toolchain downloadable at https://launchpad.net/gcc-arm-embedded
+# More exactly, https://launchpad.net/~team-gcc-arm-embedded/+archive/ubuntu/ppa
+
 
 DEVUSR = pulu
 #DEVIP = 10.3.0.6

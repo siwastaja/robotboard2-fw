@@ -221,7 +221,7 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	#define SUPERSHORT_US 12
 
 	// SUPER SHORT WIDE
-	// Works as autoexposure basis & HDR short
+	// Works as autoexposure basis - may work as a HDR short in the case where the autoexp would result in the shortest possible time.
 
 	epc_4dcs(); block_epc_i2c(4);
 	delay_ms(1);
@@ -746,7 +746,7 @@ void run_cycle()
 		tof_slam_set->flags = 0;
 	}
 
-	if(!drive_is_robot_moving())
+	if(0) //!drive_is_robot_moving())
 	{
 		delay_ms(40);
 		goto SKIP_TOF;
@@ -817,6 +817,7 @@ void run_cycle()
 
 	int take_wid_long = 0;
 	int take_nar_long = 0;
+#if 0
 	for(int i=0; i<N_LONG_SLOTS; i++)
 	{
 		if(basic_sidx == wid_long_sidxs[i])
@@ -824,7 +825,7 @@ void run_cycle()
 		if(basic_sidx == nar_long_sidxs[i])
 			take_nar_long = 1;
 	}
-
+#endif
 	if(take_wid_long && take_nar_long)
 		error(573);
 

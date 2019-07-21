@@ -293,7 +293,6 @@ int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in)
 	return avg;
 }
 
-#if 0
 #define BLUR_R 6
 #define BLUR_DIV (2*BLUR_R+1)
 static void boxblur_h(int16_t* in, int16_t* out)
@@ -374,10 +373,16 @@ static void blur_5_convol_biased(int16_t* in, int16_t* out, blur_params_t* blur_
 	}
 }
 
+#define RIC(x_, y_) ((y_)*RESICAL_IN_XS+(x_))
+#define ROC(x_, y_) ((y_)*RESICAL_OUT_XS+(x_))
 
-static void run_blur_model(int16_t* in, int16_t* out, blur_params_t* blur_params)
+static void run_lens_model(int16_t* in, int16_t* out, tof_calib_t* p_tof_calib)
 {
 	static int16_t tmp[TOF_XS*TOF_YS];
+
+	mcu_blur_params_t* blur_params = p_tof_calib->blur_params;
+
+	// BLUR MODEL:
 
 	// Temporarily use "out" as a buffer
 	boxblur(in, out);
@@ -397,8 +402,84 @@ static void run_blur_model(int16_t* in, int16_t* out, blur_params_t* blur_params
 
 
 	blur_5_convol_biased(in, out, blur_params);
+
+	// RESIDUAL MODEL:
+
+	int16_t output_offsets[RESICAL_OUT_XS*RESICAL_OUT_YS] = {0};
+
+	for(int riy=0; riy < RESICAL_IN_YS; riy++)
+	{
+		for(int rix=0; rix < RESICAL_IN_XS; rix++)
+		{
+			// Find input area coordinates
+
+			int divline_x0 = p_tof_calib->resical_bounds_x[rix];
+			int divline_x1 = p_tof_calib->resical_bounds_x[rix+1];
+			int divline_y0 = p_tof_calib->resical_bounds_y[riy];
+			int divline_y1 = p_tof_calib->resical_bounds_y[riy+1];
+
+			// Average over the input area:
+
+			int32_t avg_input;
+
+			{
+				int64_t avg_input_acc = 0;
+				int n = 0;
+
+				for(int yy=divline_y0; yy<divline_y1; yy++)
+				{
+					for(int xx=divline_x0; xx<divline_x1; xx++)
+					{
+						avg_input_acc += in[TC(xx,yy)];
+						n++;
+					}		
+				}
+
+				avg_input = (double)avg_input_acc / (double)n;
+			}
+
+			for(int roy=0; roy < RESIDUAL_OUT_YS; roy++)
+			{
+				for(int rox=0; rox < RESIDUAL_OUT_XS; rox++)
+				{
+					#define GET_RESICAL_COEFF(cal_, ix_, iy_, ox_, oy_) ((cal_).resical_coeffs[(iy_)*RESICAL_IN_XS+(ix_)][(oy_)*RESICAL_OUT_XS+(ox_)])
+					int32_t coeff = GET_RESICAL_COEFF(*p_tof_calib, rix, riy, rox, roy);
+
+					output_offsets[ROC(rox,roy)] += (avg_input * coeff)/RESICAL_DIVIDER;
+				}
+			}
+
+		}
+	}
+
+	// Compensate the output:
+
+	for(int roy=0; roy < RESIDUAL_OUT_YS; roy++)
+	{
+		for(int rox=0; rox < RESIDUAL_OUT_XS; rox++)
+		{
+			int32_t offset = output_offsets[ROC(rox,roy)];
+			for(int suby=0; suby < RESIDUAL_OUT_RATIO; suby++)
+			{
+				for(int subx=0; subx < RESIDUAL_OUT_RATIO; subx++)
+				{
+					int tx = rox*RESIDUAL_OUT_RATIO + subx;
+					int ty = roy*RESIDUAL_OUT_RATIO + suby;
+
+					int32_t outval = (int32_t)out[TC(tx,ty)] - offset;
+					if(outval < INT16_MIN || outval > INT16_MAX)
+					{
+						// Data saturated - was nearly overexposed, now is overexposed.
+						// Mark as overexposed, doesn't matter whether we use INT16_MIN or INT16_MAX for that purpose;
+						// the processing later detects saturated values as overexposure, regardless of sign.
+						outval = INT16_MAX;
+					}
+					out[TC(tx,ty)] = outval;
+				}
+			}
+		}
+	}
 }
-#endif
 
 
 int flare_factors[2] = {17, 7}; // wide, narrow
@@ -613,6 +694,154 @@ static inline int32_t hdrize(int16_t val1, int16_t val2, int16_t val3, int ratio
 		val_out = val3_extended;
 
 	return val_out;
+}
+
+void compensated_3hdr_tof_calc_ampldist(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_mid_in, int16_t* dcs31_mid_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor_lomid, int hdr_factor_midhi, uint8_t* dealias_dist, int freq)   __attribute__((section(".text_itcm")));
+void compensated_3hdr_tof_calc_ampldist(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_mid_in, int16_t* dcs31_mid_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor_lomid, int hdr_factor_midhi, uint8_t* dealias_dist, int freq)
+{
+	int wrap_mm;
+	if(dealias_dist != NULL)
+	{
+		if(freq==0)
+			wrap_mm = 7495;
+		else if(freq==1)
+			wrap_mm = 14990;
+		else
+		{
+			error(777);
+			while(1);
+		}
+	}
+
+	int n_pix = is_narrow?(TOF_XS_NARROW*TOF_YS_NARROW):(TOF_XS*TOF_YS);
+
+	for(int i=0; i < n_pix; i++)
+	{
+		uint16_t dist;
+		int ampl;
+
+		if(dcs20_lo_in[i] < -OVEREXP_LIMIT || dcs20_lo_in[i] > OVEREXP_LIMIT || 
+		   dcs31_lo_in[i] < -OVEREXP_LIMIT || dcs31_lo_in[i] > OVEREXP_LIMIT)
+		{
+			ampl = 15;
+			dist = DIST_OVEREXP;
+
+		}
+		else
+		{
+			int32_t dcs20, dcs31;
+
+			dcs20 = hdrize(dcs20_lo_in[i], dcs20_mid_in[i], dcs20_hi_in[i], hdr_factor_lomid, hdr_factor_midhi);
+			dcs31 = hdrize(dcs31_lo_in[i], dcs31_mid_in[i], dcs31_hi_in[i], hdr_factor_lomid, hdr_factor_midhi);
+
+#if 0
+			{
+				DBG_PR_VAR_I32(dcs20_lo_in[i]);
+				DBG_PR_VAR_I32(dcs31_lo_in[i]);
+
+				DBG_PR_VAR_I32(dcs20_mid_in[i]);
+				DBG_PR_VAR_I32(dcs31_mid_in[i]);
+
+				DBG_PR_VAR_I32(dcs20_hi_in[i]);
+				DBG_PR_VAR_I32(dcs31_hi_in[i]);
+
+				DBG_PR_VAR_I32(dcs20);
+				DBG_PR_VAR_I32(dcs31);
+
+			}
+#endif
+
+			dcs20 -= ((int64_t)dcs20_accum*(int64_t)flare_factors[is_narrow])>>8;
+			dcs31 -= ((int64_t)dcs31_accum*(int64_t)flare_factors[is_narrow])>>8;
+
+			ampl = AMPL(dcs20_hi_in[i], dcs31_hi_in[i]);
+
+#if 0
+			{
+				DBG_PR_VAR_I32(ampl);
+
+				DBG_PR_VAR_I32(dcs20);
+				DBG_PR_VAR_I32(dcs31);
+
+			}
+#endif
+
+			if(ampl<4)
+			{
+				dist = DIST_UNDEREXP;
+
+			}
+			else
+			{
+				int pixgroup;
+				if(!is_narrow)
+				{
+					if(!(i&1)) // even
+						pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
+					else
+						pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
+
+					dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+					if(dist < 2) dist = 2;
+
+				}
+				else // is_narrow
+				{
+					if(!(i&1)) // even
+						pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2] & 0x0f;
+					else
+						pixgroup = shadow_luts.hif.nar_lut_group_ids[i/2]>>4;
+
+					dist = lookup_dist(1, pixgroup, dcs31, dcs20);
+					if(dist < 2) dist = 2;
+
+				}
+
+#if 0
+				{
+					DBG_PR_VAR_I32(dist);
+				}
+#endif
+
+				if(dealias_dist != NULL)
+				{
+					int lfdist_mm = dealias_dist[i]<<7;
+					int hf_wrap0 = dist;
+					int hf_wrap1 = dist + wrap_mm;
+					int hf_wrap2 = dist + 2*wrap_mm;
+
+					int err0 = abso(hf_wrap0 - lfdist_mm);
+					int err1 = abso(hf_wrap1 - lfdist_mm);
+					int err2 = abso(hf_wrap2 - lfdist_mm);
+
+
+					if(dealias_dist[i] == DIST_UNDEREXP)
+						dist = DIST_UNDEREXP;
+					else if(dealias_dist[i] == DIST_OVEREXP || err0 < DEALIAS_THRESHOLD)
+						dist = dist>>DIST_SHIFT; // Keep hf as is
+					else if(err1 < DEALIAS_THRESHOLD)
+						dist = hf_wrap1>>DIST_SHIFT;
+					else if(err2 < DEALIAS_THRESHOLD)
+						dist = hf_wrap2>>DIST_SHIFT;
+					else
+						dist = DIST_UNDEREXP;
+
+				}
+				else
+					dist>>=DIST_SHIFT;
+
+				if(dist < 0) dist = 0;
+				else if(dist > MAX_DISTVAL) dist = DIST_UNDEREXP;
+
+
+			}
+
+			ampl/=16;
+			if(ampl>15) ampl=15;
+
+		}
+		ampldist_out[i] = (ampl<<12) | dist;
+	}
 }
 
 

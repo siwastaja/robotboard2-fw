@@ -362,7 +362,11 @@ typedef struct __attribute__((packed))
 #define RESICAL_IN_YS 7
 #define RESICAL_OUT_XS 16
 #define RESICAL_OUT_YS 6
+#define RESICAL_DIVIDER 32768
 #define GET_RESICAL_COEFF(cal_, ix_, iy_, ox_, oy_) ((cal_).resical_coeffs[(iy_)*RESICAL_IN_XS+(ix_)][(oy_)*RESICAL_OUT_XS+(ox_)])
+
+
+#define TC(x_, y_) ((y_)*TOF_XS+(x_))
 
 	uint8_t resical_bounds_x[RESICAL_IN_XS+1];
 	uint8_t resical_bounds_y[RESICAL_IN_YS+1];
