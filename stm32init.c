@@ -526,10 +526,18 @@ void stm32init(void)
 	#define PWRSWITCH_PRESSED (!IN(GPIOI,11))
 #endif
 
+	// backup_ram's immediate_5v written to a magical value is a signal
+	// from the flasher, that the reset we just had originated from the flasher,
+	// and the 5V power supply for the SBC must be turned back on as quickly as possible,
+	// so that the computer power is not interrupted.
+	// But if the power switch is pressed, this is a cold boot, and the backup ram is clearly wrong -
+	// in this case we won't do that.
+	// We don't want to turn the 5V supply on in the normal boot, because we need a very low consumption,
+	// so that the capacitors are able to precharge through precharging resistors to a voltage high enough
+	// to allow the main switch desaturation detection to let go. Complex, yeah?
 
 	if(backup_ram.immediate_5v == 0x420b1a5e && !PWRSWITCH_PRESSED)
 	{
-		// If the power switch is pressed, the backup ram is wrong
 		RCC->AHB4ENR |= 1UL<<5;
 		BIG5V_ON();
 		IO_TO_GPO(GPIOF, 5); // 5Vbig - same pin in REV2A, REV2B

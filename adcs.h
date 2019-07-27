@@ -194,12 +194,12 @@ extern uint32_t vbat_per_vinbus_mult;
 
 #ifdef REV2A
 	#define ADC3_SEQ  5, 6,10, 1,13,12,18,0,0,0,0,0,0,0,0,0
-	#define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<13)|(1<<12)|(1<<18))
+	#define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<13)|(1<<12)|(1<<18)|(1<<14)|(1<<16))
 #endif
 
 #ifdef REV2B
 	#define ADC3_SEQ  5, 6,10, 1,13,14,18,0,0,0,0,0,0,0,0,0
-	#define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<13)|(1<<14)|(1<<18))
+	#define ADC3_CHANNELS_IN_USE ((1<<5)|(1<<6)|(1<<10)|(1<<1)|(1<<13)|(1<<14)|(1<<18)|(1<<16)|(1<<9))
 #endif
 
 
@@ -363,11 +363,25 @@ extern volatile adc3_group_t adc3;
 // low AC impedance, so they could be sampled quickly, but this cap diminishes if sampled
 // too frequently, so need to limit sample rate anyway. Easiest way is to use long sampling
 // and let the ADC free run. It could be possible to later cost-optimize the 100n caps away.
-#define ADC3_SMPTIMES 6,6,6,6,6, \
-                      6,6,6,6,6, \
-                      6,6,6,6,6, \
-                      6,6,6,6,6
+// Injected channels (vapp, vgapp) must use shorter sample times: setting 3 is 16.5 ADC clk's,
+// so total conversion time is 2 * (16.5 + 7.5) * 1/33.3MHz  = 1.44 us.
+#ifdef REV2A
 
+	#define ADC3_SMPTIMES 6,6,6,6,6, \
+		              6,6,6,6,6, \
+		              6,6,6,6,3, \
+		              6,3,6,6,6
+
+#endif
+
+#ifdef REV2B
+
+	#define ADC3_SMPTIMES 6,6,6,6,6, \
+		              6,6,6,6,3, \
+		              6,6,6,6,6, \
+		              6,3,6,6,6
+
+#endif
 
 #if 0
 	// Convenient in testing, if everything fails:

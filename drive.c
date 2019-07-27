@@ -15,8 +15,8 @@
 //#define STOP_LEDS_ON
 #define LEDS_ON
 
-#define G_DC_MOTDET_TH 400 // 100 generates false noise detections about every 2-3 seconds
-#define G_AC_MOTDET_TH (200*256) // threshold after DC offset correction
+#define G_DC_MOTDET_TH 500 // Up to 300 generates false noise detections, especially if there is any vibration nearby
+#define G_AC_MOTDET_TH (300*256) // threshold after DC offset correction
 
 #define GYRO_X_BLANKING_TH (100*256)
 #define GYRO_Y_BLANKING_TH (100*256)
@@ -24,10 +24,12 @@
 
 #define G_DC_FILT 10 // Quadratic effect, 15 maximum.
 
-static int moving = 250;
+#define MOVING_RESET_VALUE 500
+
+static int moving = MOVING_RESET_VALUE/2;
 static inline void robot_moves()
 {
-	moving = 500; // 2 seconds
+	moving = MOVING_RESET_VALUE; // 2 seconds
 }
 
 static inline int is_robot_moving()
@@ -1039,7 +1041,7 @@ static void gyro_calib_fsm()
 }
 
 
-
+volatile int drive_is_rotating;
 void drive_handler() __attribute__((section(".text_itcm")));
 void drive_handler()
 {
@@ -1255,23 +1257,30 @@ void drive_handler()
 	}
 	else
 	{
+		// Give beep warnings is someone moves the robot during initial DC offset calibration
 		for(int i=0; i<10; i++)
 			led_status(i, RED, LED_MODE_FADE);
 
-		if(moving > 0)
+		if(moving > MOVING_RESET_VALUE/2+1)
 		{
 			if(stop_indicators < 1)
 			{
 				beep(500, 100, 0, 70);
 				stop_indicators = 125;
 			}
+		}
+
+
+		if(moving > 0)
+		{
 			ac_th_det_on = 0;
+		}
+		else
+		{
+			ac_th_det_on++;
 		}
 
 	}
-
-	if(ac_th_det_on < 100000) ac_th_det_on++;
-
 
 	uint32_t mpos[2];
 	mpos[0] = bldc_pos[0];
@@ -1279,9 +1288,13 @@ void drive_handler()
 
 	static uint32_t prev_mpos[2];
 
-	if(prev_mpos[0] != mpos[0] || prev_mpos[1] != mpos[1])
-		robot_moves();
+	static int initialized;
 
+	if(initialized)
+	{
+		if(prev_mpos[0] != mpos[0] || prev_mpos[1] != mpos[1])
+			robot_moves();
+	}
 
 	prev_mpos[0] = mpos[0];
 	prev_mpos[1] = mpos[1];
@@ -1292,7 +1305,6 @@ void drive_handler()
 
 	
 	static uint32_t prevpos[2];
-	static int initialized;
 	int32_t deltapos[2];
 	if(!initialized)
 	{
@@ -1443,22 +1455,29 @@ void drive_handler()
 	static int correcting_angle = 1;
 	static int correcting_linear = 0;
 
-
+	int rotation_happening = 0;
 	if(accurot)
 	{
 		if(abso(ang_err) > 5*ANG_1_DEG)
+		{
+			rotation_happening = 1;
 			correcting_linear = 0;
+		}
 		else if((abso(ang_err) < 3*ANG_1_DEG) && abso(lin_err) > 50*65535)
 			correcting_linear = 1;
 	}
 	else
 	{
 		if(abso(ang_err) > 25*ANG_1_DEG)
+		{
+			rotation_happening = 1;
 			correcting_linear = 0;
+		}
 		else if((abso(ang_err) < 8*ANG_1_DEG) && abso(lin_err) > 50*65536)
 			correcting_linear = 1;
 	}
 
+	drive_is_rotating = rotation_happening;
 
 
 	static double ang_speed;

@@ -83,6 +83,36 @@ void pwrswitch_chargepump_init()
 
 }
 
+void ITCM delay_us_accurate(int32_t us)
+{
+		if(us > 10000 || us < 1)
+			error(987);
+
+		us *= 400;
+		SysTick->LOAD = (us-1);  // 24-bit range up to 16.7 million
+		SysTick->VAL = 0;
+		SysTick->CTRL; // Dummy read to reset countflag
+		SysTick->CTRL = 1UL<<2 /*CPU source: 400/8 = 50MHz*/ | 1UL /*enable!*/;
+		while(!(SysTick->CTRL & (1UL<<16))) ; // Wait for countflag
+}
+
+/*
+	Test code:
+void test_delay_us_accurate()
+{
+	while(1)
+	{
+		for(int i=0; i<100000; i++)
+			delay_us_accurate(10);
+
+//		for(int i=0; i<1000; i++)
+//			delay_us_accurate(1000);
+
+		uart_print_string_blocking(".");
+
+	}
+}
+*/
 void init_pwrswitch_and_led()
 {
 	#ifdef REV2A
@@ -121,6 +151,7 @@ void init_pwrswitch_and_led()
 void init_power_outputs()
 {
 	#ifdef REV2A
+		// REV2A didn't simply have these convenience defines, and the init is done whenever needed, manually.
 		error(222);
 	#endif
 
@@ -343,7 +374,11 @@ PCB revision changes:
  (20.0V, 10mF elcap)
 */
 
-int app_power_on()
+//#define PWRSWITCH_DBG_PRINT
+
+// Tested: 5 doesn't work, 7 does.
+#define INJECTED_DELAY 12
+int app_power_on_internal()
 {
 	if(app_power_enabled)
 		return -2;
@@ -354,7 +389,7 @@ int app_power_on()
 
 	APP_EN_DESAT_PROT();
 	APP_CP_LO();
-	delay_us(100);
+	delay_us_accurate(100);
 
 #define N_PULSES 50
 
@@ -375,9 +410,27 @@ int app_power_on()
 	int prev_va = -100;
 	int prev_prev_va = -200;
 	int short_cnt = 0;
-	int boost = 0;
 
 	// APP_CP_LO brings the gate actually higher
+
+/*
+Short detection (non-rising): 10
+
+ PRECHARGE PROBLEM 
+
+ PULSE TRAIN ENDED 
+00000 va:06321 vg:12275 n_cycs1:00000 co va:07255 vg:12275 n_cycs2:00000 done va:08188 vg:15317 vdiff:14993 cl_cnt:00011
+00001 va:08417 vg:15474 n_cycs1:00000 co va:10229 vg:15474 n_cycs2:00000 done va:12041 vg:20961 vdiff:11134 cl_cnt:00015
+00002 va:12188 vg:21317 n_cycs1:00000 co va:09323 vg:21317 n_cycs2:00000 done va:06459 vg:12150 vdiff:16713 cl_cnt:00009
+00003 va:03161 vg:07891 n_cycs1:00001 co va:15778 vg:26042 n_cycs2:00000 done va:15778 vg:26042 vdiff:07400 cl_cnt:00024
+00004 va:06248 vg:12616 n_cycs1:00000 co va:11021 vg:12616 n_cycs2:00000 done va:15795 vg:25524 vdiff:07370 cl_cnt:00024
+00005 va:15884 vg:27086 n_cycs1:00000 co va:13937 vg:27086 n_cycs2:00000 done va:11991 vg:21014 vdiff:11177 cl_cnt:00021
+00006 va:12059 vg:20416 n_cycs1:00000 co va:10099 vg:20416 n_cycs2:00000 done va:08138 vg:15654 vdiff:15034 cl_cnt:00017
+00007 va:07907 vg:14978 n_cycs1:00000 co va:09960 vg:14978 n_cycs2:00000 done va:12014 vg:21062 vdiff:11158 cl_cnt:00021
+00008 va:12099 vg:20771 n_cycs1:00000 co va:10115 vg:20771 n_cycs2:00000 done va:08132 vg:14811 vdiff:15036 cl_cnt:00017
+00009 va:07790 vg:13782 n_cycs1:00000 co va:09923 vg:13782 n_cycs2:00000 done va:12056 vg:20191 vdiff:11116 cl_cnt:00021
+
+*/
 
 	for(int i=0; i<N_PULSES; i++)
 	{
@@ -389,9 +442,9 @@ int app_power_on()
 		for(int o=0; o<10; o++)
 		{
 			APP_CP_HI();
-			delay_us(30);
+			delay_us_accurate(30);
 			APP_CP_LO();
-			delay_us(30);
+			delay_us_accurate(30);
 		}
 
 		APP_DIS_DESAT_PROT();
@@ -401,7 +454,7 @@ int app_power_on()
 
 		// Measure the application output voltage (Va) and the gate voltage (Vg)
 		ADC3_CONV_INJECTED();
-		delay_us(4);
+		delay_us_accurate(INJECTED_DELAY);
 		
 		int va = VAPP_MEAS_TO_MV(ADC3_VAPP_DATAREG);
 		#ifdef PWRSWITCH_DBG_PRINT
@@ -418,7 +471,7 @@ int app_power_on()
 		// The code later also looks at short_cnt, to react before the short detection hits.
 		if(va < prev_prev_va+400)
 		{
-			if(++short_cnt > 3)
+			if(++short_cnt > 4)
 			{
 				APP_EN_DESAT_PROT();
 				#ifdef PWRSWITCH_DBG_PRINT
@@ -450,14 +503,14 @@ int app_power_on()
 		for(o = 0; o<n_cyc; o++)
 		{
 			APP_CP_HI();
-			delay_us(26);
+			delay_us_accurate(26);
 			ADC3_CONV_INJECTED();
-			delay_us(4);
+			delay_us_accurate(INJECTED_DELAY);
 			int peak_va1 = ADC3_VAPP_DATAREG;
 			APP_CP_LO();
-			delay_us(26);
+			delay_us_accurate(26);
 			ADC3_CONV_INJECTED();
-			delay_us(4);
+			delay_us_accurate(INJECTED_DELAY);
 			int peak_va = VAPP_MEAS_TO_MV( (peak_va1 + ADC3_VAPP_DATAREG)>>1 );
 			int peak_vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
 
@@ -485,17 +538,17 @@ int app_power_on()
 
 		int latest_va;
 		int e;
-		for(e=0; e<20; e++) // Actually measured that 7..13 pulses are needed.
+		for(e=0; e<20; e++) // Actually measured that 7..14 pulses are needed.
 		{
 			APP_CP_HI();
-			delay_us(26);
+			delay_us_accurate(26);
 			ADC3_CONV_INJECTED();
-			delay_us(4);
+			delay_us_accurate(INJECTED_DELAY);
 			int peak_va1 = ADC3_VAPP_DATAREG;
 			APP_CP_LO();
-			delay_us(6);
+			delay_us_accurate(6);
 			ADC3_CONV_INJECTED();
-			delay_us(4);
+			delay_us_accurate(INJECTED_DELAY);
 			int peak_va = VAPP_MEAS_TO_MV( (peak_va1 + ADC3_VAPP_DATAREG)>>1 );
 			int peak_vg = VGAPP_MEAS_TO_MV(ADC3_VGAPP_DATAREG);
 
@@ -540,6 +593,20 @@ int app_power_on()
 			vdiffs[i] = vdiff;
 		#endif
 
+		if(vdiff < 2000)
+		{
+			APP_EN_DESAT_PROT();
+			#ifdef PWRSWITCH_DBG_PRINT
+				uart_print_string_blocking("\r\nDone precharging: ");
+				o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking("\r\n");
+			#endif
+			success = 1;
+			break;
+		}
+
+
+		// WAS:
 		// At 25Vdiff, 2 pulses
 		// At 22Vdiff, 3 pulses
 		// At 20Vdiff, 5 pulses
@@ -550,22 +617,45 @@ int app_power_on()
 		// At  2Vdiff, 23 pulses
 		// At  2Vdiff, 39 pulses if the short detection is about to trigger
 
-		int currlim_cnt = (25-(vdiff>>10 /*/1024*/));
+//		int currlim_cnt = (25-(vdiff>>10 /*/1024*/));
+//		if(currlim_cnt < 2) currlim_cnt=2;
+
+		int currlim_cnt = 2*(25-(vdiff>>10 /*/1024*/));
 		if(currlim_cnt < 2) currlim_cnt=2;
 
-		if(short_cnt > 0 && vdiff < 10000)
+
+		if(vdiff < 19000)
 		{
-			// Load has increased, this isn't just a capacitive precharge.
 			// Vdiff is low enough (SOA has widened) so we can afford an extra
 			// boost compared to the above linear equation.
-
-			// This setting applies if the short detection is almost triggering near the
-			// end of precharge. Even if this happens once, the boost setting keeps applied
-			// till the end of precharge.
-			boost = 2*(10-(vdiff>>10));
+			int boost = (19-(vdiff>>10));
+			if(boost < 0 || boost > 19)
+				error(986);
+			currlim_cnt += boost;
 		}
 
-		currlim_cnt += boost;
+		if(vdiff < 12000)
+		{
+			// Vdiff is low enough (SOA has widened) so we can afford an extra
+			// boost compared to the above linear equation.
+			int boost = (12-(vdiff>>10));
+			if(boost < 0 || boost > 12)
+				error(986);
+			currlim_cnt += boost;
+		}
+
+		if(vdiff < 7000)
+		{
+			// Vdiff is low enough (SOA has widened) so we can afford an extra
+			// boost compared to the above linear equation.
+			int boost = (7-(vdiff>>10));
+			boost *= 2;
+			if(boost < 0 || boost > 14)
+				error(986);
+			currlim_cnt += boost;
+		}
+
+		
 
 		#ifdef PWRSWITCH_DBG_PRINT
 			currlim_cnts[i] = currlim_cnt;
@@ -574,32 +664,30 @@ int app_power_on()
 		for(int u=0; u<currlim_cnt; u++)
 		{
 			APP_CP_HI();
-			delay_us(20);
+			delay_us_accurate(20);
 			APP_CP_LO();
-			delay_us(20);
+			delay_us_accurate(20);
 		}
 
 		// Cycle ended. Enable desat protection again, which brings the gate quickly down.
 
 		APP_EN_DESAT_PROT();
 
-		if(vdiff < 1000)
-		{
-			#ifdef PWRSWITCH_DBG_PRINT
-				uart_print_string_blocking("\r\nDone precharging: ");
-				o_utoa16(i, printbuf); uart_print_string_blocking(printbuf);
-				uart_print_string_blocking("\r\n");
-			#endif
-			success = 1;
-			break;
-		}
 
-		delay_us(1000);
+		if(vdiff < 6000)
+			delay_us_accurate(200);
+		else if(vdiff < 10000)
+			delay_us_accurate(400);
+		else if(vdiff < 15000)
+			delay_us_accurate(600);
+		else
+			delay_us_accurate(800);
+
 	}
 	APP_EN_DESAT_PROT();
 
 	APP_CP_LO();
-	delay_us(10);
+	delay_us_accurate(10);
 
 	if(success)
 	{
@@ -646,8 +734,31 @@ int app_power_on()
 	return success?0:-1;
 }
 
+volatile int app_power_on_pending;
+
+int app_power_freerunning_fsm()
+{
+	if(app_power_on_pending)
+	{
+		app_power_on_pending = 0;
+		return app_power_on_internal();
+	}
+
+	return -3;
+}
+
+int app_power_on()
+{
+	if(app_power_enabled)
+		return -2;
+
+	app_power_on_pending = 1;
+	return 0;
+}
+
 void app_power_off()
 {
+	app_power_on_pending = 0;
 	APP_EN_DESAT_PROT();
 	DIS_IRQ();
 	app_power_enabled = 0;

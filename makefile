@@ -13,7 +13,7 @@ LD = arm-none-eabi-gcc
 SIZE = arm-none-eabi-size
 OBJCOPY = arm-none-eabi-objcopy
 
-CFLAGS = -I. -Os -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -Winline -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
+CFLAGS = -I. -fno-common -ffunction-sections -ffreestanding -fno-builtin -mthumb -mcpu=cortex-m7 -specs=nano.specs -Wall -Winline -fstack-usage -DSTM32H743xx -mfloat-abi=hard -mfpu=fpv5-d16 -fno-strict-aliasing -Wno-discarded-qualifiers
 
 CFLAGS += -DFIRMWARE
 
@@ -24,21 +24,25 @@ CFLAGS += -DREV2B
 
 
 # Hard-compiled application(s):
-#CFLAGS += -DEXT_VACUUM
+CFLAGS += -DEXT_VACUUM
+CFLAGS += -DVACUUM_REV2
+
+# Battery size
+CFLAGS += -DBATTERY_SIZE_L
 
 #Standard compilation
-OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o tof_process.o tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o 
-#ext_vacuum_boost.o
+OBJ_OS = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o  tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o ext_vacuum_boost.o
+OBJ_O3 = tof_process.o
 ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s
 
 
 #Calibration: box
-#OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_box.o ../robotboard2-fw-calibrator/tof_calibrator.o
+#OBJ_OS = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_box.o ../robotboard2-fw-calibrator/tof_calibrator.o
 #CFLAGS += -DCALIBRATOR
 #CFLAGS += -DCALIBRATOR_BOX
 
 #Calibration: wall
-#OBJ = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_wall.o ../robotboard2-fw-calibrator/tof_calibrator.o
+#OBJ_OS = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o sin_lut.o adcs.o pwrswitch.o charger.o bldc.o imu.o audio.o sbc_comm.o timebase.o backup_ram.o ../robotboard2-fw-calibrator/run_wall.o ../robotboard2-fw-calibrator/tof_calibrator.o
 #CFLAGS += -DCALIBRATOR
 #CFLAGS += -DCALIBRATOR_WALL
 
@@ -52,16 +56,22 @@ LDFLAGS = -mcpu=cortex-m7 -mthumb -nostartfiles -mfloat-abi=hard -mfpu=fpv5-d16 
 
 all: main.bin
 
-%.o: %.c
-	$(CC) -c $(CFLAGS) $*.c -o $*.o
-	$(CC) -MM $(CFLAGS) $*.c > $*.d
-	@mv -f $*.d $*.d.tmp
-	@sed -e 's|.*:|$*.o:|' < $*.d.tmp > $*.d
-	@sed -e 's/.*://' -e 's/\\$$//' < $*.d.tmp | fmt -1 | \
-	  sed -e 's/^ *//' -e 's/$$/:/' >> $*.d
-	@rm -f $*.d.tmp
+$(OBJ_OS): %.o: %.c
+	$(CC) -c -Os $(CFLAGS) $< -o $@
 
-main.bin: $(OBJ)
+$(OBJ_O3): %.o: %.c
+	$(CC) -c -O3 $(CFLAGS) $< -o $@
+
+#%.o: %.c
+#	$(CC) -c $(CFLAGS) $*.c -o $*.o
+#	$(CC) -MM $(CFLAGS) $*.c > $*.d
+#	@mv -f $*.d $*.d.tmp
+#	@sed -e 's|.*:|$*.o:|' < $*.d.tmp > $*.d
+#	@sed -e 's/.*://' -e 's/\\$$//' < $*.d.tmp | fmt -1 | \
+#	  sed -e 's/^ *//' -e 's/$$/:/' >> $*.d
+#	@rm -f $*.d.tmp
+
+main.bin: $(OBJ_OS) $(OBJ_O3)
 	$(LD) -Tlinker.ld $(LDFLAGS) -o main.elf $^ -lm
 	$(OBJCOPY) -Obinary --remove-section=.ARM* --remove-section=*bss* --remove-section=.settings main.elf main_full.bin
 	$(SIZE) main.elf

@@ -9,6 +9,7 @@
 #define LO(port, idx) do{(port)->BSRR = 1UL<<(16+idx);}while(0)
 
 #define IN(port, idx) ((port)->IDR & (1UL<<(idx)))
+#define IN_LOGICAL(port, idx) (!!((port)->IDR & (1UL<<(idx))))
 #define IN_SHIFTED(port, idx) (((port)->IDR & (1UL<<(idx)))>>idx)
 
 #define IO_TO_GPI(port, idx) do{ uint32_t _tmp_ = (port)->MODER; _tmp_ &= ~(0b11UL<<((idx)*2)); (port)->MODER = _tmp_; }while(0)

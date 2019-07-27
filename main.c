@@ -139,6 +139,7 @@ void dump_stack()
 
 }
 
+void error(int code) __attribute__ ((noreturn));
 void error(int code)
 {
 	__disable_irq();
@@ -173,19 +174,32 @@ void error(int code)
 		while(1);
 	}
 
-	int volume = 200;
+	int volume = 500;
 	while(1)
 	{
-		int tens = code/10;
-		int ones = code - tens*10;
+		int c = code;
+		int hundreds = c/100;
+		c -= hundreds*100;
+		int tens = c/10;
+		c -= tens*10;
+		int ones = c;
+
+		for(int i=0; i<hundreds; i++)
+		{
+			LED_ON();
+			beep_blocking(240, 2400, volume);
+			LED_OFF();
+			delay_ms(1200);
+		}
+
+		delay_ms(500);
 
 		for(int i=0; i<tens; i++)
 		{
 			LED_ON();
-			beep_blocking(150, 1000, volume);
-			delay_ms(300);
+			beep_blocking(120, 1200, volume);
 			LED_OFF();
-			delay_ms(500);
+			delay_ms(800);
 		}
 
 		delay_ms(500);
@@ -193,14 +207,13 @@ void error(int code)
 		for(int i=0; i<ones; i++)
 		{
 			LED_ON();
-			beep_blocking(50, 700, volume);
-			delay_ms(70);
+			beep_blocking(50, 500, volume);
 			LED_OFF();
-			delay_ms(400);
+			delay_ms(500);
 		}
 
 		delay_ms(1200);
-		volume=70;
+		volume=150;
 	}
 }
 
@@ -434,7 +447,7 @@ void main()
 		IO_TO_ALTFUNC(GPIOB, 15);
 		IO_SET_ALTFUNC(GPIOB, 14, 4);
 		IO_SET_ALTFUNC(GPIOB, 15, 4);
-		USART1->BRR = 100000000/460800; //115200;
+		USART1->BRR = 100000000/460800;
 		USART1->CR1 = 0UL<<5 /*RX interrupt*/ | 1UL<<3 /*TX ena*/ | 1UL<<2 /*RX ena*/ |  1UL /*USART ENA*/;
 
 	#endif
@@ -508,13 +521,10 @@ void main()
 
 	beep_blocking(100, 250, 1000);
 
-	delay_ms(1000);
 
 	BIG5V_ON();
 	IO_TO_GPO(GPIOF, 5); // 5Vbig, same for REV2A, REV2B
 
-
-	delay_ms(1000);
 
 
 	uart_print_string_blocking("No terse\r\n\r\n"); 
@@ -531,7 +541,7 @@ void main()
 	DBG_PR_VAR_U32(backup_ram.boot_cnt);
 	DBG_PR_VAR_U32(backup_ram.dummy);
 
-
+	init_power_outputs();
 
 	#ifndef CALIBRATOR
 		init_imu();
@@ -547,8 +557,6 @@ void main()
 
 	#endif
 
-
-	delay_ms(10);
 
 	init_cpu_profiler();
 

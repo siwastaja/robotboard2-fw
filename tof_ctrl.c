@@ -864,6 +864,7 @@ void block_epc_i2c(int err_idx)
 
 void init_sensors()
 {
+	// 3V3 line has too much capacitance to be turned on suddenly. Otherwise, the 3V3 line dips and the CPU brownouts.
 	for(int i=0; i<SOFTSTART_PERIOD_LEN/2; i++)
 	{
 		PLUS3V3_OFF();
@@ -953,25 +954,22 @@ void init_sensors()
 	}
 
 
-	delay_ms(50);
+	delay_ms(30);
 
 	PLUS10V_ON();
 
-	delay_ms(50);
+	delay_ms(30);
 
 	MINUS10V_ON();
 
-	delay_ms(50);
+	delay_ms(30);
 
 	RSTN_HIGH();
 
-
-	LEDSUP_ON();
-
-	uart_print_string_blocking("Power init done\r\n");
+	//uart_print_string_blocking("Power init done\r\n");
 	delay_ms(50);
 
-//	delay_ms(4000);
+	LEDSUP_ON();
 
 
 	epc_i2c_init();
@@ -1146,9 +1144,7 @@ void init_sensors()
 //		uart_print_string_blocking("single sensor init success\r\n");
 	}
 
-
-	delay_ms(50);
-
+	delay_ms(1);
 
 
 	dcmi_init();
@@ -1157,7 +1153,6 @@ void init_sensors()
 	// Any camera works for this
 
 	tof_mux_select(last_valid_idx);
-//	tof_mux_select(0);
 	delay_us(10);
 
 	{

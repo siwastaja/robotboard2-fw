@@ -693,7 +693,7 @@ void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 //#define ERR_INTEGRAL_MAX (10*256)
 
 #define ERR_INTEGRAL_MIN (-35*256)
-#define ERR_INTEGRAL_MAX (16*256)
+#define ERR_INTEGRAL_MAX (19*256)
 
 // 66.27% CPU
 // Changed pid_i and bit_p to fixed shifts:
@@ -1153,8 +1153,8 @@ void charger_test2()
 int combined_current_setpoint;
 int combined_max_output_current; // mA - use this to limit the output current to the batteries
 int combined_max_output_power; // mW - use this to limit power from the charger (remember to account for losses)
-//#define CV_VOLTAGE 25190
-#define CV_VOLTAGE 24500 // 88.3%
+#define CV_VOLTAGE (6*4150)
+//#define CV_VOLTAGE 24500 // 88.3%
 
 static volatile int was_running_cnt;
 
@@ -1219,12 +1219,16 @@ int charger_is_mounted()
 // * Updates battery_full to zero, if the battery isn't full anymore
 void charger_freerunning_fsm()
 {
+	static int prev_vin;
 	int vin = CHA_VIN_MEAS_TO_MV(adc1.s.cha_vin_meas);
 	int vbat = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
 	if(!charger_is_running())
 	{
-		if(vbat >= CV_VOLTAGE-600) // >4.1V per cell -> don't start
+		if(vbat >= CV_VOLTAGE-(6*80)) // too close to full -> don't start
 		{
+			battery_full = 1;
+			if(vin > 33000 && prev_vin < 10000)
+				beep(30, 1000, -800, 100);
 		}
 		else // Battery not full - allow starting
 		{
@@ -1232,14 +1236,19 @@ void charger_freerunning_fsm()
 			if(vin > 33000 && was_running_cnt == 0) // mounted to charger - actually try starting
 			{
 				combined_current_setpoint = 2000;
-				combined_max_output_power = 200000.0*0.93; // 186000
+				combined_max_output_power = 190000.0*0.93; // Normal 200W charger
 				combined_max_output_current = 20000;
 				start_phab(1);
 				beep(30, 1000, -800, 100);
 
 				if(vin > 42000)
 				{
-					combined_max_output_power = 400000.0*0.92;
+					// 500W fast charger
+					#ifdef BATTERY_SIZE_L
+						combined_max_output_power = 420000.0*0.92; 
+					#else
+						combined_max_output_power = 220000.0*0.92; 					
+					#endif
 				}
 
 				if(!charger_is_running())
@@ -1254,6 +1263,7 @@ void charger_freerunning_fsm()
 			}
 		}
 	}
+	prev_vin = vin;
 }
 
 void init_charger()

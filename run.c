@@ -24,12 +24,18 @@
 #include "micronavi.h"
 
 static const int intlen_mults[4] = {12, 6, 4, 3}; // with these, unit is always 0.6us.
-static int bubblegum = 1; // Temporary bodge to increase exposure times on two hand-soldered prototype sensors, which lack half of the LEDs
+
+// Temporary bodge to increase exposure times on two hand-soldered prototype sensors, which lack half of the LEDs. Only applies to the sole prototype of REV2A.
+static int bubblegum = 1;
+
 static int gen_data;
 
+// HDR accumulation images:
+static int16_t img20[TOF_XS*TOF_YS];
+static int16_t img31[TOF_XS*TOF_YS];
 
-static int16_t img20[3][TOF_XS*TOF_YS]; // __attribute__((section(".dtcm_bss")));
-static int16_t img31[3][TOF_XS*TOF_YS];
+static int16_t img20_lenscorr[TOF_XS*TOF_YS];
+static int16_t img31_lenscorr[TOF_XS*TOF_YS];
 
 static uint8_t lofreq_dist[TOF_XS*TOF_YS];
 
@@ -39,7 +45,7 @@ static uint16_t ampldist[TOF_XS*TOF_YS];
 
 uint8_t conv_bat_percent(int mv)
 {
-	int bat_percentage = (100*(mv-(3200*6)))/((4200-3200)*6);
+	int bat_percentage = (100*(mv-(3200*6)))/((4150-3200)*6);
 	if(bat_percentage < 0) bat_percentage = 0;
 	if(bat_percentage > 127) bat_percentage = 127;
 	return bat_percentage;
@@ -47,6 +53,7 @@ uint8_t conv_bat_percent(int mv)
 }
 
 epc_img_t mono_comp __attribute__((aligned(4)));
+epc_img_narrow_t mono_comp_narrow __attribute__((aligned(4)));
 epc_4dcs_t dcsa __attribute__((aligned(4)));
 epc_2dcs_t dcs2 __attribute__((aligned(4)));
 epc_4dcs_narrow_t dcsa_narrow __attribute__((aligned(4)));
@@ -171,31 +178,38 @@ void adjust()
 }
 
 /*
-	Takes in the latest chip temperature measurement.
-	Averages it (per sensor, keeps track of sensors internally) using an exponentially decaying running average
-	Returns the number of fine dll steps required, based on that average and sensor calibration parameters
+	These two functions:
+	Take in the latest chip temperature measurement.
+	Average it (per sensor, keeps track of sensors internally) using an exponentially decaying running average
+	Return the number of fine dll steps required, based on that average and sensor calibration parameters
 */
-static int filt_calc_dll_steps(int sidx, int32_t chiptemp)
-{
-	static int32_t chiptemp_flt_x256[N_SENSORS];
+static int32_t chiptemp_flt_x256[N_SENSORS];
 
+static void filt_temperature(int sidx, int32_t chiptemp)
+{
 	if(sidx < 0 || sidx >= N_SENSORS)
 		error(1234);
 
 	chiptemp_flt_x256[sidx] = (7*chiptemp_flt_x256[sidx] + (chiptemp<<8))>>3;
+}
 
+static int calc_dll_steps(int sidx, int freq)
+{
 	int32_t chiptemp_flt = chiptemp_flt_x256[sidx]>>8;
 
-	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp_flt)*tof_calibs[sidx]->fine_steps_per_temp[0])>>8;
+	int fine_steps = ((tof_calibs[sidx]->zerofine_temp-chiptemp_flt)*tof_calibs[sidx]->fine_steps_per_temp[freq])>>8;
 	if(fine_steps < 0) fine_steps = 0;
 	else if(fine_steps > 799) fine_steps = 799;
 
 	return fine_steps;
 }
 
+static int cnta = 0;
 
-static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow_avg_ampl_out)
+static void basic_set(int sidx, int* ssval_out, int* narrow_avg_ampl_out)
 {
+INIT_TOF_TS();
+
 	// Compensation BW + chiptemp
 	dcmi_crop_wide();
 	epc_greyscale(); block_epc_i2c(4);
@@ -213,16 +227,22 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 
 	int32_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
+	filt_temperature(sidx, chiptemp);
 
-	int fine_steps = filt_calc_dll_steps(sidx, chiptemp);
-	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
-
+/*
+	if(sidx==5)
+	{
+		uart_print_string_blocking("BASIC\r\n");
+		DBG_PR_VAR_I32(chiptemp);
+	}
+*/
 
 	#define SUPERSHORT_US 12
 
 	// SUPER SHORT WIDE
 	// Works as autoexposure basis - may work as a HDR short in the case where the autoexp would result in the shortest possible time.
 
+	epc_fine_dll_steps(calc_dll_steps(sidx, 0)); block_epc_i2c(4);
 	epc_4dcs(); block_epc_i2c(4);
 	delay_ms(1);
 	epc_ena_wide_leds(); block_epc_i2c(4);
@@ -238,9 +258,17 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
-	conv_4dcs_to_2dcs(img20[0], img31[0], &dcsa, &mono_comp);
+TOF_TS(0); // 13.5ms
 
-	int supershort_avg_ampl_x256 = calc_avg_ampl_x256(img20[0], img31[0]);
+	conv_4dcs_to_2dcs_wide(img20, img31, &dcsa, mono_comp.img);
+
+TOF_TS(1); // 1.8ms
+
+	int supershort_avg_ampl_x256 = calc_avg_ampl_x256(img20, img31);
+
+TOF_TS(2); // 0.7ms
+
+	if(ssval_out) *ssval_out = supershort_avg_ampl_x256;;
 
 	IFDBG
 	{
@@ -248,38 +276,37 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 //		DBG_PR_VAR_I32(base_exp);
 	}
 
-	int ss_saturated = (int)supershort_avg_ampl_x256;
+	int ss_saturated = supershort_avg_ampl_x256;
 	if(ss_saturated > 400) ss_saturated = 400;
 	
-	int mid_exp = SUPERSHORT_US + sq(400 - ss_saturated)/888; // max exposures: 192, 3072
+	// min exposures: 12, 84
+	// max exposures: 332, 2324
+	// 7230mm of range measured - medium-light wood-color (approx. 40-50%?) door can be seen at 2324us int.time
+	// This is more than enough for the basic set. In a typical middle-sized apartment, sees all rooms physically possible
+	// at the same time.
 
-	if(mid_exp < 12) mid_exp = 12;
+	int mid_exp = SUPERSHORT_US + sq(400 - ss_saturated)/500; 
 
-	// mid exp 24..192
-	// long exp 384..3072
-	// first hdr factor 2..16
-	// second hdr factor 16
 
-	// Make mid_exp integer multiple of SUPERSHORT
-	mid_exp /= SUPERSHORT_US;
-	int first_hdr_factor = mid_exp;
-	mid_exp *= SUPERSHORT_US;
+//	DBG_PR_VAR_I32(sidx);
+//	DBG_PR_VAR_I32(mid_exp);
 
-	int long_exp = mid_exp*16;
-	if(mid_exp_out) *mid_exp_out = mid_exp;
-	if(long_exp_out) *long_exp_out = long_exp;
+
+	int long_exp = mid_exp*HDR_FACTOR;
 
 	IFDBG
 	{
 		DBG_PR_VAR_I32(sidx);
 		DBG_PR_VAR_I32(supershort_avg_ampl_x256);
-		DBG_PR_VAR_I32(mid_exp);
+//		DBG_PR_VAR_I32(mid_exp);
 		DBG_PR_VAR_I32(long_exp);
 	}
 
 	// 6.66MHz 2dcs for dealiasing - same inttime as the long HDR exp
 	// (Going from 20MHz to 6.66MHz gives amplitude gain of at least 2, enough to compensate
 	// for halving the amplitude from using 2DCS mode)
+
+	epc_fine_dll_steps(calc_dll_steps(sidx, 2)); block_epc_i2c(4);
 
 	epc_2dcs(); block_epc_i2c(4);
 	epc_clk_div(2); block_epc_i2c(4);
@@ -291,21 +318,19 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	// Do something here
 
 
-		// Average amplitude on narrow region on the wide mid-exp data is useful for 
-		// autoexposing the narrow long set later.
-		// May not be needed - do not calculate if NULL.
-		if(narrow_avg_ampl_out)
-			*narrow_avg_ampl_out = calc_avg_ampl_x256_nar_region_on_wide(img20[0], img31[0]);
-
 		copy_cal_to_shadow(sidx, 2);
 
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
+TOF_TS(3); //8.6ms
+
 	adjust();
 
 
 	// HDR mid exp
+
+	epc_fine_dll_steps(calc_dll_steps(sidx, 0)); block_epc_i2c(4);
 
 	epc_clk_div(0); block_epc_i2c(4);
 	epc_intlen(intlen_mults[0], INTUS(mid_exp*bubblegum)); block_epc_i2c(4);
@@ -316,7 +341,7 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	adjust();
 
 	// Do something here - shadow cal set = 2
-		compensated_2dcs_6mhz_dist_masked(lofreq_dist, &dcs2, &mono_comp);
+		compensated_2dcs_6mhz_dist_masked(lofreq_dist, &dcs2, mono_comp.img);
 
 		copy_cal_to_shadow(sidx, 0);
 
@@ -329,7 +354,12 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
-	conv_4dcs_to_2dcs(img20[1], img31[1], &dcsa, NULL);
+TOF_TS(4); //9.5ms
+
+	// Clears img20 and img31, collects the first (shorter) HDR exposure there
+	conv_4dcs_to_2dcs_hdr0_wide(img20, img31, &dcsa, mono_comp.img);
+
+TOF_TS(5); //2.6ms
 
 	// HDR long exp
 
@@ -341,16 +371,53 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 
 	// Do something here
 
+		// Average amplitude on narrow region on the wide mid-exp data is useful for 
+		// autoexposing the narrow long set later.
+		// May not be needed - do not calculate if NULL.
+		// Normalize so that is independent of exp. time
+		if(narrow_avg_ampl_out)
+			*narrow_avg_ampl_out = (256*calc_avg_ampl_x256_nar_region_on_wide(img20, img31))/mid_exp;
+
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
+TOF_TS(6); //16.3ms
 
-	conv_4dcs_to_2dcs(img20[2], img31[2], &dcsa, NULL);
+	// Adds the second (longer) HDR exposure on the top of the existing exposure, replacing data whenever possible (not overexposed):
+	conv_4dcs_to_2dcs_hdr1_wide(img20, img31, &dcsa, mono_comp.img);
 
-	compensated_3hdr_tof_calc_ampldist_flarecomp(0, ampldist, 
-		img20[0], img31[0], img20[1], img31[1], img20[2], img31[2], first_hdr_factor, 16, lofreq_dist, 0);
+TOF_TS(7); //2.3ms
+
+//	if(cnta < 5)
+	{
+		// Deblur/deflare based on uniquely calibrated lens models:
+		run_lens_model(img20, img20_lenscorr, tof_calibs[sidx]);
+		run_lens_model(img31, img31_lenscorr, tof_calibs[sidx]);
+
+TOF_TS(8); //20.0ms
+
+		// Remove data that needed high amounts of correction - it's likely too wrong, despite correction:
+		mask_highly_corrected(0, img20_lenscorr, img31_lenscorr, img20, img31);
+
+
+TOF_TS(9); //1.5ms
+
+	}
+/*
+	else
+	{
+		memcpy(img20_lenscorr, img20, sizeof img20_lenscorr);
+		memcpy(img31_lenscorr, img31, sizeof img31_lenscorr);
+	}
+*/
+	// Dealias and calculate final amplitude&distance map:
+	compensated_tof_calc_ampldist(0, ampldist, img20_lenscorr, img31_lenscorr, lofreq_dist, 0, long_exp);
+
+TOF_TS(10); //8.3ms
 
 
 	tof_to_obstacle_avoidance(ampldist, sidx);
+
+TOF_TS(11); //0.8ms
 
 	if(tof_slam_set)
 	{
@@ -358,12 +425,9 @@ static void basic_set(int sidx, int* mid_exp_out, int* long_exp_out, int* narrow
 	}
 
 	adjust();
-
-
 }
 
-
-static void long_wide_set(int sidx, int basic_long_exp)
+static void long_wide_set(int sidx, int ss_val)
 {
 	// Compensation BW + chiptemp
 	// We could reuse the BW from basic set, but that would be too old now (false compensation due to motion)
@@ -383,27 +447,45 @@ static void long_wide_set(int sidx, int basic_long_exp)
 
 	int32_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
-
-	int fine_steps = filt_calc_dll_steps(sidx, chiptemp);
-	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
+	filt_temperature(sidx, chiptemp);
 
 
 	// Do the longer-range wide. Use the autoexposure from before, but allow
-	// *4 exposure (*2 from inttime, *2 from using lower frequency), even if this
-	// causes increased error due to stray / multipath. Using a fixed long value would
-	// go totally overboard, but *4 (*2 the distance) seems a good compromise.
-	// Limit the maximum to tint=4.4ms, however; we have limited budget for time and motion blur.
+	// *3 exposure (*1.5 from inttime, *2.0 gained from using lower frequency), even if this
+	// causes increased error due to stray / multipath.
 
+	int ss_saturated = ss_val;
+	if(ss_saturated > 400) ss_saturated = 400;
 
-	int short_exp = (basic_long_exp * 2) / 16;
-	if(short_exp > 4400/16) short_exp = 4400/16;
+	int ss_saturated2 = ss_val;
+	if(ss_saturated2 > 100) ss_saturated2 = 100;
+	
+	// min exposures: 12, 84
+	// max exposures would be without the saturated2 term: 492, 3444
+	// max exposures with the saturated2 term: 648, 4536
+	// 7230mm of range measured - medium-light wood-color (approx. 40-50%?) door can be seen at 2324us int.time
+	// This is more than enough for the basic set. In a typical middle-sized apartment, sees all rooms physically possible
+	// at the same time.
 
-	int long_exp = short_exp * 16;
+	int short_exp = SUPERSHORT_US + sq(400 - ss_saturated)/333 + sq(100 - ss_saturated2)/64;
+
+	int long_exp = short_exp * HDR_FACTOR;
 
 	int dealias_exp = (long_exp*19)/10;
 
+	IFDBG
+	{
+		DBG_PR_VAR_I32(sidx);
+		DBG_PR_VAR_I32(long_exp);
+		DBG_PR_VAR_I32(dealias_exp);
+//		DBG_PR_VAR_I32(mid_exp);
+//		DBG_PR_VAR_I32(long_exp);
+	}
+
 
 	// 6.66MHz 2dcs dealias wide
+
+	epc_fine_dll_steps(calc_dll_steps(sidx, 2)); block_epc_i2c(4);
 
 	epc_2dcs(); block_epc_i2c(4);
 	delay_ms(1);
@@ -425,15 +507,17 @@ static void long_wide_set(int sidx, int basic_long_exp)
 
 	// 10MHz wide short exposure
 
+	epc_fine_dll_steps(calc_dll_steps(sidx, 1)); block_epc_i2c(4);
+
 	epc_4dcs(); block_epc_i2c(4);
 	epc_clk_div(1); block_epc_i2c(4);
-	epc_intlen(intlen_mults[1], INTUS(short_exp)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[1], INTUS(short_exp*bubblegum)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
 
 	// Do something here:
-		compensated_2dcs_6mhz_dist_masked(lofreq_dist, &dcs2, &mono_comp);
+		compensated_2dcs_6mhz_dist_masked(lofreq_dist, &dcs2, mono_comp.img);
 
 		copy_cal_to_shadow(sidx, 1);
 
@@ -448,12 +532,13 @@ static void long_wide_set(int sidx, int basic_long_exp)
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
-	conv_4dcs_to_2dcs(img20[0], img31[0], &dcsa, NULL);
+	// Clears img20 and img31, collects the first (shorter) HDR exposure there
+	conv_4dcs_to_2dcs_hdr0_wide(img20, img31, &dcsa, mono_comp.img);
 
 
 	// 10MHz wide long exposure
 
-	epc_intlen(intlen_mults[1], INTUS(long_exp)); block_epc_i2c(4);
+	epc_intlen(intlen_mults[1], INTUS(long_exp*bubblegum)); block_epc_i2c(4);
 
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
@@ -463,10 +548,22 @@ static void long_wide_set(int sidx, int basic_long_exp)
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
-	conv_4dcs_to_2dcs(img20[1], img31[1], &dcsa, NULL);
+	// Adds the second (longer) HDR exposure on the top of the existing exposure, replacing data whenever possible (not overexposed):
+	conv_4dcs_to_2dcs_hdr1_wide(img20, img31, &dcsa, mono_comp.img);
 
-	compensated_2hdr_tof_calc_ampldist_flarecomp(0, ampldist, 
-		img20[0], img31[0], img20[1], img31[1], 16, lofreq_dist, 1);
+	#if 1
+		// Deblur/deflare based on uniquely calibrated lens models:
+		run_lens_model(img20, img20_lenscorr, tof_calibs[sidx]);
+		run_lens_model(img31, img31_lenscorr, tof_calibs[sidx]);
+
+		// Remove data that needed high amounts of correction - it's likely too wrong, despite correction:
+		mask_highly_corrected(0, img20_lenscorr, img31_lenscorr, img20, img31);
+	#else
+		memcpy(img20_lenscorr, img20, sizeof img20_lenscorr);
+		memcpy(img31_lenscorr, img31, sizeof img31_lenscorr);
+	#endif
+	// Dealias and calculate final amplitude&distance map:
+	compensated_tof_calc_ampldist(0, ampldist, img20_lenscorr, img31_lenscorr, lofreq_dist, 1, long_exp*2);
 
 	if(tof_slam_set)
 	{
@@ -480,16 +577,55 @@ static void long_wide_set(int sidx, int basic_long_exp)
 
 static void long_narrow_set(int sidx, int avg_ampl)
 {
+
+	// Decide the exposure time based on the average amplitude
+	// calculated for us by the basic_set. This is calculated
+	// from the narrow region, even though the data source is the supershort wide.
+	// Use similar formula:
+
+
+
+	int ss_saturated = avg_ampl;
+//	if(ss_saturated < 40) ss_saturated = 40;
+//	else if(ss_saturated > 1240) ss_saturated = 1240;
+//	else if(ss_saturated > 340) ss_saturated = 340;
+	
+	// min exposures: 12, 84
+	// max exposures: 612, 4284
+
+//	int short_exp = SUPERSHORT_US + sqrt(1200*(1240 - ss_saturated))/2;
+//	int short_exp = SUPERSHORT_US + ((300 - ss_saturated))*2;
+//	int short_exp = SUPERSHORT_US + sq((340 - ss_saturated))/(150);
+
+	if(avg_ampl < 1) avg_ampl = 1;
+	int short_exp = 24000 / avg_ampl; // 600us at amplitude 40
+
+	if(short_exp < SUPERSHORT_US) short_exp = SUPERSHORT_US;
+	else if(short_exp > 800) short_exp = 800;  // long inttime max 5600us
+
+	if(short_exp < 100) // TODO: take a 20MHz accuracy-increasing set instead.
+		return;
+
+	int long_exp = short_exp * HDR_FACTOR;
+
+	DBG_PR_VAR_I32(sidx);
+	DBG_PR_VAR_I32(avg_ampl);
+	DBG_PR_VAR_I32(short_exp);
+
+	int dealias_exp = (long_exp*19)/10;
+
+
 	// Compensation BW + chiptemp
 	// We could reuse the BW from basic set, but that would be too old now (false compensation due to motion)
-	dcmi_crop_wide();
+	// Even better, we can take the compensation BW with the same narrow cropping, so indexing it is simplified.
+	dcmi_crop_narrow();
 	epc_greyscale(); block_epc_i2c(4);
 	delay_ms(1);
 	epc_dis_leds(); block_epc_i2c(4);
 	epc_clk_div(1); block_epc_i2c(4);
 	epc_intlen(intlen_mults[1], INTUS(COMP_AMBIENT_INTLEN_US)); block_epc_i2c(4);
 	epc_temperature_magic_mode(sidx);
-	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
+	dcmi_start_dma(&mono_comp_narrow, SIZEOF_MONO_NARROW);
 	epc_trig();
 
 	// Do something here:
@@ -499,28 +635,16 @@ static void long_narrow_set(int sidx, int avg_ampl)
 
 	int32_t chiptemp = epc_read_temperature(sidx);
 	epc_temperature_magic_mode_off(sidx);
-
-	int fine_steps = filt_calc_dll_steps(sidx, chiptemp);
-	epc_fine_dll_steps(fine_steps); block_epc_i2c(4);
-
-
-	int avg_ampl_saturated = avg_ampl;
-	if(avg_ampl_saturated > 800) avg_ampl_saturated = 800;
-	
-	int long_exp = 200 + sq(800 - avg_ampl_saturated)/168; // max exposure: 4009
-
-	int short_exp = long_exp/16; // [200..4009] -> [12..250]
-
-	long_exp = short_exp*16; // [200..4009] -> [192..4000]
-
-	int dealias_exp = (long_exp*19)/10; // [364..7600]
+	filt_temperature(sidx, chiptemp);
 
 
 	// 6.66MHz 2dcs dealias narrow
 
+	epc_fine_dll_steps(calc_dll_steps(sidx, 2)); block_epc_i2c(4);
+
 	epc_2dcs(); block_epc_i2c(4);
 	delay_ms(1);
-	epc_ena_narrow_leds(); dcmi_crop_narrow(); block_epc_i2c(4);
+	epc_ena_narrow_leds(); block_epc_i2c(4);
 
 	epc_clk_div(2); block_epc_i2c(4);
 	epc_intlen(intlen_mults[2], INTUS(dealias_exp*bubblegum)); block_epc_i2c(4);
@@ -530,12 +654,14 @@ static void long_narrow_set(int sidx, int avg_ampl)
 
 	// Do something here:
 
-		copy_cal_to_shadow(sidx, 2);
+		copy_cal_to_shadow_narrow(sidx, 2);
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 
 	// 10MHz narrow HDR short
+
+	epc_fine_dll_steps(calc_dll_steps(sidx, 1)); block_epc_i2c(4);
 
 	epc_4dcs(); block_epc_i2c(4);
 	epc_clk_div(1); block_epc_i2c(4);
@@ -546,9 +672,9 @@ static void long_narrow_set(int sidx, int avg_ampl)
 
 	// Do something here:
 
-		compensated_2dcs_6mhz_dist_masked_narrow(lofreq_dist, &dcs2_narrow, &mono_comp);
+		compensated_2dcs_6mhz_dist_masked_narrow(lofreq_dist, &dcs2_narrow, mono_comp_narrow.img);
 
-		copy_cal_to_shadow(sidx, 1);
+		copy_cal_to_shadow_narrow(sidx, 1);
 
 		// Take the pose here
 		if(tof_slam_set)
@@ -560,7 +686,8 @@ static void long_narrow_set(int sidx, int avg_ampl)
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 
-	conv_4dcs_to_2dcs_narrow(img20[0], img31[0], &dcsa_narrow, &mono_comp);
+	// Clears img20 and img31, collects the first (shorter) HDR exposure there
+	conv_4dcs_to_2dcs_hdr0_narrow(img20, img31, &dcsa_narrow, mono_comp_narrow.img);
 
 
 	// 10MHz narrow HDR long
@@ -577,12 +704,30 @@ static void long_narrow_set(int sidx, int avg_ampl)
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 
-	conv_4dcs_to_2dcs_narrow(img20[1], img31[1], &dcsa_narrow, &mono_comp);
+	// Adds the second (longer) HDR exposure on the top of the existing exposure, replacing data whenever possible (not overexposed):
+	conv_4dcs_to_2dcs_hdr1_narrow(img20, img31, &dcsa_narrow, mono_comp_narrow.img);
 
+	if(1) // cnta>7)
+	{
+		// Deblur/deflare based on uniquely calibrated lens models:
+		run_lens_model_narrow(img20, img20_lenscorr, tof_calibs[sidx]);
+		run_lens_model_narrow(img31, img31_lenscorr, tof_calibs[sidx]);
 
+		// Remove data that needed high amounts of correction - it's likely too wrong, despite correction:
+		mask_highly_corrected(1, img20_lenscorr, img31_lenscorr, img20, img31);
+	}
+	else
+	{
 
-	compensated_2hdr_tof_calc_ampldist_flarecomp(1, ampldist, 
-		img20[0], img31[0], img20[1], img31[1], 16, lofreq_dist, 1);
+		memcpy(img20_lenscorr, img20, sizeof img20_lenscorr);
+		memcpy(img31_lenscorr, img31, sizeof img31_lenscorr);
+	}
+
+	remove_narrow_edgevals(img20_lenscorr, img31_lenscorr);
+
+	// Dealias and calculate final amplitude&distance map:
+	compensated_tof_calc_ampldist(1, ampldist, img20_lenscorr, img31_lenscorr, lofreq_dist, 1, 6*long_exp);
+
 
 	if(tof_slam_set)
 	{
@@ -591,11 +736,7 @@ static void long_narrow_set(int sidx, int avg_ampl)
 	}
 
 }
-
-
-
-
-
+#if 0
 static void obstacle_set(int sidx)
 {
 	// Compensation BW + chiptemp
@@ -617,7 +758,7 @@ static void obstacle_set(int sidx)
 
 
 	#define OBSTACLE_SHORT_US 25
-	#define OBSTACLE_LONG_US  (OBSTACLE_SHORT_US*16)
+	#define OBSTACLE_LONG_US  (OBSTACLE_SHORT_US*HDR_FACTOR)
 
 	// HDR short exp
 
@@ -635,7 +776,7 @@ static void obstacle_set(int sidx)
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
-	conv_4dcs_to_2dcs(img20[0], img31[0], &dcsa, NULL);
+	conv_4dcs_to_2dcs(img20, img31, &dcsa, comp_mono.img);
 
 	// HDR long exp
 
@@ -659,8 +800,7 @@ static void obstacle_set(int sidx)
 
 	tof_to_obstacle_avoidance(ampldist, sidx);
 }
-
-
+#endif
 
 
 
@@ -685,10 +825,18 @@ int32_t latency_targets[N_SENSORS] =
 };
 
 
-void run_cycle()  __attribute__((section(".text_itcm")));
 void run_cycle()
 {
+	// Checks if charger is mounted, starts charger (blocking, a few milliseconds)
 	charger_freerunning_fsm();
+	// Checks if application power on is requested (by app_power_on()), runs the turn-on procedure (which is blocking, a few tens of milliseconds)
+	app_power_freerunning_fsm();
+
+	#ifdef VACUUM_APP
+		extern volatile int drive_is_rotating; // true whenever the robot is correcting a big angular error, enough to prevent linear motion, i.e., rotating in its place
+		ext_vacuum_freerunning_fsm(drive_is_rotating /*temporary rise*/);
+	#endif
+
 
 	for(int i=0; i<10; i++)
 	{
@@ -775,9 +923,15 @@ void run_cycle()
 
 	static int basic_sidx = 0;
 
-	#define N_LONG_SLOTS 3
-	static int wid_long_sidxs[N_LONG_SLOTS] = {0, 3, 6};
-	static int nar_long_sidxs[N_LONG_SLOTS] = {1, 4, 7};
+	#if 0
+		#define N_LONG_SLOTS 3
+		static int wid_long_sidxs[N_LONG_SLOTS] = {0, 3, 6};
+		static int nar_long_sidxs[N_LONG_SLOTS] = {1, 4, 7};
+	#else
+		#define N_LONG_SLOTS 5
+		static int wid_long_sidxs[N_LONG_SLOTS] = {0, 2, 4, 6, 8};
+		static int nar_long_sidxs[N_LONG_SLOTS] = {1, 3, 5, 7, 9};
+	#endif
 
 	// 0 3 6,   1 4 7,   2 5 8,   3 6 9,   4 7 0,   5 8 1,   6 9 2,   7 0 3,   8 1 4,   9 2 5, ...
 	// 1 4 7,   2 5 8,   3 6 9,   4 7 0,   5 8 1 ,  6 9 2,   7 0 3,   8 1 4,   9 2 5, ...
@@ -817,15 +971,17 @@ void run_cycle()
 
 	int take_wid_long = 0;
 	int take_nar_long = 0;
-#if 0
-	for(int i=0; i<N_LONG_SLOTS; i++)
-	{
-		if(basic_sidx == wid_long_sidxs[i])
-			take_wid_long = 1;
-		if(basic_sidx == nar_long_sidxs[i])
-			take_nar_long = 1;
-	}
-#endif
+
+	#if 1
+		for(int i=0; i<N_LONG_SLOTS; i++)
+		{
+//			if(basic_sidx == wid_long_sidxs[i])
+//				take_wid_long = 1;
+			if(basic_sidx == nar_long_sidxs[i])
+				take_nar_long = 1;
+		}
+	#endif
+
 	if(take_wid_long && take_nar_long)
 		error(573);
 
@@ -857,16 +1013,27 @@ void run_cycle()
 	}
 
 
-	int long_exp;
+	int ssval = 0;
 	int narrow_avg_ampl;
 
 
-	basic_set(basic_sidx, NULL, &long_exp, take_nar_long?(&narrow_avg_ampl):NULL);
+	if(basic_sidx == 9)
+	{
+		cnta++;
+
+		if(cnta == 10)
+		{
+			cnta = 0;
+		}
+	}
+
+
+	basic_set(basic_sidx, &ssval, take_nar_long?(&narrow_avg_ampl):NULL);
 	latest_timestamps[basic_sidx] = cnt_100us;
 
 	if(take_wid_long)
 	{
-		long_wide_set(basic_sidx, long_exp);
+		long_wide_set(basic_sidx, ssval);
 
 	}
 
@@ -965,7 +1132,7 @@ void run_cycle()
 				else
 					bubblegum = 1;
 			#endif
-			obstacle_set(obst_sidx);
+//			obstacle_set(obst_sidx);
 			latest_timestamps[obst_sidx] = cnt_100us;
 
 

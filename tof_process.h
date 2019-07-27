@@ -77,6 +77,7 @@ typedef struct __attribute__((packed))
 #define MAX_DISTVAL (4095)
 
 #define SIZEOF_MONO (sizeof(epc_img_t))
+#define SIZEOF_MONO_NARROW (sizeof(epc_img_narrow_t))
 #define SIZEOF_2DCS (sizeof(epc_2dcs_t))
 #define SIZEOF_2DCS_NARROW (sizeof(epc_2dcs_narrow_t))
 #define SIZEOF_4DCS (sizeof(epc_4dcs_t))
@@ -85,30 +86,35 @@ typedef struct __attribute__((packed))
 
 
 void copy_cal_to_shadow(int sid, int f);
+void copy_cal_to_shadow_narrow(int sid, int f);
 
 
-void conv_4dcs_to_2dcs(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_t *in, epc_img_t *bwimg);
-void conv_4dcs_to_2dcs_narrow(int16_t *dcs20_out, int16_t *dcs31_out, epc_4dcs_narrow_t *in, epc_img_t *bwimg);
-int calc_avg_ampl_x256(int16_t* dcs20_in, int16_t* dcs31_in);
-int calc_avg_ampl_x256_narrow(int16_t* dcs20_in, int16_t* dcs31_in);
-int calc_avg_ampl_x256_nar_region_on_wide(int16_t* dcs20_in, int16_t* dcs31_in);
+// bwimg is in raw EPC format (shifted and masked inside the function)
+void conv_4dcs_to_2dcs_wide     (int16_t* restrict dcs20_out, int16_t* restrict dcs31_out, epc_4dcs_t* restrict in, uint16_t* restrict bwimg);
+void conv_4dcs_to_2dcs_hdr0_wide(int16_t* restrict dcs20_out, int16_t* restrict dcs31_out, epc_4dcs_t* restrict in, uint16_t* restrict bwimg);
+void conv_4dcs_to_2dcs_hdr1_wide(int16_t* restrict dcs20_out, int16_t* restrict dcs31_out, epc_4dcs_t* restrict in, uint16_t* restrict bwimg);
+
+void conv_4dcs_to_2dcs_narrow     (int16_t* restrict dcs20_out, int16_t* restrict dcs31_out, epc_4dcs_narrow_t* restrict in, uint16_t* restrict bwimg);
+void conv_4dcs_to_2dcs_hdr0_narrow(int16_t* restrict dcs20_out, int16_t* restrict dcs31_out, epc_4dcs_narrow_t* restrict in, uint16_t* restrict bwimg);
+void conv_4dcs_to_2dcs_hdr1_narrow(int16_t* restrict dcs20_out, int16_t* restrict dcs31_out, epc_4dcs_narrow_t* restrict in, uint16_t* restrict bwimg);
 
 
-void compensated_2dcs_6mhz_dist_masked(uint8_t *dist_out, epc_2dcs_t *in, epc_img_t *bwimg);
-void compensated_2dcs_6mhz_dist_masked_narrow(uint8_t *dist_out, epc_2dcs_narrow_t *in, epc_img_t *bwimg);
+int calc_avg_ampl_x256(int16_t* restrict dcs20_in, int16_t* restrict dcs31_in);
+int calc_avg_ampl_x256_narrow(int16_t* restrict dcs20_in, int16_t* restrict dcs31_in);
+int calc_avg_ampl_x256_nar_region_on_wide(int16_t* restrict dcs20_in, int16_t* restrict dcs31_in);
 
 
-
-void compensated_2hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor, uint8_t* dealias_dist, int freq);
-void compensated_3hdr_tof_calc_ampldist_flarecomp(int is_narrow, uint16_t *ampldist_out, int16_t* dcs20_lo_in, int16_t* dcs31_lo_in, int16_t* dcs20_mid_in, int16_t* dcs31_mid_in, int16_t* dcs20_hi_in, int16_t* dcs31_hi_in, int hdr_factor_lomid, int hdr_factor_midhi, uint8_t* dealias_dist, int freq);
-
-void dealias_20mhz(uint16_t *hf_dist, uint16_t *lf_dist);
-void dealias_20mhz_narrow(uint16_t *hf_dist, uint16_t *lf_dist);
-void dealias_20mhz_narrow_from_wide_lf(uint16_t *hf_dist, uint16_t *lf_dist);
-void dealias_10mhz(uint16_t *hf_dist, uint16_t *lf_dist);
-void dealias_10mhz_narrow(uint16_t *hf_dist, uint16_t *lf_dist);
+void compensated_2dcs_6mhz_dist_masked(uint8_t *dist_out, epc_2dcs_t* restrict in, uint16_t* restrict bwimg);
+void compensated_2dcs_6mhz_dist_masked_narrow(uint8_t *dist_out, epc_2dcs_narrow_t* restrict in, uint16_t* restrict bwimg);
 
 
+// The latest thing as of now, dealing with 16-bit images:
+void compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldist_out, int16_t* restrict dcs20_in, int16_t* restrict dcs31_in, uint8_t* restrict dealias_dist, int freq, int inttime_norm_number);
+
+void remove_narrow_edgevals(int16_t* restrict img20, int16_t* restrict img31);
+
+
+void mask_highly_corrected(int is_narrow, int16_t* restrict img20_lenscorr, int16_t* restrict img31_lenscorr, int16_t* restrict img20, int16_t* restrict img31);
 
 /*
 	TOF calibration data is the dominating source of flash storage - if we followed the Espros'
@@ -180,8 +186,10 @@ typedef struct __attribute__((packed))
 
 		B/W image is taken with a fixed integration time specifically designed for this use only.
 
-		dcs31_fix = (dcs3-dcs1) - (bw*corr)>>4
-		dcs20_fix = (dcs2-dcs0) - (bw*corr)>>4
+		dcs31_fix = (dcs3-dcs1) + (bw*corr)>>4
+		dcs20_fix = (dcs2-dcs0) + (bw*corr)>>4
+
+		WARNING: copy_cal_to_shadow_narrow() assumes this is the last element on this struct.
 	*/
 
 	uint8_t amb_corr[TOF_XS*TOF_YS/2];
@@ -205,6 +213,7 @@ typedef struct __attribute__((packed))
 	uint8_t  nar_offsets_2dcs[TOF_XS_NARROW*TOF_YS_NARROW/2]; // 4 bits, unit 32mm
 
 	// Ambient correction works the same way as in hifreq_t
+	// WARNING: copy_cal_to_shadow_narrow() assumes this is the last element on this struct.
 	uint8_t amb_corr[TOF_XS*TOF_YS/2];
 
 } chipcal_lofreq_t;
@@ -267,14 +276,23 @@ typedef struct __attribute__((packed))
 	c: int8
 */
 
-#define BLUR_PARAM_D(x_) ((x_).d_a >> 10)
 #define BLUR_PARAM_A(x_) ((x_).d_a & 0x3ff)
+#define BLUR_PARAM_B(x_) ((x_).b)
+#define BLUR_PARAM_C(x_) ((x_).c)
+#define BLUR_PARAM_D(x_) ((x_).d_a >> 10)
+
 typedef struct __attribute__((packed))
 {
 	uint16_t d_a; // Access macros above
 	int8_t b;
 	int8_t c;
 } mcu_blur_params_t;
+
+#define TC(x_, y_) ((y_)*TOF_XS+(x_))
+
+// Give index to narrow image, from full image x,y coordinates
+// Beware of overindexing. Must be within the narrow image area.
+#define TNC(x_, y_) (((y_)-TOF_NARROW_Y_START)*TOF_XS_NARROW+((x_)-TOF_NARROW_X_START))
 
 typedef struct __attribute__((packed))
 {
@@ -360,13 +378,13 @@ typedef struct __attribute__((packed))
 
 #define RESICAL_IN_XS 15
 #define RESICAL_IN_YS 7
+#define RESICAL_OUT_RATIO 10
 #define RESICAL_OUT_XS 16
 #define RESICAL_OUT_YS 6
 #define RESICAL_DIVIDER 32768
+
 #define GET_RESICAL_COEFF(cal_, ix_, iy_, ox_, oy_) ((cal_).resical_coeffs[(iy_)*RESICAL_IN_XS+(ix_)][(oy_)*RESICAL_OUT_XS+(ox_)])
 
-
-#define TC(x_, y_) ((y_)*TOF_XS+(x_))
 
 	uint8_t resical_bounds_x[RESICAL_IN_XS+1];
 	uint8_t resical_bounds_y[RESICAL_IN_YS+1];
@@ -392,5 +410,10 @@ void verify_calibration();
 void tof_enable_chafind_datapoints();
 void tof_disable_chafind_datapoints();
 
-#define HDR_FACTOR 16
+// 7 is maximum possible, so that the 13-bit (dcs2-dcs0) or (dcs3-dcs1) data range (approx -4096..+4096), multiplied
+// by this factor, still fits int16, and leaves margin for image processing.
+#define HDR_FACTOR 7
+
+void run_lens_model(int16_t* in, int16_t* out, tof_calib_t* p_tof_calib);
+void run_lens_model_narrow(int16_t* in, int16_t* out, tof_calib_t* p_tof_calib);
 

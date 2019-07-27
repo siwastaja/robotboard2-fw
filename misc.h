@@ -5,7 +5,7 @@
 
 #pragma once
 
-void error(int code);
+void error(int code) __attribute__ ((noreturn));
 void delay_us(uint32_t i) __attribute__((section(".text_itcm")));
 void delay_tenth_us(uint32_t i) __attribute__((section(".text_itcm")));
 void delay_ms(uint32_t i) __attribute__((section(".text_itcm")));
@@ -68,6 +68,7 @@ void profile_cpu_blocking_20ms();
 
 // Priorities 0,1,2 are the highest quick-safety-shutdown level which won't be disabled for atomic operations.
 #define DIS_IRQ() do{__DSB(); __set_BASEPRI(3UL << (8 - __NVIC_PRIO_BITS)); __DSB();}while(0)
+#define DIS_SLOW_IRQS() do{__DSB(); __set_BASEPRI(11UL << (8 - __NVIC_PRIO_BITS)); __DSB();}while(0)
 #define ENA_IRQ() do{__DSB(); __set_BASEPRI(0UL); __DSB();}while(0)
 
 // These are never masked off. ISRs must not communicate using non-atomic things, since these cannot be disabled even temporarily:
@@ -82,6 +83,8 @@ void profile_cpu_blocking_20ms();
 #define INTPRIO_URGENT_APP   6
 #define INTPRIO_SBC_COMM     7
 #define INTPRIO_TOF_I2C      8
+
+// Priorities 11,12,13,14,15 are "slow irqs" (taking approx 1 us .. 100 us) that may be disabled for a few milliseconds
 
 // By having the timebase handler with the least priority, this means if any ISR in the system gets stuck, the timebase handler never gets
 // called, the power switch is not replenished and power is cut really quickly. A great watchdog. Note: in shutdown (error or safety), the priority
@@ -112,4 +115,6 @@ void led_status(int sid, uint32_t val, int mode);
 
 
 extern char printbuf[128];
+
+#define ITCM  __attribute__((section(".text_itcm")))
 

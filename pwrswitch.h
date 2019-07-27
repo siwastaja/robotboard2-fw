@@ -38,6 +38,7 @@ void shutdown();
 
 int app_power_on();
 void app_power_off();
+int app_power_freerunning_fsm();
 
 void init_power_outputs();
 
