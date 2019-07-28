@@ -110,6 +110,8 @@ void compensated_2dcs_6mhz_dist_masked_narrow(uint8_t *dist_out, epc_2dcs_narrow
 
 // The latest thing as of now, dealing with 16-bit images:
 void compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldist_out, int16_t* restrict dcs20_in, int16_t* restrict dcs31_in, uint8_t* restrict dealias_dist, int freq, int inttime_norm_number);
+// Optimized version for obst. avoid use (quicker, fewer features):
+void compensated_tof_calc_ampldist_nodealias_noampl_nonarrow(uint16_t* restrict ampldist_out, int16_t* restrict dcs20_in, int16_t* restrict dcs31_in);
 
 void remove_narrow_edgevals(int16_t* restrict img20, int16_t* restrict img31);
 
@@ -405,6 +407,8 @@ extern const tof_calib_t * const tof_calibs[N_SENSORS];
 #include "../robotsoft/api_board_to_soft.h"
 
 void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx);
+void total_sensor_obstacle(int sidx);
+
 void verify_calibration();
 
 void tof_enable_chafind_datapoints();
@@ -416,4 +420,8 @@ void tof_disable_chafind_datapoints();
 
 void run_lens_model(int16_t* in, int16_t* out, tof_calib_t* p_tof_calib);
 void run_lens_model_narrow(int16_t* in, int16_t* out, tof_calib_t* p_tof_calib);
+
+
+#define OBSTACLE_SHORT_US 25
+#define OBSTACLE_LONG_US  (OBSTACLE_SHORT_US*HDR_FACTOR)
 

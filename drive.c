@@ -480,6 +480,10 @@ static int rotation_fsm(int cmd)
 	{
 		cmd_motors(1000);
 		start_ang = cur_pos.ang;
+		robot_moves();
+		accurot = 1;
+		new_direction = 1;
+		set_top_speed_max(30);
 		n_rounds = 0;
 		expecting_full_turn = 0;
 		state = 1;
@@ -487,6 +491,10 @@ static int rotation_fsm(int cmd)
 	else if(cmd == ROTA_CMD_START_NEGANG)
 	{
 		cmd_motors(1000);
+		robot_moves();
+		accurot = 1;
+		new_direction = 1;
+		set_top_speed_max(30);
 		start_ang = cur_pos.ang;
 		n_rounds = 0;
 		expecting_full_turn = 0;

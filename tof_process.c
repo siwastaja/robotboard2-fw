@@ -174,8 +174,8 @@ static inline uint16_t lookup_dist(int beam, int g, int32_t d31, int32_t d20)
 	// For example:
 	// sin(pi/4) + cos(pi/4) = 1.414
 	// sin(0) + cos(0) = 1.0
-	// Multiply the sum by 11/8 = 1.375
-	#define AMPL_SAME_UNITS(dcs20_, dcs31_)    (11*((abso((dcs20_))+abso((dcs31_))))/(8))
+	// divide the sum by 8/6 = 1.333
+	#define AMPL_SAME_UNITS(dcs20_, dcs31_)    ((6*((abso((dcs20_))+abso((dcs31_)))))>>3)
 	// Outputs 0..255 from -4095..+4096 DCS values:
 	#define AMPL(dcs20_, dcs31_)    ((abso((dcs20_))+abso((dcs31_)))/(23))
 	// Outputs 0..255 from HDR_FACTOR*-4095..+4096 DCS values:
@@ -559,7 +559,7 @@ int ITCM calc_avg_ampl_x256_nar_region_on_wide(int16_t* restrict dcs20_in, int16
 
 #define BLUR_R 6
 #define BLUR_DIV (2*BLUR_R+1)
-static void boxblur_h(int16_t* restrict in, int16_t* restrict out)
+static void ITCM boxblur_h(int16_t* restrict in, int16_t* restrict out)
 {
 	for(int i=0; i<TOF_YS; i++)
 	{
@@ -577,7 +577,7 @@ static void boxblur_h(int16_t* restrict in, int16_t* restrict out)
 	}
 }
 
-static void boxblur_h_narrow(int16_t* restrict in, int16_t* restrict out)
+static void ITCM boxblur_h_narrow(int16_t* restrict in, int16_t* restrict out)
 {
 	for(int i=0; i<TOF_YS_NARROW; i++)
 	{
@@ -595,7 +595,7 @@ static void boxblur_h_narrow(int16_t* restrict in, int16_t* restrict out)
 	}
 }
 
-static void boxblur_t(int16_t* restrict in, int16_t* restrict out)
+static void ITCM boxblur_t(int16_t* restrict in, int16_t* restrict out)
 {
 	for(int i=0; i<TOF_XS; i++)
 	{
@@ -613,7 +613,7 @@ static void boxblur_t(int16_t* restrict in, int16_t* restrict out)
 	}
 }
 
-static void boxblur_t_narrow(int16_t* restrict in, int16_t* restrict out)
+static void ITCM boxblur_t_narrow(int16_t* restrict in, int16_t* restrict out)
 {
 	for(int i=0; i<TOF_XS_NARROW; i++)
 	{
@@ -631,7 +631,7 @@ static void boxblur_t_narrow(int16_t* restrict in, int16_t* restrict out)
 	}
 }
 
-static void boxblur(int16_t* restrict in, int16_t* restrict out)
+static void ITCM boxblur(int16_t* restrict in, int16_t* restrict out)
 {
 	static int16_t tmp[TOF_XS*TOF_YS];
 
@@ -639,7 +639,7 @@ static void boxblur(int16_t* restrict in, int16_t* restrict out)
 	boxblur_t(tmp, out);
 }
 
-static void boxblur_narrow(int16_t* restrict in, int16_t* restrict out)
+static void ITCM boxblur_narrow(int16_t* restrict in, int16_t* restrict out)
 {
 	static int16_t tmp[TOF_XS_NARROW*TOF_YS_NARROW];
 
@@ -649,7 +649,7 @@ static void boxblur_narrow(int16_t* restrict in, int16_t* restrict out)
 
 #define OBPC(x_, y_) ((y_)*BLUR_PARAMS_XS+(x_))
 
-static void blur_5_convol_biased(int16_t* restrict in, int16_t* restrict out, mcu_blur_params_t* blur_params)
+static void ITCM blur_5_convol_biased(int16_t* restrict in, int16_t* restrict out, mcu_blur_params_t* blur_params)
 {
 /*
 	Convolution matrix:
@@ -677,7 +677,8 @@ static void blur_5_convol_biased(int16_t* restrict in, int16_t* restrict out, mc
 				(int32_t)in[TC(xx+1, yy  )] * (int32_t)(b-c) +
 				(int32_t)in[TC(xx  , yy+1)] * (int32_t)(b+c);
 
-			val /= 256;
+			//val /= 256;
+			val >>= 8;
 
 			if(in[TC(xx, yy)] == INT16_MAX || in[TC(xx, yy)] == INT16_MIN)
 				out[TC(xx,yy)] = in[TC(xx, yy)];
@@ -687,7 +688,7 @@ static void blur_5_convol_biased(int16_t* restrict in, int16_t* restrict out, mc
 	}
 }
 
-static void blur_5_convol_biased_narrow(int16_t* restrict in, int16_t* restrict out, mcu_blur_params_t* blur_params)
+static void ITCM blur_5_convol_biased_narrow(int16_t* restrict in, int16_t* restrict out, mcu_blur_params_t* blur_params)
 {
 /*
 	Convolution matrix:
@@ -714,7 +715,8 @@ static void blur_5_convol_biased_narrow(int16_t* restrict in, int16_t* restrict 
 				(int32_t)in[TNC(xx+1, yy  )] * (int32_t)(b-c) +
 				(int32_t)in[TNC(xx  , yy+1)] * (int32_t)(b+c);
 
-			val /= 256;
+			//val /= 256;
+			val >>= 8;
 
 			if(in[TNC(xx, yy)] == INT16_MAX || in[TNC(xx, yy)] == INT16_MIN)
 				out[TNC(xx,yy)] = in[TNC(xx, yy)];
@@ -727,19 +729,30 @@ static void blur_5_convol_biased_narrow(int16_t* restrict in, int16_t* restrict 
 #define RIC(x_, y_) ((y_)*RESICAL_IN_XS+(x_))
 #define ROC(x_, y_) ((y_)*RESICAL_OUT_XS+(x_))
 
-void run_lens_model(int16_t* restrict in, int16_t* restrict out, tof_calib_t* p_tof_calib)
+extern uint32_t cnt_100us;
+void ITCM run_lens_model(int16_t* restrict in, int16_t* restrict out, tof_calib_t* p_tof_calib)
 {
+//	uint32_t time;
 	static int16_t tmp[TOF_XS*TOF_YS];
 
-	mcu_blur_params_t* blur_params = p_tof_calib->blur_params;
+//	mcu_blur_params_t* blur_params = p_tof_calib->blur_params;
+	mcu_blur_params_t blur_params[BLUR_PARAMS_XS*BLUR_PARAMS_YS]; // DTCM tested SLOW! Local stack copy is good.
+	memcpy(blur_params, p_tof_calib->blur_params, sizeof(blur_params));
 
 	// BLUR MODEL:
 
+//	time = cnt_100us;
 	// Temporarily use "out" as a buffer
+	// Two boxblur passes: 4.7ms --> ITCM 4.0ms
 	boxblur(in, out);
 	boxblur(out, tmp);
 
+//	uart_print_string_blocking("BOXBLUR: ");
+//	DBG_PR_VAR_I32(cnt_100us-time);
+//	time = cnt_100us;
+
 	// Mix input ("in") and blurred input ("tmp") together - store result to "out"
+	// Mixing: 1.8ms --> ITCM 1.6ms --> div1024 to shift10 --> 1.5ms
 	for(int yy=0; yy<TOF_YS; yy++)
 	{
 		for(int xx=0; xx<TOF_XS; xx++)
@@ -751,17 +764,29 @@ void run_lens_model(int16_t* restrict in, int16_t* restrict out, tof_calib_t* p_
 			if(in[TC(xx,yy)] == INT16_MAX || in[TC(xx,yy)] == INT16_MIN) // Keep overexposed data as is
 				out[TC(xx,yy)] = in[TC(xx,yy)];
 			else
-				out[TC(xx,yy)] = in[TC(xx,yy)] - (d*(int32_t)tmp[TC(xx,yy)])/1024;
+				out[TC(xx,yy)] = in[TC(xx,yy)] - ((d*(int32_t)tmp[TC(xx,yy)])>>10);
 		}
 	}
 
+//	uart_print_string_blocking("MIX: ");
+//	DBG_PR_VAR_I32(cnt_100us-time);
+//	time = cnt_100us;
+
 	// Then run convolution model: from "out" to "tmp"
+	// 2.9ms --> ITCM 2.7ms --> /256 to shift --> 2.6ms
 	blur_5_convol_biased(out, tmp, blur_params);
+
+//	uart_print_string_blocking("CONVOL: ");
+//	DBG_PR_VAR_I32(cnt_100us-time);
 
 	// RESIDUAL MODEL:
 	// Data in buffer: "tmp"
+	// Measurement stage takes 1.9ms --> ITCM 1.3ms
 
-	int16_t output_offsets[RESICAL_OUT_XS*RESICAL_OUT_YS] = {0};
+//	time = cnt_100us;
+
+
+	int16_t output_offsets[RESICAL_OUT_XS*RESICAL_OUT_YS] = {0}; // int32 -> same performance
 
 	for(int riy=0; riy < RESICAL_IN_YS; riy++)
 	{
@@ -780,18 +805,18 @@ void run_lens_model(int16_t* restrict in, int16_t* restrict out, tof_calib_t* p_
 
 			{
 				int64_t avg_input_acc = 0;
-				int n = 0;
+				//int n = 0;
 
 				for(int yy=divline_y0; yy<divline_y1; yy++)
 				{
 					for(int xx=divline_x0; xx<divline_x1; xx++)
 					{
 						avg_input_acc += tmp[TC(xx,yy)];
-						n++;
+						//n++;
 					}		
 				}
 
-				avg_input = (double)avg_input_acc / (double)n;
+				avg_input = avg_input_acc / ((divline_y1-divline_y0)*(divline_x1-divline_x0)); // / n;
 			}
 
 			for(int roy=0; roy < RESICAL_OUT_YS; roy++)
@@ -808,7 +833,13 @@ void run_lens_model(int16_t* restrict in, int16_t* restrict out, tof_calib_t* p_
 		}
 	}
 
+//	uart_print_string_blocking("RESIMEAS: ");
+
+//	DBG_PR_VAR_I32(cnt_100us-time);
+//	time = cnt_100us;
+
 	// Compensate the output:
+	// Compensation takes 1.0ms --> ITCM 1.0ms
 
 	for(int roy=0; roy < RESICAL_OUT_YS; roy++)
 	{
@@ -839,6 +870,9 @@ void run_lens_model(int16_t* restrict in, int16_t* restrict out, tof_calib_t* p_
 			}
 		}
 	}
+//	uart_print_string_blocking("RESICOMP: ");
+//	DBG_PR_VAR_I32(cnt_100us-time);
+
 }
 
 void ITCM remove_narrow_edgevals(int16_t* restrict img20, int16_t* restrict img31)
@@ -897,7 +931,9 @@ void run_lens_model_narrow(int16_t* restrict in, int16_t* restrict out, tof_cali
 {
 	static int16_t tmp[TOF_XS_NARROW*TOF_YS_NARROW];
 
-	mcu_blur_params_t* blur_params = p_tof_calib->blur_params;
+//	mcu_blur_params_t* blur_params = p_tof_calib->blur_params;
+	mcu_blur_params_t blur_params[BLUR_PARAMS_XS*BLUR_PARAMS_YS]; // DTCM tested SLOW! Local stack copy is good.
+	memcpy(blur_params, p_tof_calib->blur_params, sizeof(blur_params));
 
 	// BLUR MODEL:
 
@@ -1024,6 +1060,7 @@ void run_lens_model_narrow(int16_t* restrict in, int16_t* restrict out, tof_cali
 }
 
 
+int corr_mask_ratio = 50;
 // Removes distance points that required too heavy correction - they are likely too far from the truth, despite correction.
 void ITCM mask_highly_corrected(int is_narrow, int16_t* restrict img20_lenscorr, int16_t* restrict img31_lenscorr, int16_t* restrict img20, int16_t* restrict img31)
 {
@@ -1034,16 +1071,26 @@ void ITCM mask_highly_corrected(int is_narrow, int16_t* restrict img20_lenscorr,
 		int32_t img20corr = abso(img20_lenscorr[i] - img20[i]);
 		int32_t img31corr = abso(img31_lenscorr[i] - img31[i]);
 
-		int32_t ampl = abso(img20[i]) + abso(img31[i]);
+		int32_t ampl1 = abso(img20[i]) + abso(img31[i]);
+		int32_t ampl2 = abso(img20_lenscorr[i]) + abso(img31_lenscorr[i]);
 
 		int32_t totcorr = img20corr + img31corr;
 
-		int32_t corr_ratio = (256*totcorr)/ampl;
-
-		if(corr_ratio > 100)
+		if(ampl1 == 0 || ampl2 == 0)
 		{
 			img20_lenscorr[i] = 0;
 			img31_lenscorr[i] = 0;
+		}
+		else
+		{
+			int32_t corr_ratio1 = (256*totcorr)/ampl1;
+			int32_t corr_ratio2 = (256*totcorr)/ampl2;
+
+			if(corr_ratio1 > corr_mask_ratio || corr_ratio2 > corr_mask_ratio)
+			{
+				img20_lenscorr[i] = 0;
+				img31_lenscorr[i] = 0;
+			}
 		}
 	}
 }
@@ -1079,7 +1126,7 @@ void ITCM mask_highly_corrected(int is_narrow, int16_t* restrict img20_lenscorr,
 static const int DEALIAS_THRESHOLD[2] = {2400, 5000};
 
 
-void compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldist_out, int16_t* restrict dcs20_in, int16_t* restrict dcs31_in, uint8_t* dealias_dist, int freq, int inttime_norm_number)
+void ITCM compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldist_out, int16_t* restrict dcs20_in, int16_t* restrict dcs31_in, uint8_t* dealias_dist, int freq, int inttime_norm_number)
 {
 	int wrap_mm;
 	if(dealias_dist != NULL)
@@ -1114,7 +1161,7 @@ void compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldist_ou
 
 			// dcs run +/- 32767
 
-			ampl = sqrt((uint32_t)sq(dcs20)+(uint32_t)sq(dcs31));
+			ampl = AMPL_SAME_UNITS(dcs20, dcs31);
 			// ampl should run +/- 32767 as well (could go a bit over, theoretical max 46340)
 
 			if(ampl<100)
@@ -1180,7 +1227,8 @@ void compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldist_ou
 
 // If defined, the 4-bit amplitude output pixel is the actual amplitude
 // Otherwise, it's surface emissivity approximated by multiplying the amplitude with the square of distance, divided by integration time
-#define AMPL_OUTPUT_IS_AMPL
+// warning: if enabled, one mechanism of removing false close readings is out
+//#define AMPL_OUTPUT_IS_AMPL
 
 			#ifdef AMPL_OUTPUT_IS_AMPL
 				// 0..approx 32768 --> 0..15
@@ -1191,7 +1239,7 @@ void compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldist_ou
 				// Basically, if it looks like the material is some super extra black with <2% emissivity,
 				// it likely doesn't exists, but the distance, instead, was calculated wrong.
 				ampl = (sq((uint64_t)dist)*(uint64_t)ampl)/((uint64_t)inttime_norm_number*300ULL);
-				if(ampl < 4)
+				if(ampl < 5)
 					dist = DIST_UNDEREXP;
 
 				// Convert to a 4-bit val
@@ -1203,6 +1251,59 @@ void compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldist_ou
 
 		}
 		ampldist_out[i] = (ampl<<12) | dist;
+	}
+}
+
+void ITCM compensated_tof_calc_ampldist_nodealias_noampl_nonarrow(uint16_t* restrict ampldist_out, int16_t* restrict dcs20_in, int16_t* restrict dcs31_in)
+{
+	for(int i=0; i < TOF_XS*TOF_YS; i++)
+	{
+		uint16_t dist;
+
+		if(dcs20_in[i] == INT16_MAX || dcs31_in[i] == INT16_MAX || dcs20_in[i] == INT16_MIN || dcs31_in[i] == INT16_MIN)
+		{
+			dist = DIST_OVEREXP;
+		}
+		else
+		{
+			int32_t dcs20 = dcs20_in[i];
+			int32_t dcs31 = dcs31_in[i];
+
+			// dcs run +/- 32767
+
+			int32_t ampl = AMPL_SAME_UNITS(dcs20, dcs31);
+			// ampl should run +/- 32767 as well (could go a bit over, theoretical max 46340)
+
+			if(ampl<100)
+			{
+				dist = DIST_UNDEREXP;
+			}
+			else
+			{
+				int pixgroup;
+
+				if(!(i&1)) // even
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2] & 0x0f;
+				else
+					pixgroup = shadow_luts.hif.wid_lut_group_ids[i/2]>>4;
+
+				dist = lookup_dist(0, pixgroup, dcs31, dcs20);
+
+				if(dist < 2) dist = 2;
+
+				dist>>=DIST_SHIFT;
+				if(dist < 0) dist = 0;
+				else if(dist > MAX_DISTVAL) dist = DIST_UNDEREXP;
+
+				ampl = (sq((uint64_t)dist)*(uint64_t)ampl)/((uint64_t)(OBSTACLE_LONG_US*2)*300ULL);
+				if(ampl < 5)
+					dist = DIST_UNDEREXP;
+
+			}
+
+
+		}
+		ampldist_out[i] = dist;
 	}
 }
 
@@ -1219,6 +1320,9 @@ void tof_disable_chafind_datapoints()
 {
 	chafind_enabled = 0;
 }
+
+extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
+extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
 
 #ifdef REV2A
 
@@ -1241,8 +1345,6 @@ void tof_disable_chafind_datapoints()
 		int32_t  local_sensor_z = sensor_mounts[sidx].z_rel_ground;
 
 
-		extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
-		extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
 
 		for(int py=1; py<TOF_YS-1; py++)
 		{
@@ -1408,8 +1510,12 @@ void tof_disable_chafind_datapoints()
 #else // individually calibrated sensors:
 	#define NOZZLE_WIDTH 760
 
-	#define OBST_MARGIN (0)
-	#define OBST_AVOID_WIDTH (480+OBST_MARGIN)
+	#define OBST_AVOID_WIDTH 650
+	#define SIDE_LIMIT 360
+	#define FRONT_LIMIT 500
+	#define BACK_LIMIT -750
+	#define BACK_TURN_LIMIT -540
+
 
 	void ITCM tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx)
 	{
@@ -1427,9 +1533,6 @@ void tof_disable_chafind_datapoints()
 		int32_t  local_sensor_y = tof_calibs[sidx]->mount.y_rel_robot;
 		int32_t  local_sensor_z = tof_calibs[sidx]->mount.z_rel_ground;
 
-
-		extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
-		extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
 
 		for(int py=2; py<TOF_YS-2; py+=2)
 		{
@@ -1489,7 +1592,7 @@ void tof_disable_chafind_datapoints()
 
 					#ifdef EXT_VACUUM
 						// VACUUM APP: Ignore the nozzle
-						if(local_z < 200 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+						if(local_z < 240 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
 							continue;
 					#endif
 
@@ -1497,75 +1600,52 @@ void tof_disable_chafind_datapoints()
 					{
 						if(local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
 						{
-							if(local_x >= 100 && local_x < 300+OBST_MARGIN)
+							if(local_x >= 100 && local_x < FRONT_LIMIT)
 							{
 								obstacle_front_near++;
 								led_status(sidx, RED, LED_MODE_FADE);
-								//DBG_PR_VAR_U16(sidx);
-/*								o_itoa32(local_x, printbuf); uart_print_string_blocking(printbuf); 
-								uart_print_string_blocking("  ");
-								o_itoa32(local_y, printbuf); uart_print_string_blocking(printbuf); 
-								uart_print_string_blocking("  ");
-								o_itoa32(local_z, printbuf); uart_print_string_blocking(printbuf); 
-								uart_print_string_blocking("   FN\r\n");*/
 							}
-							if(local_x >= 300+OBST_MARGIN && local_x < 500+OBST_MARGIN)
+							else if(local_x >= FRONT_LIMIT && local_x < FRONT_LIMIT+100)
 							{
+								if(obstacle_front_near==0) led_status(sidx, ORANGE, LED_MODE_FADE);
 								obstacle_front_far++;
-/*
-								o_itoa32(local_x, printbuf); uart_print_string_blocking(printbuf); 
-								uart_print_string_blocking("  ");
-								o_itoa32(local_y, printbuf); uart_print_string_blocking(printbuf); 
-								uart_print_string_blocking("  ");
-								o_itoa32(local_z, printbuf); uart_print_string_blocking(printbuf); 
-								uart_print_string_blocking("   FF\r\n");*/
 							}
 
-							if(local_x <= -450 && local_x > -700-OBST_MARGIN)
+							if(local_x <= -450 && local_x > BACK_LIMIT)
 							{
-								//DBG_PR_VAR_U16(sidx);
 								led_status(sidx, RED, LED_MODE_FADE);
 								obstacle_back_near++;
 
 							}
-							if(local_x <= -700-OBST_MARGIN && local_x > -900-OBST_MARGIN)
+							else if(local_x <= BACK_LIMIT && local_x > BACK_LIMIT-100)
 							{
+								if(obstacle_back_near==0) led_status(sidx, ORANGE, LED_MODE_FADE);
 								obstacle_back_far++;
-
 							}
 						}
 
-						if(local_x > -490 && local_x < -200)
+						if(local_x > BACK_TURN_LIMIT && local_x < -100)
 						{
-							if(local_y >= 200+OBST_MARGIN && local_y < 350+OBST_MARGIN)
+							if(local_y >= 200 && local_y < SIDE_LIMIT)
 							{
-								//DBG_PR_VAR_U16(sidx);
 								led_status(sidx, RED, LED_MODE_FADE);
-
 								obstacle_left_near++;
 							}
-
-							if(local_y <= -200 && local_y > -350-OBST_MARGIN)
+							else if(local_y >= SIDE_LIMIT && local_y < SIDE_LIMIT+100)
 							{
-								//DBG_PR_VAR_U16(sidx);
-								led_status(sidx, RED, LED_MODE_FADE);
+								if(obstacle_left_near==0) led_status(sidx, ORANGE, LED_MODE_FADE);
+								obstacle_left_far++;
+							}
 
+							if(local_y <= -200 && local_y > -SIDE_LIMIT)
+							{
+								led_status(sidx, RED, LED_MODE_FADE);
 								obstacle_right_near++;
 							}
-						}
-
-
-						if(local_x > -440 && local_x < -200)
-						{
-
-							if(local_y <= -350-OBST_MARGIN && local_y > -450-OBST_MARGIN)
+							else if(local_y <= -SIDE_LIMIT && local_y > -SIDE_LIMIT-100)
 							{
+								if(obstacle_right_near==0) led_status(sidx, ORANGE, LED_MODE_FADE);
 								obstacle_right_far++;
-							}
-
-							if(local_y >= 350+OBST_MARGIN && local_y < 450+OBST_MARGIN)
-							{
-								obstacle_left_far++;
 							}
 
 						}
@@ -1580,7 +1660,37 @@ void tof_disable_chafind_datapoints()
 	}
 #endif
 
+void total_sensor_obstacle(int sidx)
+{
+	led_status(sidx, RED, LED_MODE_FADE);
+	switch(sidx)
+	{
+		case 0:
+		case 1:
+		case 9:
+		obstacle_front_near++;
+		break;
 
+		case 2:
+		case 3:
+		obstacle_left_near++;
+		break;
+
+		case 4:
+		case 5:
+		case 6:
+		obstacle_back_near++;
+		break;
+
+		case 7:
+		case 8:
+		obstacle_right_near++;
+		break;
+
+		default:
+		break;
+	}
+}
 
 
 /*
