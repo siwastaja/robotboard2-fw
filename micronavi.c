@@ -13,8 +13,6 @@
 
 #include "micronavi.h"
 
-#define CONTACTS_ON_BACK
-
 
 
 int nearest_hit_x;
@@ -24,12 +22,12 @@ int left_accum, left_accum_cnt;
 int right_accum, right_accum_cnt;
 int middle_min_y, middle_max_y;
 int middle_cnt;
-int total_front_accum, total_front_accum_cnt;
+//int total_front_accum, total_front_accum_cnt;
 
 static chafind_results_t results;
 
-#define MIDDLE_BAR_DEPTH 105
-#define MIDDLE_BAR_WIDTH 119
+#define MIDDLE_BAR_DEPTH 103
+#define MIDDLE_BAR_WIDTH 130
 #define CHAFIND_LOOK_SIDEWAY_MAX 200
 #define CHAFIND_LOOK_SIDEWAY_MIN 150
 
@@ -39,20 +37,20 @@ static chafind_results_t results;
 	#define CHAFIND_FIRST_DIST 950 // 900
 	#define CHAFIND_FIRST_DIST_TOLERANCE 50
 
-	#define CHAFIND_PASS1_ACCEPT_ANGLE (4*ANG_1_DEG) 
+	#define CHAFIND_PASS1_ACCEPT_ANGLE (5*ANG_1_DEG) 
 	#define CHAFIND_PASS1_ACCEPT_SHIFT 25
 
 	#define CHAFIND_PUSH_TUNE 0 // in mm, lower number = go further
 
-	#define CHAFIND_AIM_Y_TUNE -10 // positive = aim right
+	#define CHAFIND_AIM_Y_TUNE 0 // positive = aim right
 
 #else
 
-	#define CHAFIND_FIRST_DIST 570
+	#define CHAFIND_FIRST_DIST 550
 	#define CHAFIND_FIRST_DIST_TOLERANCE 50
 
-	#define CHAFIND_PASS1_ACCEPT_ANGLE (4*ANG_1_DEG) 
-	#define CHAFIND_PASS1_ACCEPT_SHIFT 25
+	#define CHAFIND_PASS1_ACCEPT_ANGLE (7*ANG_1_DEG) 
+	#define CHAFIND_PASS1_ACCEPT_SHIFT 40
 
 	#define CHAFIND_PUSH_TUNE 0 // in mm, lower number = go further
 
@@ -61,7 +59,7 @@ static chafind_results_t results;
 #endif
 
 //#define CHAFIND_SIDE (CHAFIND_LOOK_SIDEWAY_MAX+CHAFIND_LOOK_SIDEWAY_MIN)  //  /2 * 2  // y dist between the two side points looked at
-#define CHAFIND_SIDE (750) // Use a bit more than in reality to reduce corrections to avoid overcorrecting
+#define CHAFIND_SIDE (500) // Use a bit more than in reality to reduce corrections to avoid overcorrecting
 
 static int accum_state = 0;
 static void chafind_empty_accum1()
@@ -78,8 +76,8 @@ static void chafind_empty_accum2()
 	middle_min_y = 9999;
 	middle_max_y = -9999;
 	middle_cnt = 0;
-	total_front_accum = 0;
-	total_front_accum_cnt = 0;
+//	total_front_accum = 0;
+//	total_front_accum_cnt = 0;
 }
 
 static void chafind_empty_accum3()
@@ -91,7 +89,7 @@ static void chafind_empty_accum3()
 
 #define ROBOT_YS_TIGHT (460)
 #define ROBOT_XS_TIGHT (650)
-#define ROBOT_ORIGIN_TO_FRONT_TIGHT (142)
+#define ROBOT_ORIGIN_TO_FRONT_TIGHT (130)
 #define ROBOT_ORIGIN_TO_BACK_TIGHT  (650-142)
 
 #ifdef CONTACTS_ON_BACK
@@ -103,26 +101,18 @@ static void chafind_empty_accum3()
 
 void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_necessary, int source)
 {
-	if(source != 0)
-		return;
-
-	y += CHAFIND_AIM_Y_TUNE;
-
-//	int dist_to_hit;
+//	y += CHAFIND_AIM_Y_TUNE;
 
 	#ifdef CONTACTS_ON_BACK
 	x *= -1;
 	y *= -1;
 	#endif
 
-//	dist_to_hit = x - ORIGIN_TO_CONTACTS;
-
-		// && x > ORIGIN_TO_CONTACTS+150)
-
-
-	// Z already filtered
+	// Z already filtered below 290mm
 	if(accum_state == 0)
 	{
+		if(z > 230)
+			return;
 		if(y < (ROBOT_YS_TIGHT/2+80) && y > (-1*ROBOT_YS_TIGHT/2-80) &&
 			x > ORIGIN_TO_CONTACTS)
 		{
@@ -137,9 +127,13 @@ void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_nec
 	}
 	else if(accum_state == 1)
 	{
+		if(z > 230)
+			return;
 		if(
-			(x < nearest_hit_x+60 && y > nearest_hit_y-MIDDLE_BAR_WIDTH/2 && y < nearest_hit_y+MIDDLE_BAR_WIDTH/2) ||
-			(x < nearest_hit_x+40 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
+//			(x < nearest_hit_x+60 && y > nearest_hit_y-MIDDLE_BAR_WIDTH/2 && y < nearest_hit_y+MIDDLE_BAR_WIDTH/2) ||
+//			(x < nearest_hit_x+40 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
+
+			(x < nearest_hit_x+50 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
 		{
 			middle_cnt++;
 			if(y < middle_min_y) middle_min_y = y;
@@ -151,27 +145,27 @@ void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_nec
 
 		if(x > nearest_hit_x && x < nearest_hit_x+MIDDLE_BAR_DEPTH+200)
 		{
-			if(y < middle_min_y-80 && y > middle_min_y-170)
-			{
-				left_accum += x;
-				left_accum_cnt++;
-			}
-			else if(y > middle_max_y+80 && y < middle_max_y+170)
+			if(y < middle_min_y-80 && y > middle_min_y-160)
 			{
 				right_accum += x;
 				right_accum_cnt++;
+			}
+			else if(y > middle_max_y+80 && y < middle_max_y+160)
+			{
+				left_accum += x;
+				left_accum_cnt++;
 			}
 		}
 	}
 
 
-
+/*
 	if(y < (ROBOT_YS_TIGHT/2) && y > -1*(ROBOT_YS_TIGHT/2) && x > ORIGIN_TO_CONTACTS && x < ORIGIN_TO_CONTACTS+800)
 	{
 		total_front_accum += x;
 		total_front_accum_cnt++;
 	}
-
+*/
 }
 
 static int chafind_calc(int* p_ang, int* p_shift, int* p_dist)
@@ -180,7 +174,7 @@ static int chafind_calc(int* p_ang, int* p_shift, int* p_dist)
 	int right = right_accum/right_accum_cnt;
 	//int avgdist = (left+right+(nearest_hit_x+MIDDLE_BAR_DEPTH))/3;
 
-	int ang = atan2(right-left, CHAFIND_SIDE)*(4294967296.0/(2.0*M_PI));
+	int ang = atan2(left-right, CHAFIND_SIDE)*(4294967296.0/(2.0*M_PI));
 	*p_ang = ang;
 
 	results.backwall_ang = ang;
@@ -196,10 +190,6 @@ static int chafind_calc(int* p_ang, int* p_shift, int* p_dist)
 	int rotcos = lut_cos_from_u32((uint32_t)ang);
 	int rotsin = lut_sin_from_u32((uint32_t)ang);
 
-
-	// Rotation: xr = x*cos(a) + y*sin(a)
-	//           yr = -x*sin(a) + y*cos(a)
-	// It seems to me this widely touted formula has inverted y axis, don't understand why, so it should be:
 	// Rotation: xr = x*cos(a) - y*sin(a)
 	//           yr = x*sin(a) + y*cos(a)
 
@@ -222,97 +212,101 @@ static int chafind_calc(int* p_ang, int* p_shift, int* p_dist)
 typedef enum {
 	CHAFIND_IDLE 			= 0,
 	CHAFIND_START          		= 1,
-	CHAFIND_WAIT_DISTANCE		= 2,
-	CHAFIND_WAIT_FWD1		= 3,
-	CHAFIND_WAIT_FWD1_STOPEXTRA1	= 4,
-	CHAFIND_WAIT_FWD1_STOPEXTRA2	= 5,
-	CHAFIND_ACCUM_PREDATA           = 6,
-	CHAFIND_ACCUM_DATA		= 7,
-	CHAFIND_WAIT_BACKING		= 8,
-	CHAFIND_START_REBACKING		= 9,
-	CHAFIND_WAIT_REBACKING		= 10,
-	CHAFIND_WAIT_FWD2		= 11,
-	CHAFIND_WAIT_FWD2_STOPEXTRA1	= 12,
-	CHAFIND_ACCUM_FRONTAVG		= 13,
-	CHAFIND_WAIT_PUSH		= 14,
-	CHAFIND_SUCCESS                 = 15,
-	CHAFIND_FAIL			= 16
+	CHAFIND_WAIT_FWD1		= 2,
+	CHAFIND_WAIT_FWD1_STOPEXTRA	= 3,
+	CHAFIND_ACCUM_DATA		= 4,
+	CHAFIND_WAIT_BACKING		= 5,
+	CHAFIND_START_REBACKING		= 6,
+	CHAFIND_WAIT_REBACKING		= 7,
+	CHAFIND_WAIT_FWD2		= 8,
+	CHAFIND_WAIT_FWD2_STOPEXTRA	= 9,
+	CHAFIND_WAIT_PUSH		= 10,
+	CHAFIND_SUCCESS                 = 11,
+	CHAFIND_FAIL			= 12
 } chafind_state_t;
 
 chafind_state_t chafind_state = CHAFIND_IDLE;
 
 volatile int start_charger = 0;
 
-void micronavi_point_in(int32_t x, int32_t y, int16_t z, int stop_if_necessary, int source)
-{
-	if(chafind_state)
-	{
-//		dbg[0] = chafind_state;
-		micronavi_point_in_chafind(x,y,z,stop_if_necessary, source);
-	}
-	else
-	{
-
-	}
-}
-
 static int pass;
 
-void navig_fsm2_for_charger()
+
+extern void request_chamount_full_images();
+extern void request_chamount_mid_image();
+
+#define CHAFIND_DO_IT
+
+
+static void ignore_obst()
+{
+	#ifdef CONTACTS_ON_BACK
+		obstacle_avoidance_ignore(2, 400);
+	#else
+		obstacle_avoidance_ignore(0, 400);
+	#endif
+}
+
+void chamount_freerun_fsm()
 {
 	static int timer;
 	static int store_back, store_shift_ang;
+	static int final_push_store_ang;
 
 	extern uint32_t micronavi_status;
 
-	if(micronavi_status)
-	{
-		chafind_state = CHAFIND_FAIL;
-	}
+//	if(micronavi_status)
+//	{
+//		chafind_state = CHAFIND_FAIL;
+//	}
 
 	switch(chafind_state)
 	{
 		case CHAFIND_START:
 		{
-//			dbg[1] = dbg[2] = dbg[3] = dbg[5] = dbg[5] = dbg[6] = dbg[7] = 0;
+			// Get nearest_hit
 			chafind_empty_accum1();
-			timer = 30;
-			chafind_state++;
-		}
-		break;
+			request_chamount_mid_image();
 
-		case CHAFIND_WAIT_DISTANCE:
-		{
-			if(--timer == 0)
+			if(nearest_hit_x < 200 || nearest_hit_x > 1200) // todo: also check obstacles from back
 			{
-				if(nearest_hit_x < 200 || nearest_hit_x > 1200) // todo: also check obstacles from back
+				chafind_state = CHAFIND_FAIL;
+			}
+			else
+			{
+				int movement = nearest_hit_x - CHAFIND_FIRST_DIST;
+				if(movement < -CHAFIND_FIRST_DIST_TOLERANCE || movement > CHAFIND_FIRST_DIST_TOLERANCE)
 				{
-					chafind_state = CHAFIND_FAIL;
+					#ifdef CONTACTS_ON_BACK
+						movement *= -1;
+					#endif
+					results.first_movement_needed = movement;
+
+					uart_print_string_blocking("initial distance adjust\r\n"); 
+					DBG_PR_VAR_I32(movement);
+
+					#ifdef CHAFIND_DO_IT
+						ignore_obst();
+						cmd_motors(8000);
+						set_top_speed_max(25);
+						straight_rel(movement);
+						chafind_state = CHAFIND_WAIT_FWD1;
+					#else
+						chafind_state = CHAFIND_SUCCESS;
+					#endif
+
 				}
 				else
 				{
-					int movement = nearest_hit_x - CHAFIND_FIRST_DIST;
-					if(movement < -CHAFIND_FIRST_DIST_TOLERANCE || movement > CHAFIND_FIRST_DIST_TOLERANCE)
-					{
-						set_top_speed_max(25);
-						#ifdef CONTACTS_ON_BACK
-							movement *= -1;
-						#endif
-						cmd_motors(5000);
-						uart_print_string_blocking("straight fix\r\n"); 
-						straight_rel(movement);
-						results.first_movement_needed = movement;
-						chafind_state = CHAFIND_WAIT_FWD1;
-					}
-					else
-					{
-						chafind_empty_accum2();
-						results.first_movement_needed = 0;
-						timer = 40;
-						chafind_state = CHAFIND_ACCUM_PREDATA;
-					}
+					uart_print_string_blocking("initial distance ok\r\n"); 
+					DBG_PR_VAR_I32(movement);
+
+					chafind_empty_accum2();
+					results.first_movement_needed = 0;
+					chafind_state = CHAFIND_ACCUM_DATA;
 				}
 			}
+
 		}
 		break;
 
@@ -320,119 +314,131 @@ void navig_fsm2_for_charger()
 		{
 			if(!is_driving())
 			{
-				timer = 10;
-				chafind_state++;
+				timer = 15;
+				chafind_state = CHAFIND_WAIT_FWD1_STOPEXTRA;
 			}
 		}
 		break;
 
-		case CHAFIND_WAIT_FWD1_STOPEXTRA1:
+		case CHAFIND_WAIT_FWD1_STOPEXTRA:
 		{
 			if(--timer == 0)
 			{
-				timer = 25;
-				chafind_empty_accum1();
-				chafind_state++;
-			}
-		}
-		break;
-
-		case CHAFIND_WAIT_FWD1_STOPEXTRA2:
-		{
-			if(--timer == 0)
-			{
-				chafind_empty_accum2();
-				timer = 40;
-				chafind_state++;
-			}
-		}
-		break;
-
-		case CHAFIND_ACCUM_PREDATA:
-		{
-			results.mid_accum_cnt = middle_cnt;
-			if(--timer == 0)
-			{
-				if(middle_cnt < 10)
-				{
-					chafind_state = CHAFIND_FAIL;
-				}
-				else
-				{
-					chafind_empty_accum3();
-					chafind_state++;
-				}
+				chafind_state = CHAFIND_ACCUM_DATA;
 			}
 		}
 		break;
 
 		case CHAFIND_ACCUM_DATA:
 		{
+			// get nearest_hit:
+			chafind_empty_accum1();
+			request_chamount_mid_image();
+			DBG_PR_VAR_I32(nearest_hit_x);
+			DBG_PR_VAR_I32(nearest_hit_y);
+
+			// get middle tower:
+			chafind_empty_accum2();
+			request_chamount_mid_image();
+			request_chamount_mid_image();
+			request_chamount_mid_image();
+			request_chamount_mid_image();
+			DBG_PR_VAR_I32(middle_cnt);
+			DBG_PR_VAR_I32(middle_min_y);
+			DBG_PR_VAR_I32(middle_max_y);
+
+			// get left and right:
+			chafind_empty_accum3();
+			request_chamount_full_images();
+			request_chamount_full_images();
+			request_chamount_full_images();
+			request_chamount_full_images();
+			request_chamount_full_images();
+			DBG_PR_VAR_I32(left_accum/left_accum_cnt);
+			DBG_PR_VAR_I32(left_accum_cnt);
+			DBG_PR_VAR_I32(right_accum/right_accum_cnt);
+			DBG_PR_VAR_I32(right_accum_cnt);
+
+
 			results.left_accum_cnt = left_accum_cnt;
 			results.mid_accum_cnt = middle_cnt;
 			results.right_accum_cnt = right_accum_cnt;
 
-//				int ang, shift, dist;
-//				chafind_calc(&ang, &shift, &dist);
-
-			if(left_accum_cnt > 400 && right_accum_cnt > 400)
+			int middle_w = middle_max_y - middle_min_y;
+			if(middle_cnt < 200 || left_accum_cnt < 500 || right_accum_cnt < 500 || middle_w < MIDDLE_BAR_WIDTH-30 || middle_w > MIDDLE_BAR_WIDTH+40)
+			{
+				chafind_state = CHAFIND_FAIL;
+			}
+			else
 			{
 				pass++;
 				int ang, shift, dist;
 				chafind_calc(&ang, &shift, &dist);
 
+				DBG_PR_VAR_I32(ang/ANG_0_1_DEG);
+				DBG_PR_VAR_I32(shift);
+				DBG_PR_VAR_I32(dist);
+
+				// dist-100, because the final angle correction is done approx. 100mm before the targer
+				int32_t corr_ang_to_hit_mid = atan2(shift, (dist-100))*(4294967296.0/(2.0*M_PI));
+				final_push_store_ang = -1*ang - corr_ang_to_hit_mid;
+
 				if(ang > -1*CHAFIND_PASS1_ACCEPT_ANGLE && ang < CHAFIND_PASS1_ACCEPT_ANGLE &&
-					shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT)
+					shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT &&
+					corr_ang_to_hit_mid > -15*ANG_1_DEG && corr_ang_to_hit_mid < 15*ANG_1_DEG &&
+					final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
 				{
 					results.accepted_pos++;
+					set_top_speed_max(30);
 
-					//dbg[4] = 11111;
-					//dbg[5] = dbg[6] = 0;
-					set_top_speed_max(23);
-
-					int dist2 = total_front_accum/total_front_accum_cnt;
-					
+					int dist2 = (left_accum+right_accum)/(left_accum_cnt+right_accum_cnt);
 
 					results.dist_before_push = dist2;
+
 					int final_movement = dist2-ORIGIN_TO_CONTACTS-CHAFIND_PUSH_TUNE;
 					#ifdef CONTACTS_ON_BACK
 						final_movement *= -1;
-					#else
-					#endif
-					cmd_motors(5000);
-					uart_print_string_blocking("final movement\r\n"); 
-					rotate_and_straight_rel(-1*ang, final_movement, 1);
-					chafind_state = CHAFIND_WAIT_PUSH;
-					#ifdef CONTACTS_ON_BACK
-						obstacle_avoidance_ignore(2, 200);
-					#else
-						obstacle_avoidance_ignore(0, 200);
 					#endif
 
 
+					uart_print_string_blocking("Accepted!\r\n"); 
+					DBG_PR_VAR_I32(dist2);
+					DBG_PR_VAR_I32(final_movement);
+					DBG_PR_VAR_I32(corr_ang_to_hit_mid/ANG_0_1_DEG);
+					DBG_PR_VAR_I32(final_push_store_ang/ANG_0_1_DEG);
+
+
+					#ifdef CHAFIND_DO_IT
+						ignore_obst();
+						cmd_motors(8000);
+						rotate_and_straight_rel(corr_ang_to_hit_mid, final_movement, 1);
+						chafind_state = CHAFIND_WAIT_PUSH;
+					#else
+						chafind_state = CHAFIND_SUCCESS;
+					#endif
 				}
 				else
 				{
 					set_top_speed_max(30);
 
-					//allow_angular(1);
-					//auto_disallow(0);
 					if(shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT) // Only turning needed
 					{
 						results.turning_passes_needed++;
-						//dbg[4] = 22222;
-						//dbg[5] = ang/ANG_0_1_DEG;
-						//dbg[6] = 0;
 						uart_print_string_blocking("rotation only\r\n"); 
-						rotate_rel(-1*ang);
-						chafind_state = CHAFIND_WAIT_REBACKING;
+
+						#ifdef CHAFIND_DO_IT
+							ignore_obst();
+							rotate_rel(-1*ang, 1);
+							chafind_state = CHAFIND_WAIT_REBACKING;
+						#else
+							chafind_state = CHAFIND_SUCCESS;
+						#endif
 
 					}
 					else // vexling needed
 					{
 						results.vexling_passes_needed++;
-						//dbg[4] = 33333;
-						//allow_straight(1);
+
 						int shift_ang;
 						if(shift > 170)       shift_ang = 30*ANG_1_DEG;
 						else if(shift > 70)   shift_ang = 15*ANG_1_DEG;
@@ -442,25 +448,40 @@ void navig_fsm2_for_charger()
 						else                  shift_ang =  -8*ANG_1_DEG;
 
 						int d = ((float)shift)/tan((float)shift_ang*(2.0*M_PI)/4294967296.0);
-						cmd_motors(8000);
 
-						uart_print_string_blocking("backing\r\n"); 
+						uart_print_string_blocking("vexling needed\r\n");
+						int32_t mov_ang =  
+							#ifdef CONTACTS_ON_BACK
+								-1*(ang+shift_ang);
+							#else
+								-1*(ang+shift_ang);
+							#endif
 
-						#ifdef CONTACTS_ON_BACK
-							rotate_and_straight_rel(-1*(ang+shift_ang), +1*d, 1);
+						int32_t mov_d = 
+							#ifdef CONTACTS_ON_BACK
+								+1*d;
+							#else
+								-1*d;
+							#endif
+						DBG_PR_VAR_I32(mov_ang/ANG_0_1_DEG);
+						DBG_PR_VAR_I32(mov_d);
+
+						#ifdef CHAFIND_DO_IT
+							ignore_obst();
+							cmd_motors(8000);
+
+							rotate_and_straight_rel(mov_ang, mov_d, 1);
+
+							store_back = d;
+							store_shift_ang = shift_ang;
+							chafind_state = CHAFIND_WAIT_BACKING;
 						#else
-							rotate_and_straight_rel(+1*(ang-shift_ang), -1*d, 1);
+							chafind_state = CHAFIND_SUCCESS;
 						#endif
 
-						store_back = d;
-						store_shift_ang = shift_ang;
-						chafind_state = CHAFIND_WAIT_BACKING;
 					}
 				}
 				
-			}
-			else
-			{
 			}
 	
 		}
@@ -470,27 +491,23 @@ void navig_fsm2_for_charger()
 		{
 			if(!is_driving())
 			{
-				timer=20;
-				chafind_state++;
+				chafind_state = CHAFIND_START_REBACKING;
 			}
 		}
 		break;
 
 		case CHAFIND_START_REBACKING:
 		{
-			if(--timer == 0)
-			{
-				cmd_motors(8000);
+			cmd_motors(8000);
 
-				uart_print_string_blocking("rebacking\r\n"); 
+			uart_print_string_blocking("rebacking\r\n"); 
 
-				#ifdef CONTACTS_ON_BACK
-					rotate_and_straight_rel(+1*store_shift_ang, -1*store_back, 1);
-				#else
-					rotate_and_straight_rel(-1*store_shift_ang, +1*store_back, 1);
-				#endif
-				chafind_state++;
-			}
+			#ifdef CONTACTS_ON_BACK
+				rotate_and_straight_rel(+1*store_shift_ang, -1*store_back, 1);
+			#else
+				rotate_and_straight_rel(+1*store_shift_ang, +1*store_back, 1);
+			#endif
+			chafind_state = CHAFIND_WAIT_REBACKING;
 		}
 		break;
 
@@ -500,23 +517,12 @@ void navig_fsm2_for_charger()
 			if(!is_driving())
 			{
 				timer = 10;
-				chafind_state = CHAFIND_WAIT_FWD2_STOPEXTRA1;
+				chafind_state = CHAFIND_WAIT_FWD2_STOPEXTRA;
 			}
 		}
 		break;
 
-		case CHAFIND_WAIT_FWD2:
-		{
-			error(555);
-			if(!is_driving())
-			{
-				timer = 10;
-				chafind_state++;
-			}
-		}
-		break;
-
-		case CHAFIND_WAIT_FWD2_STOPEXTRA1:
+		case CHAFIND_WAIT_FWD2_STOPEXTRA:
 		{
 			if(--timer == 0)
 			{
@@ -525,54 +531,36 @@ void navig_fsm2_for_charger()
 		}
 		break;
 
-		case CHAFIND_ACCUM_FRONTAVG:
-		{
-			error(555);
-
-			/*
-				Average enough samples directly from the front, to measure the distance to go. Only try to go a tiny bit further than that.
-				This prevents excessive travel in case the charger is unpowered, or we are at a wrong place despite matching success.
-			*/
-			if(total_front_accum_cnt > 200)
-			{
-				int dist = total_front_accum/total_front_accum_cnt;
-				results.dist_before_push = dist;
-				set_top_speed_max(18);
-				int final_movement = dist-ORIGIN_TO_CONTACTS-CHAFIND_PUSH_TUNE;
-				#ifdef CONTACTS_ON_BACK
-					final_movement *= -1;
-				#else
-				#endif
-				cmd_motors(5000);
-
-				straight_rel(final_movement);
-				chafind_state = CHAFIND_WAIT_PUSH;
-			}
-			else
-			{
-				//dbg[4] = total_front_accum_cnt;
-			}
-		}
-		break;
-
-
 		case CHAFIND_WAIT_PUSH:
 		{
-			#ifdef CONTACTS_ON_BACK
-				obstacle_avoidance_ignore(2, 200);
-			#else
-				obstacle_avoidance_ignore(0, 200);
-			#endif
+			ignore_obst();
 
+			int remai = abso(get_remaining_lin());
 
-			if(abso(get_remaining_lin()) < 200)
+			//DBG_PR_VAR_I32(remai);
+			if(remai < 150)
 			{
 				set_top_speed_max(16);
+
+				if(final_push_store_ang != 0)
+				{
+					cmd_motors(5000);
+
+					rotate_rel_on_fly(final_push_store_ang, 1);
+					uart_print_string_blocking("final rota\r\n"); 
+					final_push_store_ang = 0;
+				}
 			}
-			else if(abso(get_remaining_lin()) < 120)
+			else if(remai < 200)
 			{
-				set_top_speed_max(13);
+				set_top_speed_max(20);
 			}
+			else if(remai < 250)
+			{
+				set_top_speed_max(24);
+			}
+
+			charger_freerunning_fsm();
 
 			static int mounted_cnt;
 			if(charger_is_mounted())
@@ -585,7 +573,7 @@ void navig_fsm2_for_charger()
 				mounted_cnt = 0;
 			}
 
-			if(mounted_cnt > 3)
+			if(mounted_cnt > 2)
 			{
 				chafind_state = CHAFIND_SUCCESS;
 				mounted_cnt = 0;
@@ -604,7 +592,6 @@ void navig_fsm2_for_charger()
 		{
 			results.result = 99;
 			cmd_stop_movement();
-			stop_chafind();
 		}
 		break;
 
@@ -612,7 +599,6 @@ void navig_fsm2_for_charger()
 		{
 			results.result = 100;
 			cmd_stop_movement();
-			stop_chafind();
 		}
 		break;
 
@@ -635,12 +621,6 @@ void navig_fsm2_for_charger()
 }
 
 
-void micronavi_fsm()
-{
-	if(chafind_state)
-		navig_fsm2_for_charger();
-}
-
 void find_charger()
 {
 	uart_print_string_blocking("find_charger()\r\n"); 
@@ -648,13 +628,11 @@ void find_charger()
 //	accurate_turngo = 1;
 	memset(&results, 0, sizeof(chafind_results_t));
 	pass = 0;
-	tof_enable_chafind_datapoints();
 	chafind_state = CHAFIND_START;
 }
 
 void stop_chafind()
 {
-	tof_disable_chafind_datapoints();
 	chafind_state = 0;
 }
 

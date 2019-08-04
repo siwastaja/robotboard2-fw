@@ -146,20 +146,27 @@ void restart_led(int sidx) // like update_led, but no state changes, just turn t
 	}
 }
 
-uint16_t measure_stray()
+// Return stray from 1 .. 16383
+int measure_stray()
 {
-	int32_t stray = 16384;
+	int32_t min = INT32_MAX;
+	int32_t max = INT32_MIN;
 	for(int i=0; i<600; i++)
 	{
 		delay_us(12);
-		uint16_t now = adc3.s.epc_stray_estimate;
+		int32_t now = adc3.s.epc_stray_estimate;
 //		DBG_PR_VAR_I16(now);
-
-		if(now < stray) stray = now;
+		if(now > max)
+			max = now;
+		if(now < min)
+			min = now;
 	}
 
 //	DBG_PR_VAR_I16(stray);
 
+	int stray = max-min;
+	stray -= 300; // TODO: better light shielding to properly read low levels
+	if(stray < 1) stray = 1;
 	return stray;
 }
 
@@ -167,12 +174,16 @@ uint16_t measure_stray()
 
 void adjust()
 {
+	//uint8_t cmd = uart_input();
+
+#if 0
 	extern int corr_mask_ratio;
-	uint8_t cmd = uart_input();
 	if(cmd >= '0' && cmd <= '9')
 	{
 		corr_mask_ratio = (int)(cmd-'0')*10;
 	}
+#endif
+
 }
 
 /*
@@ -181,14 +192,17 @@ void adjust()
 	Average it (per sensor, keeps track of sensors internally) using an exponentially decaying running average
 	Return the number of fine dll steps required, based on that average and sensor calibration parameters
 */
-static int32_t chiptemp_flt_x256[N_SENSORS];
+static int32_t chiptemp_flt_x256[N_SENSORS] = {INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN};
 
 static void filt_temperature(int sidx, int32_t chiptemp)
 {
 	if(sidx < 0 || sidx >= N_SENSORS)
 		error(1234);
 
-	chiptemp_flt_x256[sidx] = (7*chiptemp_flt_x256[sidx] + (chiptemp<<8))>>3;
+	if(chiptemp_flt_x256[sidx] == INT32_MIN)
+		chiptemp_flt_x256[sidx] = (chiptemp<<8);
+	else
+		chiptemp_flt_x256[sidx] = (7*chiptemp_flt_x256[sidx] + (chiptemp<<8))>>3;
 }
 
 static int calc_dll_steps(int sidx, int freq)
@@ -204,7 +218,7 @@ static int calc_dll_steps(int sidx, int freq)
 
 static int cnta = 0;
 
-// A delay was needed here once. Don't know why it's OK now without.
+// A delay was needed here once, for unknown reasons. Don't know why it's OK now without.
 #define EPC_MODECHANGE_DELAY()
 //delay_ms(1)
 
@@ -256,7 +270,8 @@ INIT_TOF_TS();
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
 
-	uint16_t stray = measure_stray();
+	// 16000-15000 = 1000. 16000-14000 = 2000
+	int stray = measure_stray();
 	// TODO: temperature compensation and calibration for stray phototransistors
 
 	// Do something here:
@@ -265,7 +280,7 @@ INIT_TOF_TS();
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
 
-	if(stray < 7000)
+	if(stray > 13000)
 	{
 		total_sensor_obstacle(sidx);
 		if(ssval_out) *ssval_out = -1;
@@ -285,19 +300,12 @@ TOF_TS(2); // 0.7ms
 
 
 	if(avg_ampl < 1) avg_ampl = 1;
-	int mid_exp = 9000 / avg_ampl; // 300us at amplitude 30
+	int mid_exp = 10000 / avg_ampl; // 333us at amplitude 30
 
 	/*
 		"Stray estimate" sees beyond the active image area, directly at the wide LEDs.
-
-		16000 is a typical value of a non-obstructed view (needs proper calibration)
-		This is from the pullup resistor producing adc value of 16383. Phototransistors pull it down by dV=Rpullup*Iphoto.
-		Bright object just some 20 cm away -> about 8000-9000. This would be equal to the minimum exposure.
-
-		(16000-stray) is an almost linear representation of the stray light amplitude
 	*/
-	if(stray>15999) stray = 15999; // prevent divide by zero
-	int mid_exp_by_stray = 150000 / (16000-stray); // 15500 -> 300; 14000->75...
+	int mid_exp_by_stray = 150000 / stray;
 
 	if(mid_exp_by_stray < SUPERSHORT_US) mid_exp_by_stray = SUPERSHORT_US; 
 
@@ -306,16 +314,18 @@ TOF_TS(2); // 0.7ms
 	// TODO: In addition to just lowering int.time based on stray estimate,
 	// inject it to the lens compensation model to improve the data.
 
-	//DBG_PR_VAR_I32(sidx);
-	//DBG_PR_VAR_I32(avg_ampl);
-	//DBG_PR_VAR_I32(mid_exp);
-
+//	DBG_PR_VAR_I32(sidx);
+//	DBG_PR_VAR_I32(avg_ampl);
+//	DBG_PR_VAR_I32(mid_exp);
+//	DBG_PR_VAR_I32(stray);
+//	DBG_PR_VAR_I32(mid_exp_by_stray);
+//
 	if(mid_exp_by_stray < mid_exp)
 	{
 		mid_exp = mid_exp_by_stray;
 
-		//uart_print_string_blocking(" STRAY LIMITED ---> ");
-		//DBG_PR_VAR_I32(mid_exp_by_stray);
+//		uart_print_string_blocking(" STRAY LIMITED ---> ");
+//		DBG_PR_VAR_I32(mid_exp_by_stray);
 	}
 
 	// Before clipping the max exposure value, deliver it to the long_wide.
@@ -323,7 +333,7 @@ TOF_TS(2); // 0.7ms
 	// but the maximum in good conditions can be higher.
 	if(ssval_out) *ssval_out = mid_exp;
 
-	if(mid_exp > 300) mid_exp = 300;  // long inttime max 2100us
+	if(mid_exp > 500) mid_exp = 500;  // long inttime max 3500us
 
 	// TODO: skip everything, report obstacle, if expval is much below SUPERSHORT_US
 
@@ -465,7 +475,7 @@ TOF_TS(9); //1.5ms
 
 TOF_TS(10); //8.3ms --> 5.6ms after putting in ITCM
 
-//	tof_to_obstacle_avoidance(ampldist, sidx);
+	tof_to_obstacle_avoidance(ampldist, sidx);
 
 TOF_TS(11); //0.8ms
 
@@ -476,6 +486,199 @@ TOF_TS(11); //0.8ms
 
 	adjust();
 }
+
+
+
+static void chamount_set(int sidx)
+{
+	// Compensation BW + chiptemp
+	dcmi_crop_wide();
+	epc_greyscale(); block_epc_i2c(4);
+	EPC_MODECHANGE_DELAY();
+	epc_dis_leds(); block_epc_i2c(4);
+	epc_clk_div(1); block_epc_i2c(4);
+	epc_intlen(intlen_mults[1], INTUS(COMP_AMBIENT_INTLEN_US)); block_epc_i2c(4);
+	epc_temperature_magic_mode(sidx);
+	dcmi_start_dma(&mono_comp, SIZEOF_MONO);
+	epc_trig();
+
+	// Do something here
+
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
+
+	int32_t chiptemp = epc_read_temperature(sidx);
+	epc_temperature_magic_mode_off(sidx);
+	filt_temperature(sidx, chiptemp);
+
+	// SUPER SHORT WIDE
+	// Works as autoexposure basis - may work as a HDR short in the case where the autoexp would result in the shortest possible time.
+
+	epc_fine_dll_steps(calc_dll_steps(sidx, 0)); block_epc_i2c(4);
+	epc_4dcs(); block_epc_i2c(4);
+	EPC_MODECHANGE_DELAY();
+	epc_ena_wide_leds(); block_epc_i2c(4);
+
+	epc_clk_div(0); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(SUPERSHORT_US*bubblegum)); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
+	epc_trig();
+
+	// 16000-15000 = 1000. 16000-14000 = 2000
+	int stray = measure_stray();
+	// TODO: temperature compensation and calibration for stray phototransistors
+
+	// Do something here:
+		copy_cal_to_shadow(sidx, 0);
+
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
+
+
+	if(stray > 13000)
+	{
+		total_sensor_obstacle(sidx);
+		return;
+	}
+
+	conv_4dcs_to_2dcs_wide(img20, img31, &dcsa, mono_comp.img);
+
+	int avg_ampl = calc_avg_ampl_x256(img20, img31);
+
+	if(avg_ampl < 1) avg_ampl = 1;
+	int mid_exp = 10000 / avg_ampl; // 333us at amplitude 30
+
+	/*
+		"Stray estimate" sees beyond the active image area, directly at the wide LEDs.
+	*/
+	int mid_exp_by_stray = 150000 / stray;
+
+	if(mid_exp_by_stray < SUPERSHORT_US) mid_exp_by_stray = SUPERSHORT_US; 
+
+	if(mid_exp < SUPERSHORT_US) mid_exp = SUPERSHORT_US;
+
+	// TODO: In addition to just lowering int.time based on stray estimate,
+	// inject it to the lens compensation model to improve the data.
+
+//	DBG_PR_VAR_I32(sidx);
+//	DBG_PR_VAR_I32(avg_ampl);
+//	DBG_PR_VAR_I32(mid_exp);
+//	DBG_PR_VAR_I32(stray);
+//	DBG_PR_VAR_I32(mid_exp_by_stray);
+//
+	if(mid_exp_by_stray < mid_exp)
+	{
+		mid_exp = mid_exp_by_stray;
+
+//		uart_print_string_blocking(" STRAY LIMITED ---> ");
+//		DBG_PR_VAR_I32(mid_exp_by_stray);
+	}
+
+	if(mid_exp > 100) mid_exp = 100;  // long inttime max 700us
+
+	int long_exp = mid_exp*HDR_FACTOR;
+
+	// 6.66MHz 2dcs for dealiasing - same inttime as the long HDR exp
+	// (Going from 20MHz to 6.66MHz gives amplitude gain of at least 2, enough to compensate
+	// for halving the amplitude from using 2DCS mode)
+
+	epc_fine_dll_steps(calc_dll_steps(sidx, 2)); block_epc_i2c(4);
+
+	epc_2dcs(); block_epc_i2c(4);
+	epc_clk_div(2); block_epc_i2c(4);
+	epc_intlen(intlen_mults[2], INTUS(long_exp*bubblegum)); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcs2, SIZEOF_2DCS);
+	epc_trig();
+
+	// Do something here
+
+
+		copy_cal_to_shadow(sidx, 2);
+
+
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
+
+	// HDR mid exp
+
+	epc_fine_dll_steps(calc_dll_steps(sidx, 0)); block_epc_i2c(4);
+
+	epc_clk_div(0); block_epc_i2c(4);
+	epc_intlen(intlen_mults[0], INTUS(mid_exp*bubblegum)); block_epc_i2c(4);
+	epc_4dcs(); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
+	epc_trig();
+	adjust();
+
+	// Do something here - shadow cal set = 2
+		compensated_2dcs_6mhz_dist_masked(lofreq_dist, &dcs2, mono_comp.img);
+
+		copy_cal_to_shadow(sidx, 0);
+
+
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
+
+	// Clears img20 and img31, collects the first (shorter) HDR exposure there
+	conv_4dcs_to_2dcs_hdr0_wide(img20, img31, &dcsa, mono_comp.img);
+
+	// HDR long exp
+
+	epc_intlen(intlen_mults[0], INTUS(long_exp*bubblegum)); block_epc_i2c(4);
+
+	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
+	epc_trig();
+	adjust();
+
+	// Do something here
+
+	if(poll_capt_with_timeout_complete()) log_err(sidx);
+
+	// Adds the second (longer) HDR exposure on the top of the existing exposure, replacing data whenever possible (not overexposed):
+	conv_4dcs_to_2dcs_hdr1_wide(img20, img31, &dcsa, mono_comp.img);
+
+	// Deblur/deflare based on uniquely calibrated lens models:
+	run_lens_model(img20, img20_lenscorr, tof_calibs[sidx]);
+	run_lens_model(img31, img31_lenscorr, tof_calibs[sidx]);
+
+	// Remove data that needed high amounts of correction - it's likely too wrong, despite correction:
+	mask_highly_corrected(0, img20_lenscorr, img31_lenscorr, img20, img31);
+
+	// Dealias and calculate final amplitude&distance map:
+	compensated_tof_calc_ampldist(0, ampldist, img20_lenscorr, img31_lenscorr, lofreq_dist, 0, long_exp);
+
+	tof_to_chamount(ampldist, sidx);
+}
+
+void request_chamount_mid_image()
+{
+	#ifdef CONTACTS_ON_BACK
+		tof_mux_select(5);
+		chamount_set(5);
+	#else
+		tof_mux_select(0);
+		chamount_set(0);
+	#endif
+}
+
+void request_chamount_full_images()
+{
+	#ifdef CONTACTS_ON_BACK
+		tof_mux_select(4);
+		chamount_set(4);
+		tof_mux_select(5);
+		chamount_set(5);
+		tof_mux_select(6);
+		chamount_set(6);
+	#else
+		tof_mux_select(9);
+		chamount_set(9);
+		tof_mux_select(0);
+		chamount_set(0);
+		tof_mux_select(1);
+		chamount_set(1);
+	#endif
+}
+
 
 static void long_wide_set(int sidx, int ss_val)
 {
@@ -626,9 +829,9 @@ static void long_narrow_set(int sidx, int avg_ampl)
 
 	int long_exp = short_exp * HDR_FACTOR;
 
-	//DBG_PR_VAR_I32(sidx);
-	//DBG_PR_VAR_I32(avg_ampl);
-	//DBG_PR_VAR_I32(short_exp);
+	DBG_PR_VAR_I32(sidx);
+	DBG_PR_VAR_I32(avg_ampl);
+	DBG_PR_VAR_I32(short_exp);
 
 	int dealias_exp = (long_exp*19)/10;
 
@@ -786,7 +989,7 @@ static void obstacle_set(int sidx)
 	dcmi_start_dma(&dcsa, SIZEOF_4DCS);
 	epc_trig();
 
-	uint16_t stray = measure_stray();
+	int stray = measure_stray();
 
 	//DBG_PR_VAR_I32(stray);
 
@@ -795,7 +998,7 @@ static void obstacle_set(int sidx)
 
 	if(poll_capt_with_timeout_complete()) log_err(sidx);
 
-	if(stray < 7000)
+	if(stray > 13000)
 	{
 		total_sensor_obstacle(sidx);
 		return;
@@ -931,21 +1134,8 @@ void run_cycle()
 		tof_slam_set->flags = 0;
 	}
 
-	if(0) //!drive_is_robot_moving())
-	{
-		delay_ms(40);
-		goto SKIP_TOF;
-	}
 
-//	static int filtered_bat_mv_x256; 
-//	filtered_bat_mv_x256 = ((bat_mv<<8) + 15*filtered_bat_mv_x256)>>4;
-
-
-//	sidx = 7;
-
-//		goto SKIP_TOF;
-
-
+	
 
 	/*
 	All the sensors run in circular round robin, providing "basic" measurements, sometimes
@@ -959,6 +1149,29 @@ void run_cycle()
 	*/
 
 	static int basic_sidx = 0;
+
+
+	static int skip;
+
+	if(!drive_is_robot_moving() && basic_sidx == 0)
+	{
+		skip = 1;
+	}
+
+	if(skip)
+	{
+		if(drive_is_robot_moving())
+		{
+			skip = 0;
+			basic_sidx = 0;
+		}
+		else
+		{
+			delay_ms(40);
+			goto SKIP_TOF;
+		}
+	}
+
 
 	#if 0
 		#define N_LONG_SLOTS 3
@@ -1007,9 +1220,10 @@ void run_cycle()
 
 
 	int take_wid_long = 0;
-	int take_nar_long = 0;
 
-	#if 1
+	int take_nar_long = 1; // For now, just take narrow shots every time
+
+	#if 0
 		for(int i=0; i<N_LONG_SLOTS; i++)
 		{
 //			if(basic_sidx == wid_long_sidxs[i])
@@ -1022,13 +1236,14 @@ void run_cycle()
 	if(take_wid_long && take_nar_long)
 		error(573);
 
-	extern int chafind_enabled;
+/*	extern int chafind_enabled;
 	if(chafind_enabled)
 	{
 		// Don't waste time doing the longs when aligning to charger
 		take_wid_long = 0;
 		take_nar_long = 0;
 	}
+*/
 
 	// On hand-made prototype, sensors 6 and 9 have broken LED strings and need longer exposure
 	#ifdef REV2A
@@ -1065,8 +1280,6 @@ void run_cycle()
 	}
 
 	
-	obstacle_set(basic_sidx);
-	take_nar_long = 0;
 	basic_set(basic_sidx, &ssval, take_nar_long?(&narrow_avg_ampl):NULL);
 	latest_timestamps[basic_sidx] = cnt_100us;
 
@@ -1120,7 +1333,7 @@ void run_cycle()
 
 
 	// Take quick obstacle avoidance shots - don't do it if we are mounting to charger
-	if(!chafind_enabled)
+	if(1)// !chafind_enabled)
 	{
 
 		// Allow max three back-to-back obstacle images, to prevent starvation of round-robin measurements
@@ -1184,9 +1397,18 @@ void run_cycle()
 
 	adjust();
 
-	micronavi_fsm();
-
 	SKIP_TOF:;
+
+
+	if(uart_input() == 'l')
+	{
+		find_charger();
+	}
+
+	extern void chamount_freerun_fsm();
+
+	chamount_freerun_fsm();
+
 
 	if(gen_data && pwr_status)
 	{
@@ -1224,6 +1446,7 @@ void run_cycle()
 //		delay_ms(10);
 		adjust();
 	}	
+
 
 	//profile_cpu_blocking_20ms();
 

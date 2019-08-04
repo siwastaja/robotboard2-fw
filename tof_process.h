@@ -407,6 +407,8 @@ extern const tof_calib_t * const tof_calibs[N_SENSORS];
 #include "../robotsoft/api_board_to_soft.h"
 
 void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx);
+void tof_to_chamount(uint16_t* ampldist, int sidx);
+
 void total_sensor_obstacle(int sidx);
 
 void verify_calibration();

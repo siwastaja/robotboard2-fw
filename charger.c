@@ -693,7 +693,7 @@ void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 //#define ERR_INTEGRAL_MAX (10*256)
 
 #define ERR_INTEGRAL_MIN (-35*256)
-#define ERR_INTEGRAL_MAX (19*256)
+#define ERR_INTEGRAL_MAX (25*256)
 
 // 66.27% CPU
 // Changed pid_i and bit_p to fixed shifts:
@@ -1237,7 +1237,11 @@ void charger_freerunning_fsm()
 			{
 				combined_current_setpoint = 2000;
 				combined_max_output_power = 190000.0*0.93; // Normal 200W charger
-				combined_max_output_current = 20000;
+				#ifdef BATTERY_SIZE_L
+					combined_max_output_current = 20000;
+				#else
+					combined_max_output_current = 10000;
+				#endif
 				start_phab(1);
 				beep(30, 1000, -800, 100);
 
@@ -1247,7 +1251,7 @@ void charger_freerunning_fsm()
 					#ifdef BATTERY_SIZE_L
 						combined_max_output_power = 420000.0*0.92; 
 					#else
-						combined_max_output_power = 220000.0*0.92; 					
+						combined_max_output_power = 220000.0*0.92;
 					#endif
 				}
 

@@ -15,7 +15,7 @@
 //#define STOP_LEDS_ON
 #define LEDS_ON
 
-#define G_DC_MOTDET_TH 500 // Up to 300 generates false noise detections, especially if there is any vibration nearby
+#define G_DC_MOTDET_TH 800 // Up to 300 generates false noise detections, especially if there is any vibration nearby
 #define G_AC_MOTDET_TH (300*256) // threshold after DC offset correction
 
 #define GYRO_X_BLANKING_TH (100*256)
@@ -89,6 +89,9 @@ void set_top_speed_max(int old_style_value)
 {
 	max_ang_speed = (double)old_style_value / 5.0;
 	max_lin_speed = (double)old_style_value / 2.0;
+
+//	max_ang_speed = (double)old_style_value / 4.0;
+//	max_lin_speed = (double)old_style_value / 1.2;
 
 	if(max_ang_speed < min_ang_speed) max_ang_speed = min_ang_speed;
 	if(max_lin_speed < min_lin_speed) max_lin_speed = min_lin_speed;
@@ -173,20 +176,42 @@ void straight_rel(int32_t mm)
 //	do_start = 1;
 }
 
-void rotate_rel(int32_t ang32)
+void rotate_rel(int32_t ang32, int accurate)
 {
 	robot_moves();
 
 //	uart_print_string_blocking("rotate_rel\r\n");
 //	DBG_PR_VAR_I32(ang32);
+//	DBG_PR_VAR_I32(ang_to_target);
 	ang_to_target = cur_pos.ang + (uint32_t)ang32;
-	store_lin_err = 0;
+//	DBG_PR_VAR_I32(ang_to_target);
+//	store_lin_err = 0;
 	mode_xy = 0;
 
 	if(stop_indicators == 0)
 		beep(75, 800, -600, 30);
 
-	accurot = 1;
+	accurot = accurate;
+
+//	do_start = 1;
+}
+
+void rotate_rel_on_fly(int32_t ang32, int accurate)
+{
+	robot_moves();
+
+//	uart_print_string_blocking("rotate_rel\r\n");
+//	DBG_PR_VAR_I32(ang32);
+//	DBG_PR_VAR_I32(ang_to_target);
+	ang_to_target = ang_to_target + (uint32_t)ang32;
+//	DBG_PR_VAR_I32(ang_to_target);
+//	store_lin_err = 0;
+	mode_xy = 0;
+
+	if(stop_indicators == 0)
+		beep(75, 800, -600, 30);
+
+	accurot = accurate;
 
 //	do_start = 1;
 }
@@ -237,9 +262,12 @@ void execute_corr_pos()
 		error(130);
 
 	// Divide by 2 by only shifting 15 places instead of 16.
-	dx<<=15;
-	dy<<=15;
-	da/=2;
+//	dx<<=15;
+//	dy<<=15;
+//	da/=2;
+
+	dx<<=16;
+	dy<<=16;
 
 	cur_pos.x += dx;
 	cur_pos.y += dy;
@@ -255,7 +283,7 @@ void execute_corr_pos()
 
 static uint32_t ang_to_target;
 
-static void stop()
+static void stop(int reason)
 {
 	target_pos = cur_pos;
 	new_direction = 0;
@@ -264,13 +292,14 @@ static void stop()
 //	do_start = 0;
 	ang_to_target = cur_pos.ang;
 	backmode = 2; // auto decision
+//	DBG_PR_VAR_I32(reason);
 }
 
 void cmd_stop_movement()
 {
 	stop_chafind();
 	lock_processing = 1;
-	stop();
+	stop(1);
 	micronavi_status = 0;
 	lock_processing = 0;
 }
@@ -468,7 +497,7 @@ static int rotation_fsm(int cmd)
 	{
 		cmd_motors(1000);
 		state = 0;
-		stop();
+		stop(2);
 	}
 	else if(cmd == ROTA_CMD_STOP)
 	{
@@ -1500,7 +1529,7 @@ void drive_handler()
 	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
 
 	static double lin_speed;
-	double max_lin_speed_by_lin_err = 5.0 + 0.05*(double)abso((lin_err>>16)); // 400mm error -> speed unit 20
+	double max_lin_speed_by_lin_err = 7.0 + 0.07*(double)abso((lin_err>>16)); // 400mm error -> speed unit 35
 	double max_lin_speed_by_ang_err;
 
 	if(accurot)
@@ -1656,7 +1685,7 @@ void drive_handler()
 	// All stopping conditions first:
 	if(!motors_enabled)
 	{
-		stop();
+		stop(3);
 	}
 	else if(run)
 	{
@@ -1672,7 +1701,8 @@ void drive_handler()
 		}
 		else
 		{
-			if(ang_err > -3*ANG_0_5_DEG && ang_err < 3*ANG_0_5_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)
+			if((accurot && (ang_err > -3*ANG_0_5_DEG && ang_err < 3*ANG_0_5_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)) ||
+			  (!accurot && (ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)) )
 			{
 				if(stop_indicators == 0)
 					beep(100, 2000, 0, 50);
@@ -1695,7 +1725,7 @@ void drive_handler()
 			#endif
 		}
 		micronavi_status |= 1UL<<0;
-		stop();
+		stop(4);
 
 	}
 	else if(ignore_back==0 && run && correcting_linear && ((lin_err < -50*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_err < -300*65536 && obstacle_back_far > OBST_THRESHOLD_FAR)))
@@ -1711,7 +1741,7 @@ void drive_handler()
 		}
 
 		micronavi_status |= 1UL<<0;
-		stop();
+		stop(5);
 	}
 	else if(ignore_left==0 && run && correcting_angle && ((ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 25*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD_FAR)))
 	{
@@ -1725,7 +1755,7 @@ void drive_handler()
 		}
 
 		micronavi_status |= 1UL<<2;
-		stop();
+		stop(6);
 	}
 	else if(ignore_right==0 && run && correcting_angle && ((ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -25*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD_FAR)))
 	{
@@ -1739,7 +1769,7 @@ void drive_handler()
 		}
 		micronavi_status |= 1UL<<2;
 
-		stop();
+		stop(7);
 	}
 
 	if(ignore_left > 0) ignore_left--;

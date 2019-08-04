@@ -207,7 +207,8 @@ void bldc_1khz()
 }
 #endif
 
-#define STOP_LEN 6000 // approx half a second.
+//#define STOP_LEN 6000 // approx half a second.
+#define STOP_LEN 9000
 #define STOP_THRESHOLD (SUBSTEPS*3/2)
 
 volatile int dbg_err0, dbg_err1, dbg_sin_mult, dbg_m;

@@ -1309,18 +1309,6 @@ void ITCM compensated_tof_calc_ampldist_nodealias_noampl_nonarrow(uint16_t* rest
 
 
 
-int chafind_enabled = 0;
-
-void tof_enable_chafind_datapoints()
-{
-	chafind_enabled = 1;
-}
-
-void tof_disable_chafind_datapoints()
-{
-	chafind_enabled = 0;
-}
-
 extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
 extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
 
@@ -1590,6 +1578,7 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 					int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
 
 
+
 					#ifdef EXT_VACUUM
 						// VACUUM APP: Ignore the nozzle
 						if(local_z < 240 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
@@ -1659,6 +1648,122 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 		#endif
 	}
 #endif
+
+
+void ITCM tof_to_chamount(uint16_t* ampldist, int sidx)
+{
+	if(sidx < 0 || sidx >= N_SENSORS) error(150);
+
+//		uart_print_string_blocking("\r\n");
+
+	//if(sidx != 0) return;
+
+	uint16_t local_sensor_hor_ang = tof_calibs[sidx]->mount.ang_rel_robot;
+	uint16_t local_sensor_ver_ang = tof_calibs[sidx]->mount.vert_ang_rel_ground;
+
+	int32_t  local_sensor_x = tof_calibs[sidx]->mount.x_rel_robot;
+	int32_t  local_sensor_y = tof_calibs[sidx]->mount.y_rel_robot;
+	int32_t  local_sensor_z = tof_calibs[sidx]->mount.z_rel_ground;
+
+	for(int py=1; py<TOF_YS-2; py++)
+	{
+		for(int px=30+1; px<TOF_XS-30-2; px++)
+		{
+			int32_t refdist = ampldist[(py+0)*TOF_XS+(px+0)]&DIST_MASK;
+			if(refdist == DIST_UNDEREXP || refdist == DIST_OVEREXP)
+				continue;
+
+			int32_t n_conform = 0;
+			int32_t avg = 0;
+			for(int iy=-1; iy<=1; iy++)
+			{
+				for(int ix=-1; ix<=1; ix++)
+				{
+					int32_t dist = ampldist[(py+iy)*TOF_XS+(px+ix)]&DIST_MASK;
+					if(dist != DIST_UNDEREXP && dist != DIST_OVEREXP && dist > refdist-(120>>DIST_SHIFT) && dist < refdist+(120>>DIST_SHIFT))
+					{
+						avg+=dist;
+						n_conform++;
+					}
+				
+				}
+			}
+
+			if(n_conform >= 8)
+			{
+				int32_t d = (avg<<DIST_SHIFT) / n_conform;
+
+				uint16_t hor_ang, ver_ang;
+
+				int px_idx = px/2;
+				int py_idx = py/2;
+
+				int px_rema = px-px_idx*2;
+				int py_rema = py-py_idx*2;
+
+				hor_ang = -(tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + tof_calibs[sidx]->hor_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+1)])/2;
+				ver_ang =  (tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + tof_calibs[sidx]->ver_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+1)])/2;
+
+				// Angular calibration is at half*half resolution - interpolate
+				if(px_rema && py_rema)
+				{
+					hor_ang = -((int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+1)])/2;
+					ver_ang =  ((int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+1)])/2;
+				}
+				else if(px_rema)
+				{
+					hor_ang = -((int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx+0)*(TOF_XS/2)+(px_idx+1)])/2;
+					ver_ang =  ((int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx+0)*(TOF_XS/2)+(px_idx+1)])/2;
+				}
+				else if(py_rema)
+				{
+					hor_ang = -((int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+0)])/2;
+					ver_ang =  ((int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+0)])/2;
+				}
+				else
+				{
+					hor_ang = -tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)];
+					ver_ang =  tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)];
+				}
+
+				#ifdef DBGPRVOX_AVOIDANCE
+
+					if(py*TOF_XS+px == PIX)
+						DBG_PR_VAR_I32(d);
+
+					if(py*TOF_XS+px == PIX)
+					{
+						DBG_PR_VAR_U16(hor_ang);
+						DBG_PR_VAR_U16(ver_ang);
+					}
+				#endif
+
+
+				uint16_t local_comb_hor_ang = hor_ang + local_sensor_hor_ang;
+				uint16_t local_comb_ver_ang = ver_ang + local_sensor_ver_ang;
+
+
+				int32_t local_x = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_cos_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_x;
+				int32_t local_y = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_sin_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_y;
+				int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
+
+
+				if(local_z > 100 && local_z < 290)
+				{
+					extern void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_necessary, int source);
+					micronavi_point_in_chafind(local_x, local_y, local_z, 0, 0);
+				}
+			}
+		}
+	}
+
+	#ifdef DBGPRVOX_AVOIDANCE
+		DBG_PR_VAR_I32(insertion_cnt);
+	#endif
+}
+
+
+
 
 void total_sensor_obstacle(int sidx)
 {

@@ -5,7 +5,7 @@
 DEVUSR = pulu
 #DEVIP = 10.3.0.6
 #DEVIP = 192.168.43.59
-DEVIP = 10.42.0.231
+DEVIP = 10.42.0.104
 #DEVIP = 192.168.1.6
 
 CC = arm-none-eabi-gcc
@@ -24,14 +24,18 @@ CFLAGS += -DREV2B
 
 
 # Hard-compiled application(s):
-CFLAGS += -DEXT_VACUUM
-CFLAGS += -DVACUUM_REV2
+#CFLAGS += -DEXT_VACUUM
+#CFLAGS += -DVACUUM_REV2
 
 # Battery size
-CFLAGS += -DBATTERY_SIZE_L
+CFLAGS += -DBATTERY_SIZE_M
+
+# Charger contacts on back?
+#CFLAGS += -DCONTACTS_ON_BACK
 
 #Standard compilation
-OBJ_OS = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o  tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o ext_vacuum_boost.o
+OBJ_OS = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o  tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o
+#ext_vacuum_boost.o
 OBJ_O3 = tof_process.o
 ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s
 
