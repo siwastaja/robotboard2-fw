@@ -693,7 +693,7 @@ void charger_adc2_phb_inthandler() __attribute__((section(".text_itcm")));
 //#define ERR_INTEGRAL_MAX (10*256)
 
 #define ERR_INTEGRAL_MIN (-35*256)
-#define ERR_INTEGRAL_MAX (25*256)
+#define ERR_INTEGRAL_MAX (35*256)
 
 // 66.27% CPU
 // Changed pid_i and bit_p to fixed shifts:
@@ -1153,8 +1153,20 @@ void charger_test2()
 int combined_current_setpoint;
 int combined_max_output_current; // mA - use this to limit the output current to the batteries
 int combined_max_output_power; // mW - use this to limit power from the charger (remember to account for losses)
-#define CV_VOLTAGE (6*4150)
-//#define CV_VOLTAGE 24500 // 88.3%
+#define CV_VOLTAGE (6*4200)
+#define MAX_VOLTAGE_FOR_PERCENTAGE (CV_VOLTAGE-6*2)
+#define MIN_VOLTAGE_FOR_PERCENTAGE (6*3200)
+#define STARTUP_HYSTERESIS (6*50)
+
+
+uint8_t conv_bat_percent(int mv)
+{
+	int bat_percentage = (100*(mv-(MIN_VOLTAGE_FOR_PERCENTAGE)))/(MAX_VOLTAGE_FOR_PERCENTAGE-MIN_VOLTAGE_FOR_PERCENTAGE);
+	if(bat_percentage < 0) bat_percentage = 0;
+	if(bat_percentage > 127) bat_percentage = 127;
+	return bat_percentage;
+
+}
 
 static volatile int was_running_cnt;
 
@@ -1224,7 +1236,7 @@ void charger_freerunning_fsm()
 	int vbat = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
 	if(!charger_is_running())
 	{
-		if(vbat >= CV_VOLTAGE-(6*80)) // too close to full -> don't start
+		if(vbat >= CV_VOLTAGE-STARTUP_HYSTERESIS) // too close to full -> don't start
 		{
 			battery_full = 1;
 			if(vin > 33000 && prev_vin < 10000)

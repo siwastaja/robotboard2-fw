@@ -35,4 +35,5 @@ int charger_get_latest_cur_phb();
 int charger_is_running();
 int charger_is_full();
 int charger_is_mounted();
+uint8_t conv_bat_percent(int mv);
 

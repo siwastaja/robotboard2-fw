@@ -6,6 +6,7 @@ DEVUSR = pulu
 #DEVIP = 10.3.0.6
 #DEVIP = 192.168.43.59
 DEVIP = 10.42.0.104
+#231
 #DEVIP = 192.168.1.6
 
 CC = arm-none-eabi-gcc
@@ -28,7 +29,7 @@ CFLAGS += -DREV2B
 #CFLAGS += -DVACUUM_REV2
 
 # Battery size
-CFLAGS += -DBATTERY_SIZE_M
+#CFLAGS += -DBATTERY_SIZE_L
 
 # Charger contacts on back?
 #CFLAGS += -DCONTACTS_ON_BACK

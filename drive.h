@@ -41,4 +41,8 @@ int32_t get_remaining_lin();
 
 int drive_is_robot_moving();
 
-void self_calib();
+void self_calib(s2b_self_calib_request_t* cmd);
+
+void drive_inject_gyrocal(gyro_cal_t* gc);
+
+void drive_freerunning_fsm();

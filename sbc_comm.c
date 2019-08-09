@@ -744,6 +744,12 @@ void parse_rx_packet()
 			
 			#else
 
+				case CMD_MOVE_REL:
+				{
+					s2b_move_rel_t* m = p_data;
+					rotate_and_straight_rel(m->ang, m->fwd, 1);
+				} break;
+
 				case CMD_MOVE_ABS:
 				{
 					cmd_go_to((s2b_move_abs_t*)p_data);
@@ -789,7 +795,13 @@ void parse_rx_packet()
 
 				case CMD_SELF_CALIB_REQUEST:
 				{
-					self_calib();
+					self_calib((s2b_self_calib_request_t*)p_data);
+				}
+				break;
+
+				case CMD_INJECT_GYROCAL:
+				{
+					drive_inject_gyrocal(&(((s2b_inject_gyrocal_t*)p_data)->gyrocal));
 				}
 				break;
 

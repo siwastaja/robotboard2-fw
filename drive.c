@@ -1,3 +1,15 @@
+/*
+
+Drive module:
+
+Functions that process drive-related commands (go to, move/turn relative, etc.)
+
+Drive handler, triggered by software interrupt by the imu.c module, after the required IMU data
+packet has been fully acquired. Drive handler runtime-compensates IMU data, keeps track of odometry
+and pose estimate, and commands the bldc.c module to produce wheel motion.
+
+*/
+
 #include <stdint.h>
 #include <string.h>
 #include "drive.h"
@@ -11,18 +23,30 @@
 #include "../robotsoft/api_soft_to_board.h"
 #include "audio.h"
 #include "tof_ctrl.h" // for N_SENSORS
+#include "timebase.h" // cnt_100us
 
 //#define STOP_LEDS_ON
 #define LEDS_ON
 
-#define G_DC_MOTDET_TH 800 // Up to 300 generates false noise detections, especially if there is any vibration nearby
-#define G_AC_MOTDET_TH (300*256) // threshold after DC offset correction
+// Motion detection thresholds:
+// When exceeded, robot is considered moving, which has multitude of consequences, such as:
+// - TOF sensors may activate (see run.c)
+// - If still active, the initial gyro DC offset calibration is restarted (boop boop!)
+// - Runtime gyro DC offset calibration is disabled for some time
 
+#define G_DC_MOTDET_TH 800 // Up to 300-500 generates false noise detections, especially if there is any vibration nearby
+#define G_AC_MOTDET_TH (200*256) // threshold after DC offset correction
+
+// Gyro values below blanking are considered 0. This is after DC offset correction.
+// If the DC correction was conceptually perfect, and if the noise was normally distributed,
+// this wouldn't be necessary. In reality, the response is slightly nonlinear and noise distribution
+// not exactly gaussian, so blanking the noise out prevents very slow drifts.
 #define GYRO_X_BLANKING_TH (100*256)
 #define GYRO_Y_BLANKING_TH (100*256)
 #define GYRO_Z_BLANKING_TH (100*256)
 
-#define G_DC_FILT 10 // Quadratic effect, 15 maximum.
+#define G_DC_FILT 14 // Quadratic effect, 15 maximum.
+#define G_DC_FILT_INIT 11 // During gyro init settle
 
 #define MOVING_RESET_VALUE 500
 
@@ -42,6 +66,7 @@ int drive_is_robot_moving()
 	return moving;
 }
 
+static int ignore_commands = 1;
 
 void hires_pos_to_hw_pose(hw_pose_t* out, hires_pos_t* in)
 {
@@ -63,6 +88,7 @@ void new_target(hires_pos_t pos)
 }
 
 int obstacle_front_near, obstacle_back_near, obstacle_right_near, obstacle_left_near; // Written to in tof_process.c
+int obstacle_right_very_near, obstacle_left_very_near; // Written to in tof_process.c
 int obstacle_front_far, obstacle_back_far, obstacle_right_far, obstacle_left_far; // Written to in tof_process.c
 
 int motors_enabled = 0;
@@ -111,6 +137,9 @@ static int accurot;
 
 void cmd_go_to(s2b_move_abs_t* m)
 {
+	if(ignore_commands)
+		return;
+
 	robot_moves();
 	stop_chafind();
 	lock_processing = 1;
@@ -160,6 +189,9 @@ int32_t get_remaining_lin()
 
 void straight_rel(int32_t mm)
 {
+	if(ignore_commands)
+		return;
+
 	robot_moves();
 
 //	uart_print_string_blocking("straight_rel\r\n");
@@ -178,6 +210,9 @@ void straight_rel(int32_t mm)
 
 void rotate_rel(int32_t ang32, int accurate)
 {
+	if(ignore_commands)
+		return;
+
 	robot_moves();
 
 //	uart_print_string_blocking("rotate_rel\r\n");
@@ -198,6 +233,9 @@ void rotate_rel(int32_t ang32, int accurate)
 
 void rotate_rel_on_fly(int32_t ang32, int accurate)
 {
+	if(ignore_commands)
+		return;
+
 	robot_moves();
 
 //	uart_print_string_blocking("rotate_rel\r\n");
@@ -218,6 +256,9 @@ void rotate_rel_on_fly(int32_t ang32, int accurate)
 
 void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_first)
 {
+	if(ignore_commands)
+		return;
+
 	robot_moves();
 
 //	uart_print_string_blocking("rotate_and_straight_rel\r\n");
@@ -305,12 +346,22 @@ void cmd_stop_movement()
 }
 
 static int start_self_calib;
+static int self_calib_dir;
+static int self_calib_turns;
+static int self_calib_speed;
+static int gyro_calib_state;
 
-void self_calib()
+void self_calib(s2b_self_calib_request_t* cmd)
 {
 	//uart_print_string_blocking("self_calib()\r\n");
 
-	start_self_calib = 1;
+	gyro_calib_state = 1;
+	self_calib_turns = abso(cmd->n_turns);
+	self_calib_dir = (cmd->n_turns<0)?1:0;
+	self_calib_speed = cmd->speed;
+
+	if(self_calib_turns < 1 || self_calib_turns > 100 || self_calib_speed < 2 || self_calib_speed > 100)
+		error(111);
 }
 
 static int ignore_front, ignore_left, ignore_back, ignore_right;
@@ -512,7 +563,7 @@ static int rotation_fsm(int cmd)
 		robot_moves();
 		accurot = 1;
 		new_direction = 1;
-		set_top_speed_max(30);
+		//set_top_speed_max(30);
 		n_rounds = 0;
 		expecting_full_turn = 0;
 		state = 1;
@@ -523,7 +574,7 @@ static int rotation_fsm(int cmd)
 		robot_moves();
 		accurot = 1;
 		new_direction = 1;
-		set_top_speed_max(30);
+		//set_top_speed_max(30);
 		start_ang = cur_pos.ang;
 		n_rounds = 0;
 		expecting_full_turn = 0;
@@ -585,15 +636,13 @@ static int rotation_fsm(int cmd)
 
 
 // IMU magnetometer orientations on the PCB, 0 degrees = East, 90 degrees = North
-static const uint32_t m_orientations[6] = {270*UANG_1_DEG, 90*UANG_1_DEG, 0*UANG_1_DEG, 180*UANG_1_DEG, 0*UANG_1_DEG, 180*UANG_1_DEG};
+static const uint32_t m_orientations[6] = {90*UANG_1_DEG, 270*UANG_1_DEG, 0*UANG_1_DEG, 180*UANG_1_DEG, 0*UANG_1_DEG, 180*UANG_1_DEG};
 
-static const int     m_num    = 3;
-static const uint8_t m_use[6] = {0,0,1,1,0,1};
+static const int     m_num    = 6;
+static const uint8_t m_use[6] = {1,1,1,1,1,1};
 
 
-static int init_calib_state = 0;
 static int compass_state;
-static int gyro_calib_state;
 
 
 static uint32_t latest_compass_heading;
@@ -644,7 +693,7 @@ static void calc_compass_calib(int imu)
 	int avg_d = (avg_dx + avg_dy)/2;
 
 	// The absolute scale of the numbers is irrelevant. Here we use x16384 fixed point math.
-	// Could use floating point instead, but limiting the usage now when there is no reason to.
+	// Could use floating point instead, but limiting the FP usage now when there is no reason to.
 
 	m_iron_calib[imu].scale_x = (16384*avg_d) / avg_dx;
 	m_iron_calib[imu].scale_y = (16384*avg_d) / avg_dy;
@@ -800,7 +849,7 @@ void compass_handler()
 
 		// Any measurement deviating a lot from others should be treated as failure
 		// If nothing else, averaging through wrapping fails if the differences are too big.
-		for(int i=0; i<6; i++)
+/*		for(int i=0; i<6; i++)
 		{
 			if(!m_use[i])
 				continue;
@@ -809,6 +858,7 @@ void compass_handler()
 //				error(134); // TODO: bail out softly
 			}
 		}
+*/
 
 		if(wrap)
 			avg += ANG_180_DEG;
@@ -819,19 +869,19 @@ void compass_handler()
 			compass_heading->combined_heading = avg;
 	}
 
-	if(start_self_calib)
+/*	if(start_self_calib)
 	{
 		//DBG_PR_VAR_I16(start_self_calib);
-		//compass_state = 1;
-		gyro_calib_state = 1;
+		compass_state = 1;
+		//gyro_calib_state = 1;
 		start_self_calib = 0;
 	}
-
-	gyro_calib_fsm();
-	compass_fsm();
+*/
+	//gyro_calib_fsm();
+//	compass_fsm();
 
 	static int cnt = 0;
-	if((gyro_calib_state > 0 && gyro_calib_state < 8) || (compass_state > 0 && compass_state < 4) || (init_calib_state > 0))
+	if((gyro_calib_state == 2) || (compass_state > 0 && compass_state < 4))
 	{
 		cnt++;
 		if(cnt >= 20)
@@ -843,8 +893,10 @@ void compass_handler()
 
 }
 
-static int32_t gyro_mult_pos = 97695;
-static int32_t gyro_mult_neg = 96895;
+
+
+static int32_t gyro_mult_pos = 2437;
+static int32_t gyro_mult_neg = 2437;
 
 // Linear measurements are (mm*65536). Hall steps are (actual steps *256).
 // Both numenator and denominator are reduced by x256,
@@ -913,170 +965,107 @@ static void calc_gyro_corr(uint32_t m_start, uint32_t m_end, uint32_t g_start, u
 
 }
 
+static int64_t gyrocal_rate_accum;
+static int32_t gyrocal_rate_accum_n;
 #define N_GYRO_CALIB_TURNS 30
 // Calibrates gyro with compass
 static void gyro_calib_fsm()
 {
-	static int timer;
-	static uint32_t compass_heading_start;
-	static uint32_t gyro_heading_start;
-	static int wrap;
-	static uint64_t accum;
-	static int n_accum;
 	switch(gyro_calib_state)
 	{
 		case 0:
 		{
-
+			// Idle
 		} break;
 
 		case 1:
 		{
-			compass_state = 1;
+			max_ang_speed = self_calib_speed;
+			DBG_PR_VAR_I32(self_calib_speed);
+			rotation_fsm(self_calib_dir?ROTA_CMD_START_NEGANG:ROTA_CMD_START_POSANG);
+			gyrocal_rate_accum = 0;
+			gyrocal_rate_accum_n = 0;
+
 			gyro_calib_state++;
-			//DBG_PR_VAR_I32(gyro_calib_state);
 		} break;
 
 		case 2:
 		{
-			if(compass_state == 0)
+			int cur_rounds = rotation_fsm(ROTA_CMD_POLL);
+
+			if(gyrocal_results)
 			{
-				gyro_calib_state = 0; // failure
-				//DBG_PR_VAR_I32(gyro_calib_state);
+				gyrocal_results->n_rounds = cur_rounds;
 			}
-			else if(compass_state == 4)
+
+			if(cur_rounds == self_calib_turns)
 			{
-				timer = 350; // Let the gyro DC correction catch up - also average the compass
-				if(latest_compass_heading < 90*UANG_1_DEG || latest_compass_heading > 270*UANG_1_DEG)
-					wrap = 1;
-				else
-					wrap = 0;
-				accum = 0;
-				n_accum = 0;
+				rotation_fsm(ROTA_CMD_STOP);
+				max_ang_speed = 12.0;
+
+				if(gyrocal_results)
+				{
+					gyrocal_results->avg_rate = gyrocal_rate_accum/gyrocal_rate_accum_n;
+				}
+
 				gyro_calib_state++;
-				//DBG_PR_VAR_I32(gyro_calib_state);
+
 			}
 		} break;
 
 		case 3:
 		{
-			if(timer < 300)
-			{
-				accum += (uint64_t) ((uint32_t)latest_compass_heading + (uint32_t)(wrap?(UANG_180_DEG):0));
-				n_accum++;
-			}
-
-			if(--timer <= 0)
-			{
-				compass_heading_start = (uint32_t)(accum / n_accum) + (uint32_t)(wrap?(UANG_180_DEG):0);
-				gyro_heading_start = cur_pos.ang;
-				max_ang_speed = 8.0;
-				rotation_fsm(ROTA_CMD_START_POSANG);
-				gyro_calib_state++;
-				//DBG_PR_VAR_I32(compass_heading_start/UANG_1_DEG);
-				//DBG_PR_VAR_I32(gyro_heading_start/UANG_1_DEG);
-				//DBG_PR_VAR_I32(gyro_calib_state);
-			}
+			// Success
 		} break;
 
 		case 4:
 		{
-			if(rotation_fsm(ROTA_CMD_POLL) == N_GYRO_CALIB_TURNS)
-			{
-				rotation_fsm(ROTA_CMD_STOP);
-				timer = 350; // Let the robot stop properly, average the compass after that
-				accum = 0;
-				n_accum = 0;
-				gyro_calib_state++;
-				//DBG_PR_VAR_I32(gyro_calib_state);
-			}
-
+			// Failure
 		} break;
 
-		case 5:
-		{
-			if(timer < 300)
-			{
-				accum += (uint64_t) ((uint32_t)latest_compass_heading + (uint32_t)(wrap?(UANG_180_DEG):0));
-				n_accum++;
-			}
-
-			if(--timer <= 0)
-			{
-				uint32_t gyro_heading_end = cur_pos.ang;
-				uint32_t compass_heading_end = (uint32_t)(accum / n_accum) + (uint32_t)(wrap?(UANG_180_DEG):0);
-
-				//DBG_PR_VAR_U32(compass_heading_end/UANG_1_DEG);
-				//DBG_PR_VAR_U32(gyro_heading_end/UANG_1_DEG);
-
-				calc_gyro_corr(compass_heading_start, compass_heading_end, gyro_heading_start, gyro_heading_end, N_GYRO_CALIB_TURNS);
-
-				// Start another round in opposite direction
-				compass_heading_start = compass_heading_end;
-				gyro_heading_start = cur_pos.ang;
-
-				rotation_fsm(ROTA_CMD_START_NEGANG);
-				gyro_calib_state++;
-				//DBG_PR_VAR_I32(gyro_calib_state);
-			}
-		} break;
-
-		case 6:
-		{
-			if(rotation_fsm(ROTA_CMD_POLL) == N_GYRO_CALIB_TURNS)
-			{
-				rotation_fsm(ROTA_CMD_STOP);
-				timer = 350; // Let the robot stop properly
-				accum = 0;
-				n_accum = 0;
-				gyro_calib_state++;
-				//DBG_PR_VAR_I32(gyro_calib_state);
-			}
-
-		} break;
-
-		case 7:
-		{
-			if(timer < 300)
-			{
-				accum += (uint64_t) ((uint32_t)latest_compass_heading + (uint32_t)(wrap?(UANG_180_DEG):0));
-				n_accum++;
-			}
-
-			if(--timer <= 0)
-			{
-				uint32_t gyro_heading_end = cur_pos.ang;
-				uint32_t compass_heading_end = (uint32_t)(accum / n_accum) + (uint32_t)(wrap?(UANG_180_DEG):0);
-
-				//DBG_PR_VAR_U32(compass_heading_end/UANG_1_DEG);
-				//DBG_PR_VAR_U32(gyro_heading_end/UANG_1_DEG);
-
-				calc_gyro_corr(compass_heading_start, compass_heading_end, gyro_heading_start, gyro_heading_end, -1*N_GYRO_CALIB_TURNS);
-
-				gyro_calib_state++;
-				//DBG_PR_VAR_I32(gyro_calib_state);
-
-				if(init_calib_state > 0)
-				{
-					init_calib_state = 0;
-					cur_pos.x = 0;
-					cur_pos.y = 0;
-					cur_pos.ang = compass_heading_end;
-				}
-
-				max_ang_speed = 12.0;
-			}
-		} break;
-
-		case 8:
-		{
-			// Gyro calibrated
-		} break;
 
 		default: error(136); while(1);
 	}
+
+	if(gyrocal_results)
+	{
+		gyrocal_results->state = gyro_calib_state;
+	}
+
 }
 
+void drive_freerunning_fsm()
+{
+	gyro_calib_fsm();
+}
+
+
+#define DEFAULT_GYROMULT 153322782
+#define MIN_GYROMULT ((2*DEFAULT_GYROMULT)/3)
+#define MAX_GYROMULT ((4*DEFAULT_GYROMULT)/3)
+static gyro_cal_t gyrocal = {1, DEFAULT_GYROMULT, 2, DEFAULT_GYROMULT, -1, DEFAULT_GYROMULT, -2, DEFAULT_GYROMULT};
+
+void drive_inject_gyrocal(gyro_cal_t* gc)
+{
+	memcpy(&gyrocal, gc, sizeof(gyro_cal_t));
+
+	DBG_PR_VAR_I32(gyrocal.pos_lospeed_mult);
+	DBG_PR_VAR_I32(gyrocal.pos_lospeed_at);
+	DBG_PR_VAR_I32(gyrocal.pos_hispeed_mult);
+	DBG_PR_VAR_I32(gyrocal.pos_hispeed_at);
+
+	DBG_PR_VAR_I32(gyrocal.neg_lospeed_mult);
+	DBG_PR_VAR_I32(gyrocal.neg_lospeed_at);
+	DBG_PR_VAR_I32(gyrocal.neg_hispeed_mult);
+	DBG_PR_VAR_I32(gyrocal.neg_hispeed_at);
+
+	if(gyrocal.pos_lospeed_at < 1 || gyrocal.pos_hispeed_at < 2 ||
+	   gyrocal.neg_lospeed_at > -1 || gyrocal.neg_hispeed_at > -2 ||
+	   gyrocal.pos_lospeed_mult < MIN_GYROMULT || gyrocal.pos_hispeed_mult > MAX_GYROMULT ||
+	   gyrocal.neg_lospeed_mult < MIN_GYROMULT || gyrocal.neg_hispeed_mult > MAX_GYROMULT)
+		error(137);
+
+}
 
 volatile int drive_is_rotating;
 void drive_handler() __attribute__((section(".text_itcm")));
@@ -1115,6 +1104,35 @@ void drive_handler()
 
 	*/
 
+	static uint32_t prev_cnt_100us;
+
+	static int imu_dt_err_cnt;
+
+	// prev_cnt initializes 0; cnt_100us is already running because timebase initializes before IMUs.
+	// first dt after bootup is excessive. Let's accept that as a single error condition.
+	// At 250Hz expected interrupt rate, expected dt is 40, give or take the IMU RC oscillator inaccuracies.
+	int32_t dt = cnt_100us-prev_cnt_100us;
+	prev_cnt_100us = cnt_100us;
+
+	//DBG_PR_VAR_I32(dt);
+
+	if(dt < 25 || dt > 60)
+	{
+		// Still use the data - assume optimal dt. Log error.
+		dt = 40; 
+		imu_dt_err_cnt+=10000;
+
+		// Initialization always results in one error. Beyond that, we have real errors.
+		if(imu_dt_err_cnt > 30000)
+		{
+			error(139);
+		}
+	}
+	else
+	{
+		if(imu_dt_err_cnt > 0)
+			imu_dt_err_cnt--;
+	}
 
 	for(int imu=0; imu<6; imu++)
 	{
@@ -1125,7 +1143,6 @@ void drive_handler()
 		}
 
 		int32_t cur_gx=0, cur_gy=0, cur_gz=0;
-		//int32_t cur_ax=0, cur_ay=0, cur_az=0;
 
 		for(int n=0; n<imu_g[imu]->n; n++)
 		{
@@ -1150,7 +1167,7 @@ void drive_handler()
 		if(cur_gz < -G_DC_MOTDET_TH || cur_gz > G_DC_MOTDET_TH || 
 		   cur_gx < -G_DC_MOTDET_TH || cur_gx > G_DC_MOTDET_TH ||
 		   cur_gy < -G_DC_MOTDET_TH || cur_gy > G_DC_MOTDET_TH ||
-		   ((ac_th_det_on>20000) && (
+		   ((ac_th_det_on>3000) && (
 		   cur_gz_dccor < -G_AC_MOTDET_TH || cur_gz_dccor > G_AC_MOTDET_TH ||
 		   cur_gx_dccor < -G_AC_MOTDET_TH || cur_gx_dccor > G_AC_MOTDET_TH ||
 		   cur_gy_dccor < -G_AC_MOTDET_TH || cur_gy_dccor > G_AC_MOTDET_TH)))
@@ -1160,18 +1177,21 @@ void drive_handler()
 
 		if(is_robot_moving())
 		{
-//			led_status(9, WHITE, LED_MODE_FADE);
-//			led_status(0, WHITE, LED_MODE_FADE);
-//			led_status(1, WHITE, LED_MODE_FADE);
 		}
 		else
 		{
-//			led_status(9, BLACK, LED_MODE_KEEP);
-//			led_status(0, BLACK, LED_MODE_KEEP);
-//			led_status(1, BLACK, LED_MODE_KEEP);
-			gyro_dc_x[imu] = ((cur_gx<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_x[0])>>G_DC_FILT;
-			gyro_dc_y[imu] = ((cur_gy<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_y[0])>>G_DC_FILT;
-			gyro_dc_z[imu] = ((cur_gz<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_z[0])>>G_DC_FILT;
+			if(ac_th_det_on>3000)
+			{
+				gyro_dc_x[imu] = ((cur_gx<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_x[imu])>>G_DC_FILT;
+				gyro_dc_y[imu] = ((cur_gy<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_y[imu])>>G_DC_FILT;
+				gyro_dc_z[imu] = ((cur_gz<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_z[imu])>>G_DC_FILT;
+			}
+			else
+			{
+				gyro_dc_x[imu] = ((cur_gx<<15) + ((1<<G_DC_FILT_INIT)-1)*gyro_dc_x[imu])>>G_DC_FILT_INIT;
+				gyro_dc_y[imu] = ((cur_gy<<15) + ((1<<G_DC_FILT_INIT)-1)*gyro_dc_y[imu])>>G_DC_FILT_INIT;
+				gyro_dc_z[imu] = ((cur_gz<<15) + ((1<<G_DC_FILT_INIT)-1)*gyro_dc_z[imu])>>G_DC_FILT_INIT;
+			}
 		}
 
 		if(cur_gx_dccor < -GYRO_X_BLANKING_TH || cur_gx_dccor > GYRO_X_BLANKING_TH)
@@ -1198,6 +1218,23 @@ void drive_handler()
 			}
 		}
 
+		#if 0
+			if(imu==0)
+			{
+				o_itoa16_fixed((gyro_dc_z[imu]>>7), printbuf); uart_print_string_blocking(printbuf); 
+
+				uart_print_string_blocking("  ");
+
+				o_itoa16_fixed((cur_gz), printbuf); uart_print_string_blocking(printbuf); 
+
+				uart_print_string_blocking("  ");
+
+				o_itoa16_fixed((cur_gz_dccor>>8), printbuf); uart_print_string_blocking(printbuf); 
+
+				uart_print_string_blocking("\r\n");
+			}
+		#endif
+	
 		// Yaw is easy, all IMUs are mounted on the PCB top layer.
 		if(cur_gz_dccor < -GYRO_Z_BLANKING_TH || cur_gz_dccor > GYRO_Z_BLANKING_TH)
 		{
@@ -1240,8 +1277,13 @@ void drive_handler()
 		a_z += -1*cur_az;
 	}
 
+
 	if(moving > 0)
 		moving--;
+
+	g_pitch *= dt;
+	g_roll *= dt;
+	g_yaw *= dt;
 
 	g_pitch /= 6;
 	g_roll /= 6;
@@ -1251,6 +1293,15 @@ void drive_handler()
 	a_y /= 6;
 	a_z /= 6;
 
+	if(gyro_calib_state == 2)
+	{
+		gyrocal_rate_accum += g_yaw;
+		gyrocal_rate_accum_n++;
+		if(gyrocal_rate_accum_n > 250*60*30) // 30 minutes
+		{
+			error(199);
+		}
+	}
 
 	/*
 		setting: 97495:
@@ -1267,21 +1318,74 @@ void drive_handler()
 
 	*/
 
+
 	if(ac_th_det_on>3000)
 	{
-		if(init_calib_state == 2)
+		ignore_commands = 0;
+
+		// Calculate yaw difference using gyro calibration data
+		// DC offset is already automatically tracked and removed
+		// Only gain nonlinearity is left.
+		// Use measured gain coeffs, at four different angular speed points:
+		// Positive hi and lo angular speed, negative hi and lo angular speed.
+		// Between zero and lo speed, use the lo coeff.
+		// Over hi speed, use the hi coeff
+		// Between the lo and hi rates, interpolate the coeff.
+
+		int64_t dyaw = 0; // Remains zero if g_yaw == 0
+
+		if(g_yaw >= gyrocal.pos_hispeed_at)
+			dyaw = (int64_t)gyrocal.pos_hispeed_mult*(int64_t)g_yaw;
+		else if(g_yaw > 0 && g_yaw <= gyrocal.pos_lospeed_at)
+			dyaw = (int64_t)gyrocal.pos_lospeed_mult*(int64_t)g_yaw;
+		else if(g_yaw > 0) // g_yaw between pos_lospeed_at and pos_hispeed_at - interpolate the multiplier
 		{
-			init_calib_state--;
-			self_calib();
+			int32_t interp_range = gyrocal.pos_hispeed_at - gyrocal.pos_lospeed_at;
+			int32_t interp_loc_x256 = (16*(g_yaw-gyrocal.pos_lospeed_at))/(interp_range/16);
+
+//			o_itoa32(g_yaw, printbuf); uart_print_string_blocking(printbuf); 
+//			uart_print_string_blocking("  ");
+//			o_itoa32(interp_loc_x256, printbuf); uart_print_string_blocking(printbuf); 
+//			uart_print_string_blocking("\r\n");
+
+
+			int32_t wlo = 256-interp_loc_x256;
+			int32_t whi = interp_loc_x256;
+			int64_t mult = (wlo*(int64_t)gyrocal.pos_lospeed_mult + whi*(int64_t)gyrocal.pos_hispeed_mult)>>8;
+
+//			uart_print_string_blocking("P ");
+//			o_itoa32(mult, printbuf); uart_print_string_blocking(printbuf); 
+//			uart_print_string_blocking("\r\n");
+
+			dyaw = (int64_t)mult*(int64_t)g_yaw;
+		}
+		else if(g_yaw <= gyrocal.neg_hispeed_at)
+			dyaw = (int64_t)gyrocal.neg_hispeed_mult*(int64_t)g_yaw;
+		else if(g_yaw < 0 && g_yaw >= gyrocal.neg_lospeed_at)
+			dyaw = (int64_t)gyrocal.neg_lospeed_mult*(int64_t)g_yaw;
+		else if(g_yaw < 0) // g_yaw between neg_lospeed_at and neg_hispeed_at - interpolate the multiplier
+		{
+			int32_t interp_range = gyrocal.neg_hispeed_at - gyrocal.neg_lospeed_at;
+			int32_t interp_loc_x256 = (16*(g_yaw-gyrocal.neg_lospeed_at))/(interp_range/16);
+
+			int32_t wlo = 256-interp_loc_x256;
+			int32_t whi = interp_loc_x256;
+			int64_t mult = (wlo*(int64_t)gyrocal.neg_lospeed_mult + whi*(int64_t)gyrocal.neg_hispeed_mult)>>8;
+
+//			uart_print_string_blocking("N ");
+//			o_itoa32(mult, printbuf); uart_print_string_blocking(printbuf); 
+//			uart_print_string_blocking("\r\n");
+
+			dyaw = (int64_t)mult*(int64_t)g_yaw;
 		}
 
-		if(g_yaw > 0)
-			cur_pos.ang += ((int64_t)gyro_mult_pos*(int64_t)g_yaw)>>16;
-		else
-			cur_pos.ang += ((int64_t)gyro_mult_neg*(int64_t)g_yaw)>>16;
+		cur_pos.ang += dyaw>>32;
 
-		cur_pos.pitch += (97495LL*(int64_t)g_pitch)>>16;
-		cur_pos.roll += (97495LL*(int64_t)g_roll)>>16;
+
+		// Update pitch and roll from gyro, but slowly correct them with accelerometer vector (which averages as gravity)
+
+		cur_pos.pitch += (159711232LL*(int64_t)g_pitch)>>32;
+		cur_pos.roll += (159711232LL*(int64_t)g_roll)>>32;
 
 		int32_t pitch_by_acc = (uint32_t) (4294967296.0 * (M_PI + -1*atan2(a_x, a_z)) / (2.0*M_PI));
 		int32_t roll_by_acc  = (uint32_t) (4294967296.0 * (M_PI + -1*atan2(a_y, a_z)) / (2.0*M_PI));
@@ -1294,6 +1398,7 @@ void drive_handler()
 	}
 	else
 	{
+		ignore_commands = 1;
 		// Give beep warnings is someone moves the robot during initial DC offset calibration
 		for(int i=0; i<10; i++)
 			led_status(i, RED, LED_MODE_FADE);
@@ -1311,6 +1416,13 @@ void drive_handler()
 		if(moving > 0)
 		{
 			ac_th_det_on = 0;
+
+			for(int i=0; i<6;i++)
+			{
+				gyro_dc_x[i] = 0;
+				gyro_dc_y[i] = 0;
+				gyro_dc_z[i] = 0;
+			}
 		}
 		else
 		{
@@ -1743,7 +1855,7 @@ void drive_handler()
 		micronavi_status |= 1UL<<0;
 		stop(5);
 	}
-	else if(ignore_left==0 && run && correcting_angle && ((ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 25*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD_FAR)))
+	else if(ignore_left==0 && run && correcting_angle && ((ang_err > 0*ANG_1_DEG && obstacle_left_very_near > OBST_THRESHOLD) || (ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 25*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD_FAR)))
 	{
 		{
 			beep(500, 100, 0, 70);
@@ -1757,7 +1869,7 @@ void drive_handler()
 		micronavi_status |= 1UL<<2;
 		stop(6);
 	}
-	else if(ignore_right==0 && run && correcting_angle && ((ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -25*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD_FAR)))
+	else if(ignore_right==0 && run && correcting_angle && ((ang_err < -0*ANG_1_DEG && obstacle_right_very_near > OBST_THRESHOLD) || (ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -25*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD_FAR)))
 	{
 		{
 			beep(500, 100, 0, 70);

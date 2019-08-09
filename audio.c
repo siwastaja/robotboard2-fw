@@ -27,7 +27,7 @@ void init_audio()
 static int state;
 static int vol;
 static int len_100us;
-static int cnt_100us;
+static int audio_cnt_100us;
 static int cur_interval;
 static int interval_step;
 
@@ -50,8 +50,8 @@ void audio_10khz()
 	}
 	else if(state == 100)
 	{
-		cnt_100us++;
-		if(cnt_100us >= len_100us)
+		audio_cnt_100us++;
+		if(audio_cnt_100us >= len_100us)
 		{
 			LO(GPIOH, 12);
 			state = 0;
@@ -92,7 +92,7 @@ void beep(int len_ms, int hz_start, int sweep, int volume) // len milliseconds, 
 	cur_interval = (5000*65536)/hz_start;
 	len_100us = len_ms*10;
 	interval_step = sweep;
-	cnt_100us = 0;
+	audio_cnt_100us = 0;
 }
 
 

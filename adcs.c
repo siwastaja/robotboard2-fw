@@ -16,7 +16,7 @@ uint32_t cha_vinbus_mult = 36450;
 // 4.5409 << 13  = 37199.56
 uint32_t cha_vin_mult = 37200;
 // 1.611343 << 13  = 13200.13
-uint32_t vbat_mult = 13000;
+uint32_t vbat_mult = 12940;
 
 // vapp and vgapp oversample by ADC HW by 4x; hence /4
 uint32_t vapp_mult = 13200/4;

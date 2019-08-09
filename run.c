@@ -43,14 +43,6 @@ static uint16_t ampldist[TOF_XS*TOF_YS];
 
 
 
-uint8_t conv_bat_percent(int mv)
-{
-	int bat_percentage = (100*(mv-(3200*6)))/((4150-3200)*6);
-	if(bat_percentage < 0) bat_percentage = 0;
-	if(bat_percentage > 127) bat_percentage = 127;
-	return bat_percentage;
-
-}
 
 epc_img_t mono_comp __attribute__((aligned(4)));
 epc_img_narrow_t mono_comp_narrow __attribute__((aligned(4)));
@@ -60,15 +52,14 @@ epc_4dcs_narrow_t dcsa_narrow __attribute__((aligned(4)));
 epc_2dcs_narrow_t dcs2_narrow __attribute__((aligned(4)));
 
 
-//#define ENABLE_TOF_TS
+#define ENABLE_TOF_TS
 #ifdef ENABLE_TOF_TS
-uint32_t timestamp_initial;
-#define INIT_TOF_TS() do{timestamp_initial = cnt_100us;}while(0)
-#define TOF_TS(id_) do{if(gen_data && tof_diagnostics) { tof_diagnostics->timestamps[(id_)] = cnt_100us - timestamp_initial;} }while(0)
-
+	uint32_t timestamp_initial;
+	#define INIT_TOF_TS() do{timestamp_initial = cnt_100us;}while(0)
+	#define TOF_TS(id_) do{if(gen_data && tof_diagnostics) { tof_diagnostics->timestamps[(id_)] = cnt_100us - timestamp_initial;} }while(0)
 #else
-#define INIT_TOF_TS()
-#define TOF_TS(id_)
+	#define INIT_TOF_TS()
+	#define TOF_TS(id_)
 #endif
 
 
@@ -298,7 +289,6 @@ TOF_TS(1); // 1.8ms
 
 TOF_TS(2); // 0.7ms
 
-
 	if(avg_ampl < 1) avg_ampl = 1;
 	int mid_exp = 10000 / avg_ampl; // 333us at amplitude 30
 
@@ -314,11 +304,13 @@ TOF_TS(2); // 0.7ms
 	// TODO: In addition to just lowering int.time based on stray estimate,
 	// inject it to the lens compensation model to improve the data.
 
+//	uart_print_string_blocking("\r\n");
 //	DBG_PR_VAR_I32(sidx);
 //	DBG_PR_VAR_I32(avg_ampl);
 //	DBG_PR_VAR_I32(mid_exp);
 //	DBG_PR_VAR_I32(stray);
 //	DBG_PR_VAR_I32(mid_exp_by_stray);
+
 //
 	if(mid_exp_by_stray < mid_exp)
 	{
@@ -353,11 +345,13 @@ TOF_TS(2); // 0.7ms
 //	int mid_exp = SUPERSHORT_US + sq(400 - ss_saturated)/500; 
 
 
-//	DBG_PR_VAR_I32(sidx);
-//	DBG_PR_VAR_I32(mid_exp);
 
 
 	int long_exp = mid_exp*HDR_FACTOR;
+
+	DBG_PR_VAR_I32(sidx);
+	DBG_PR_VAR_I32(mid_exp);
+	DBG_PR_VAR_I32(long_exp);
 
 	// 6.66MHz 2dcs for dealiasing - same inttime as the long HDR exp
 	// (Going from 20MHz to 6.66MHz gives amplitude gain of at least 2, enough to compensate
@@ -373,6 +367,14 @@ TOF_TS(2); // 0.7ms
 	epc_trig();
 
 	// Do something here
+
+
+		// Run obstacle avoidance for the supershort data - react to overexposed parts, as well, treating them as
+		// zero-distance objects. Supershort exposure time is so short that even very reflective things won't overexpose
+		// too easily. Testing with worst-case polished mirror-like surfaces revealed that they overexpose at about 20-25cm
+		// apart.
+		compensated_tof_calc_ampldist_nodealias_noampl_nonarrow(ampldist, img20, img31);
+		tof_to_obstacle_avoidance(ampldist, sidx, 1);
 
 
 		copy_cal_to_shadow(sidx, 2);
@@ -475,7 +477,7 @@ TOF_TS(9); //1.5ms
 
 TOF_TS(10); //8.3ms --> 5.6ms after putting in ITCM
 
-	tof_to_obstacle_avoidance(ampldist, sidx);
+	tof_to_obstacle_avoidance(ampldist, sidx, 0);
 
 TOF_TS(11); //0.8ms
 
@@ -822,20 +824,25 @@ static void long_narrow_set(int sidx, int avg_ampl)
 	int short_exp = 24000 / avg_ampl; // 600us at amplitude 40
 
 	if(short_exp < SUPERSHORT_US) short_exp = SUPERSHORT_US;
-	else if(short_exp > 800) short_exp = 800;  // long inttime max 5600us
+	else if(short_exp > 700) short_exp = 700;  // long inttime max 4900us, dealias max 9310us, very close to the max. inttime regval, don't increase.
 
 	if(short_exp < 100) // TODO: take a 20MHz accuracy-increasing set instead.
 		return;
 
 	int long_exp = short_exp * HDR_FACTOR;
 
-	DBG_PR_VAR_I32(sidx);
-	DBG_PR_VAR_I32(avg_ampl);
-	DBG_PR_VAR_I32(short_exp);
+	//DBG_PR_VAR_I32(sidx);
+	//DBG_PR_VAR_I32(avg_ampl);
+	//DBG_PR_VAR_I32(short_exp);
 
 	int dealias_exp = (long_exp*19)/10;
-
-
+/*
+	uart_print_string_blocking("NARROW SET:\r\n");
+	DBG_PR_VAR_I32(sidx);
+	DBG_PR_VAR_I32(short_exp);
+	DBG_PR_VAR_I32(long_exp);
+	DBG_PR_VAR_I32(dealias_exp);
+*/
 	// Compensation BW + chiptemp
 	// We could reuse the BW from basic set, but that would be too old now (false compensation due to motion)
 	// Even better, we can take the compensation BW with the same narrow cropping, so indexing it is simplified.
@@ -1039,7 +1046,7 @@ static void obstacle_set(int sidx)
 		}
 	#endif
 
-	tof_to_obstacle_avoidance(ampldist, sidx);
+	tof_to_obstacle_avoidance(ampldist, sidx, 1);
 }
 
 
@@ -1071,6 +1078,8 @@ void run_cycle()
 	charger_freerunning_fsm();
 	// Checks if application power on is requested (by app_power_on()), runs the turn-on procedure (which is blocking, a few tens of milliseconds)
 	app_power_freerunning_fsm();
+
+	drive_freerunning_fsm(); // For now, only manages gyro calibration (rotating the robot, when requested)
 
 	#ifdef VACUUM_APP
 		extern volatile int drive_is_rotating; // true whenever the robot is correcting a big angular error, enough to prevent linear motion, i.e., rotating in its place
@@ -1153,9 +1162,14 @@ void run_cycle()
 
 	static int skip;
 
-	if(!drive_is_robot_moving() && basic_sidx == 0)
+	if(!drive_is_robot_moving())
 	{
-		skip = 1;
+
+		int first_sidx = 0;
+		while(!sensors_in_use[first_sidx]) first_sidx++;
+
+		if(basic_sidx == first_sidx)
+			skip = 1;
 	}
 
 	if(skip)
@@ -1167,7 +1181,7 @@ void run_cycle()
 		}
 		else
 		{
-			delay_ms(40);
+			delay_ms(60);
 			goto SKIP_TOF;
 		}
 	}
@@ -1204,6 +1218,7 @@ void run_cycle()
 			}
 
 			extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
+			extern int obstacle_left_very_near, obstacle_right_very_near;
 			extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
 			obstacle_front_near = 0;
 			obstacle_back_near = 0;
@@ -1213,6 +1228,8 @@ void run_cycle()
 			obstacle_back_far = 0;
 			obstacle_left_far = 0;
 			obstacle_right_far = 0;
+			obstacle_left_very_near = 0;
+			obstacle_right_very_near = 0;
 		}
 	}
 	while(!sensors_in_use[basic_sidx]);

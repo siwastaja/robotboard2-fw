@@ -1310,6 +1310,7 @@ void ITCM compensated_tof_calc_ampldist_nodealias_noampl_nonarrow(uint16_t* rest
 
 
 extern int obstacle_front_near, obstacle_back_near, obstacle_left_near, obstacle_right_near;
+extern int obstacle_left_very_near, obstacle_right_very_near;
 extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_right_far;
 
 #ifdef REV2A
@@ -1318,8 +1319,7 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 	#define OBST_MARGIN (50)
 	#define OBST_AVOID_WIDTH (600+OBST_MARGIN)
 
-	void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx) __attribute__((section(".text_itcm")));
-	void tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx)
+	void ITCM tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx, int process_overexposed)
 	{
 		if(sidx < 0 || sidx >= N_SENSORS) error(150);
 
@@ -1350,12 +1350,27 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 
 				int n_conform = 0;
 				int32_t conform_avg = 0;
-				for(int i=0; i<5; i++)
+
+				if(process_overexposed)
 				{
-					if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+					for(int i=0; i<5; i++)
 					{
-						n_conform++;
-						conform_avg += dists[i];
+						if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+						{
+							n_conform++;
+							conform_avg += dists[i];
+						}
+					}
+				}
+				else
+				{
+					for(int i=0; i<5; i++)
+					{
+						if(dists[i] != DIST_UNDEREXP && dists[i] != DIST_OVEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+						{
+							n_conform++;
+							conform_avg += dists[i];
+						}
 					}
 				}
 
@@ -1496,16 +1511,42 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 		#endif
 	}
 #else // individually calibrated sensors:
-	#define NOZZLE_WIDTH 760
 
-	#define OBST_AVOID_WIDTH 650
-	#define SIDE_LIMIT 360
-	#define FRONT_LIMIT 500
-	#define BACK_LIMIT -750
-	#define BACK_TURN_LIMIT -540
+	#ifdef VACUUM_APP
+		// General Y limit:
+		#define OBST_AVOID_WIDTH 750
+
+		// Y limits for turning:
+		#define VERY_NEAR_SIDE_LIMIT 300
+		#define SIDE_LIMIT 360
+
+		// X limits for fwd / bwd movement:
+		#define FRONT_LIMIT 550
+		#define BACK_LIMIT -750
+
+		// X limit for turning
+		#define BACK_TURN_LIMIT -540
+	#else
+
+		// General Y limit:
+		#define OBST_AVOID_WIDTH 570
+
+		// Y limits for turning:
+		#define VERY_NEAR_SIDE_LIMIT 300
+		#define SIDE_LIMIT 360
+
+		// X limits for fwd / bwd movement:
+		#define FRONT_LIMIT 450
+		#define BACK_LIMIT -750
+
+		// X limit for turning
+		#define BACK_TURN_LIMIT -540
+	
+
+	#endif
 
 
-	void ITCM tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx)
+	void ITCM tof_to_obstacle_avoidance(uint16_t* ampldist, int sidx, int process_overexposed)
 	{
 		if(sidx < 0 || sidx >= N_SENSORS) error(150);
 
@@ -1538,14 +1579,30 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 
 				int n_conform = 0;
 				int32_t conform_avg = 0;
-				for(int i=0; i<5; i++)
+
+				if(process_overexposed)
 				{
-					if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+					for(int i=0; i<5; i++)
 					{
-						n_conform++;
-						conform_avg += dists[i];
+						if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+						{
+							n_conform++;
+							conform_avg += dists[i];
+						}
 					}
 				}
+				else
+				{
+					for(int i=0; i<5; i++)
+					{
+						if(dists[i] != DIST_UNDEREXP && dists[i] != DIST_OVEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+						{
+							n_conform++;
+							conform_avg += dists[i];
+						}
+					}
+				}
+
 
 				if(n_conform >= 4)
 				{
@@ -1581,7 +1638,7 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 
 					#ifdef EXT_VACUUM
 						// VACUUM APP: Ignore the nozzle
-						if(local_z < 240 && local_x < 520 && local_x > 120 && local_y > -(NOZZLE_WIDTH/2) && local_y < (NOZZLE_WIDTH/2))
+						if(local_z < 240 && local_x < 520 && local_x > 120 && local_y > -(OBST_AVOID_WIDTH/2) && local_y < (OBST_AVOID_WIDTH/2))
 							continue;
 					#endif
 
@@ -1615,7 +1672,12 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 
 						if(local_x > BACK_TURN_LIMIT && local_x < -100)
 						{
-							if(local_y >= 200 && local_y < SIDE_LIMIT)
+							if(local_y >= 200 && local_y < VERY_NEAR_SIDE_LIMIT)
+							{
+								led_status(sidx, RED, LED_MODE_FADE);
+								obstacle_left_very_near++;
+							}
+							else if(local_y >= VERY_NEAR_SIDE_LIMIT && local_y < SIDE_LIMIT)
 							{
 								led_status(sidx, RED, LED_MODE_FADE);
 								obstacle_left_near++;
@@ -1626,7 +1688,12 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 								obstacle_left_far++;
 							}
 
-							if(local_y <= -200 && local_y > -SIDE_LIMIT)
+							if(local_y <= -200 && local_y > -VERY_NEAR_SIDE_LIMIT)
+							{
+								led_status(sidx, RED, LED_MODE_FADE);
+								obstacle_right_very_near++;
+							}
+							else if(local_y <= -VERY_NEAR_SIDE_LIMIT && local_y > -SIDE_LIMIT)
 							{
 								led_status(sidx, RED, LED_MODE_FADE);
 								obstacle_right_near++;
@@ -1778,7 +1845,7 @@ void total_sensor_obstacle(int sidx)
 
 		case 2:
 		case 3:
-		obstacle_left_near++;
+		obstacle_left_very_near++;
 		break;
 
 		case 4:
@@ -1789,7 +1856,7 @@ void total_sensor_obstacle(int sidx)
 
 		case 7:
 		case 8:
-		obstacle_right_near++;
+		obstacle_right_very_near++;
 		break;
 
 		default:

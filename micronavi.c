@@ -34,11 +34,11 @@ static chafind_results_t results;
 
 #ifdef CONTACTS_ON_BACK
 
-	#define CHAFIND_FIRST_DIST 950 // 900
+	#define CHAFIND_FIRST_DIST 810
 	#define CHAFIND_FIRST_DIST_TOLERANCE 50
 
-	#define CHAFIND_PASS1_ACCEPT_ANGLE (5*ANG_1_DEG) 
-	#define CHAFIND_PASS1_ACCEPT_SHIFT 25
+	#define CHAFIND_PASS1_ACCEPT_ANGLE (7*ANG_1_DEG) 
+	#define CHAFIND_PASS1_ACCEPT_SHIFT 40
 
 	#define CHAFIND_PUSH_TUNE 0 // in mm, lower number = go further
 
@@ -90,7 +90,7 @@ static void chafind_empty_accum3()
 #define ROBOT_YS_TIGHT (460)
 #define ROBOT_XS_TIGHT (650)
 #define ROBOT_ORIGIN_TO_FRONT_TIGHT (130)
-#define ROBOT_ORIGIN_TO_BACK_TIGHT  (650-142)
+#define ROBOT_ORIGIN_TO_BACK_TIGHT  (530)
 
 #ifdef CONTACTS_ON_BACK
 #define ORIGIN_TO_CONTACTS ROBOT_ORIGIN_TO_BACK_TIGHT
@@ -333,16 +333,20 @@ void chamount_freerun_fsm()
 		{
 			// get nearest_hit:
 			chafind_empty_accum1();
-			request_chamount_mid_image();
+			request_chamount_full_images();
+//			request_chamount_mid_image();
 			DBG_PR_VAR_I32(nearest_hit_x);
 			DBG_PR_VAR_I32(nearest_hit_y);
 
 			// get middle tower:
 			chafind_empty_accum2();
+			request_chamount_full_images();
+			request_chamount_full_images();
+			request_chamount_full_images();
 			request_chamount_mid_image();
-			request_chamount_mid_image();
-			request_chamount_mid_image();
-			request_chamount_mid_image();
+//			request_chamount_mid_image();
+//			request_chamount_mid_image();
+//			request_chamount_mid_image();
 			DBG_PR_VAR_I32(middle_cnt);
 			DBG_PR_VAR_I32(middle_min_y);
 			DBG_PR_VAR_I32(middle_max_y);
@@ -365,7 +369,7 @@ void chamount_freerun_fsm()
 			results.right_accum_cnt = right_accum_cnt;
 
 			int middle_w = middle_max_y - middle_min_y;
-			if(middle_cnt < 200 || left_accum_cnt < 500 || right_accum_cnt < 500 || middle_w < MIDDLE_BAR_WIDTH-30 || middle_w > MIDDLE_BAR_WIDTH+40)
+			if(middle_cnt < 150 || left_accum_cnt < 400 || right_accum_cnt < 400 || middle_w < MIDDLE_BAR_WIDTH-30 || middle_w > MIDDLE_BAR_WIDTH+40)
 			{
 				chafind_state = CHAFIND_FAIL;
 			}
@@ -421,7 +425,9 @@ void chamount_freerun_fsm()
 				{
 					set_top_speed_max(30);
 
-					if(shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT) // Only turning needed
+					if(shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT &&
+					   corr_ang_to_hit_mid > -15*ANG_1_DEG && corr_ang_to_hit_mid < 15*ANG_1_DEG &&
+					   final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
 					{
 						results.turning_passes_needed++;
 						uart_print_string_blocking("rotation only\r\n"); 

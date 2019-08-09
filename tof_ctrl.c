@@ -62,6 +62,7 @@
 
 /*
 	All sensors use a single I2C bus, with the multiplexer connecting one sensor at a time.
+	The I2C bus, at any time, only sees one PuluTOF2 module (the EPC635, and the ISSI LED driver).
 	This makes everything simple.
 */
 
@@ -539,6 +540,10 @@ void epc_normalphase_or_int() // OK to do while acquiring: shadow registered: ap
 
 void epc_intlen(uint8_t multiplier, uint16_t time) // OK to do while acquiring: shadow registered: applied to next trigger.
 {
+	if(time > 16383)
+		error(454);
+//	DBG_PR_VAR_I32(multiplier);
+//	DBG_PR_VAR_I32(time);
 	int intlen = ((int)time<<2)-1; // Actual regval must be a multiple of four: this guarantees this condition.
 	epc_wrbuf[0] = 0xA1;
 	epc_wrbuf[1] = multiplier;
