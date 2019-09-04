@@ -104,6 +104,7 @@ void profile_cpu_blocking_20ms();
 // Traffic light green  4,0,255,10
 void led_status(int sid, uint32_t val, int mode);
 
+#define FULLWHITE 0x04ffffff
 #define BLACK  0x00000000
 #define WHITE  0x04ffe090
 #define YELLOW 0x04dd5000

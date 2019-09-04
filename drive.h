@@ -19,10 +19,10 @@ extern hires_pos_t cur_pos;
 
 void cmd_motors(int enabled_ms);
 void cmd_go_to(s2b_move_abs_t* m);
-
-
 void cmd_corr_pos(s2b_corr_pos_t* cmd);
 void execute_corr_pos();
+void cmd_set_pose(s2b_set_pose_t* cmd);
+
 
 
 void cmd_stop_movement();

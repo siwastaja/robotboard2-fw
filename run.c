@@ -52,7 +52,7 @@ epc_4dcs_narrow_t dcsa_narrow __attribute__((aligned(4)));
 epc_2dcs_narrow_t dcs2_narrow __attribute__((aligned(4)));
 
 
-#define ENABLE_TOF_TS
+//#define ENABLE_TOF_TS
 #ifdef ENABLE_TOF_TS
 	uint32_t timestamp_initial;
 	#define INIT_TOF_TS() do{timestamp_initial = cnt_100us;}while(0)
@@ -332,26 +332,11 @@ TOF_TS(2); // 0.7ms
 
 
 
-
-//	int ss_saturated = supershort_avg_ampl_x256;
-//	if(ss_saturated > 400) ss_saturated = 400;
-	
-	// min exposures: 12, 84
-	// max exposures: 332, 2324
-	// 7230mm of range measured - medium-light wood-color (approx. 40-50%?) door can be seen at 2324us int.time
-	// This is more than enough for the basic set. In a typical middle-sized apartment, sees all rooms physically possible
-	// at the same time.
-
-//	int mid_exp = SUPERSHORT_US + sq(400 - ss_saturated)/500; 
-
-
-
-
 	int long_exp = mid_exp*HDR_FACTOR;
 
-	DBG_PR_VAR_I32(sidx);
-	DBG_PR_VAR_I32(mid_exp);
-	DBG_PR_VAR_I32(long_exp);
+	//DBG_PR_VAR_I32(sidx);
+	//DBG_PR_VAR_I32(mid_exp);
+	//DBG_PR_VAR_I32(long_exp);
 
 	// 6.66MHz 2dcs for dealiasing - same inttime as the long HDR exp
 	// (Going from 20MHz to 6.66MHz gives amplitude gain of at least 2, enough to compensate
@@ -836,13 +821,15 @@ static void long_narrow_set(int sidx, int avg_ampl)
 	//DBG_PR_VAR_I32(short_exp);
 
 	int dealias_exp = (long_exp*19)/10;
-/*
+
+	/*
 	uart_print_string_blocking("NARROW SET:\r\n");
 	DBG_PR_VAR_I32(sidx);
 	DBG_PR_VAR_I32(short_exp);
 	DBG_PR_VAR_I32(long_exp);
 	DBG_PR_VAR_I32(dealias_exp);
-*/
+	*/
+
 	// Compensation BW + chiptemp
 	// We could reuse the BW from basic set, but that would be too old now (false compensation due to motion)
 	// Even better, we can take the compensation BW with the same narrow cropping, so indexing it is simplified.
@@ -1081,7 +1068,8 @@ void run_cycle()
 
 	drive_freerunning_fsm(); // For now, only manages gyro calibration (rotating the robot, when requested)
 
-	#ifdef VACUUM_APP
+	#ifdef EXT_VACUUM
+		#include "ext_vacuum_boost.h"
 		extern volatile int drive_is_rotating; // true whenever the robot is correcting a big angular error, enough to prevent linear motion, i.e., rotating in its place
 		ext_vacuum_freerunning_fsm(drive_is_rotating /*temporary rise*/);
 	#endif
@@ -1092,16 +1080,13 @@ void run_cycle()
 		if(!sensors_in_use[i])
 			continue;
 
+
 		tof_mux_select(i);
 		update_led(i);
 	}
 
 
-
-
 	adjust();
-
-
 
 
 	int bat_mv = VBAT_MEAS_TO_MV(adc1.s.vbat_meas);
@@ -1295,7 +1280,6 @@ void run_cycle()
 			cnta = 0;
 		}
 	}
-
 	
 	basic_set(basic_sidx, &ssval, take_nar_long?(&narrow_avg_ampl):NULL);
 	latest_timestamps[basic_sidx] = cnt_100us;

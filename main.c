@@ -560,10 +560,8 @@ void main()
 
 	init_cpu_profiler();
 
-
 	tof_ctrl_init();
 	uart_print_string_blocking("init ok\r\n"); 
-
 	#ifdef CALIBRATOR
 
 		#ifdef CALIBRATOR_BOX
