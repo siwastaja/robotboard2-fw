@@ -175,6 +175,31 @@ void init_power_outputs()
 
 		IO_TO_GPI(GPIOB,2); // 1,2,3,4 status
 		IO_PULLUP_ON(GPIOB,2); // 1,2,3,4 status
+
+		#ifdef PO1_DEFAULT_ON
+			PO1_ON();
+		#endif
+
+		#ifdef PO2_DEFAULT_ON
+			PO2_ON();
+		#endif
+
+		#ifdef PO3_DEFAULT_ON
+			PO3_ON();
+		#endif
+
+		#ifdef PO4_DEFAULT_ON
+			PO4_ON();
+		#endif
+
+		#ifdef PO5_DEFAULT_ON
+			PO5_ON();
+		#endif
+
+		#ifdef PO6_DEFAULT_ON
+			PO6_ON();
+		#endif
+
 	#endif
 }
 

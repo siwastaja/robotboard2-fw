@@ -6,7 +6,7 @@ DEVUSR = pulu
 #DEVIP = 10.3.0.6
 #DEVIP = 192.168.43.59
 DEVIP = 10.42.0.104
-#231
+#DEVIP = 192.168.137.235
 #DEVIP = 192.168.1.6
 
 CC = arm-none-eabi-gcc
@@ -25,20 +25,25 @@ CFLAGS += -DREV2B
 
 
 # Hard-compiled application(s):
-#CFLAGS += -DEXT_VACUUM
-#CFLAGS += -DVACUUM_REV2
+CFLAGS += -DEXT_VACUUM
+CFLAGS += -DVACUUM_REV2
+#CFLAGS += -DTOWER_APP
+CFLAGS += -DVACUUM_APP
 
-# Battery size
-#CFLAGS += -DBATTERY_SIZE_L
+# Battery size: BATTERY_SIZE_M or BATTERY_SIZE_L
+CFLAGS += -DBATTERY_SIZE_L
 
 # Charger contacts on back?
-#CFLAGS += -DCONTACTS_ON_BACK
+CFLAGS += -DCONTACTS_ON_BACK
+
+# Power outputs that turn on automatically at boot time:
+#CFLAGS += PO1_DEFAULT_ON
 
 #Standard compilation
 OBJ_OS = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o  tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o
 #ext_vacuum_boost.o
 OBJ_O3 = tof_process.o
-ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s
+#ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s
 
 
 #Calibration: box
@@ -67,14 +72,6 @@ $(OBJ_OS): %.o: %.c
 $(OBJ_O3): %.o: %.c
 	$(CC) -c -O3 $(CFLAGS) $< -o $@
 
-#%.o: %.c
-#	$(CC) -c $(CFLAGS) $*.c -o $*.o
-#	$(CC) -MM $(CFLAGS) $*.c > $*.d
-#	@mv -f $*.d $*.d.tmp
-#	@sed -e 's|.*:|$*.o:|' < $*.d.tmp > $*.d
-#	@sed -e 's/.*://' -e 's/\\$$//' < $*.d.tmp | fmt -1 | \
-#	  sed -e 's/^ *//' -e 's/$$/:/' >> $*.d
-#	@rm -f $*.d.tmp
 
 main.bin: $(OBJ_OS) $(OBJ_O3)
 	$(LD) -Tlinker.ld $(LDFLAGS) -o main.elf $^ -lm
