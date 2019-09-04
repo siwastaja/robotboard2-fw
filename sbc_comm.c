@@ -746,7 +746,7 @@ void parse_rx_packet()
 
 				case CMD_MOVE_REL:
 				{
-					s2b_move_rel_t* m = p_data;
+					s2b_move_rel_t* m = (s2b_move_rel_t*)p_data;
 					rotate_and_straight_rel(m->ang, m->fwd, 1);
 				} break;
 
@@ -759,7 +759,7 @@ void parse_rx_packet()
 				case CMD_MOTORS:
 				{
 					if(((s2b_motors_t*)p_data)->enabled)
-						cmd_motors(6000); // milliseconds watchdog
+						cmd_motors(7000); // milliseconds watchdog
 					else
 						cmd_motors(0);
 				}
@@ -802,6 +802,12 @@ void parse_rx_packet()
 				case CMD_INJECT_GYROCAL:
 				{
 					drive_inject_gyrocal(&(((s2b_inject_gyrocal_t*)p_data)->gyrocal));
+				}
+				break;
+
+				case CMD_SET_POSE:
+				{
+					cmd_set_pose((s2b_set_pose_t*)p_data);
 				}
 				break;
 
