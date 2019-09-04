@@ -544,7 +544,7 @@ void epc_intlen(uint8_t multiplier, uint16_t time) // OK to do while acquiring: 
 		error(454);
 //	DBG_PR_VAR_I32(multiplier);
 //	DBG_PR_VAR_I32(time);
-	int intlen = ((int)time<<2)-1; // Actual regval must be a multiple of four: this guarantees this condition.
+	int intlen = ((int)time<<2)-1; // Actual regval must be a multiple of four minus 1: this guarantees this condition.
 	epc_wrbuf[0] = 0xA1;
 	epc_wrbuf[1] = multiplier;
 	epc_wrbuf[2] = (intlen&0xff00)>>8;
