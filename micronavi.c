@@ -34,7 +34,7 @@ static chafind_results_t results;
 
 #ifdef CONTACTS_ON_BACK
 
-	#define CHAFIND_FIRST_DIST 810
+	#define CHAFIND_FIRST_DIST 920
 	#define CHAFIND_FIRST_DIST_TOLERANCE 50
 
 	#define CHAFIND_PASS1_ACCEPT_ANGLE (7*ANG_1_DEG) 
@@ -260,13 +260,14 @@ void chamount_freerun_fsm()
 //		chafind_state = CHAFIND_FAIL;
 //	}
 
+	static int substate;
 	switch(chafind_state)
 	{
 		case CHAFIND_START:
 		{
 			// Get nearest_hit
 			chafind_empty_accum1();
-			request_chamount_mid_image();
+			request_chamount_full_images();
 
 			if(nearest_hit_x < 200 || nearest_hit_x > 1200) // todo: also check obstacles from back
 			{
@@ -304,6 +305,7 @@ void chamount_freerun_fsm()
 					chafind_empty_accum2();
 					results.first_movement_needed = 0;
 					chafind_state = CHAFIND_ACCUM_DATA;
+					substate = 0;
 				}
 			}
 
@@ -325,6 +327,7 @@ void chamount_freerun_fsm()
 			if(--timer == 0)
 			{
 				chafind_state = CHAFIND_ACCUM_DATA;
+				substate = 0;
 			}
 		}
 		break;
@@ -332,164 +335,172 @@ void chamount_freerun_fsm()
 		case CHAFIND_ACCUM_DATA:
 		{
 			// get nearest_hit:
-			chafind_empty_accum1();
-			request_chamount_full_images();
-//			request_chamount_mid_image();
-			DBG_PR_VAR_I32(nearest_hit_x);
-			DBG_PR_VAR_I32(nearest_hit_y);
-
-			// get middle tower:
-			chafind_empty_accum2();
-			request_chamount_full_images();
-			request_chamount_full_images();
-			request_chamount_full_images();
-			request_chamount_mid_image();
-//			request_chamount_mid_image();
-//			request_chamount_mid_image();
-//			request_chamount_mid_image();
-			DBG_PR_VAR_I32(middle_cnt);
-			DBG_PR_VAR_I32(middle_min_y);
-			DBG_PR_VAR_I32(middle_max_y);
-
-			// get left and right:
-			chafind_empty_accum3();
-			request_chamount_full_images();
-			request_chamount_full_images();
-			request_chamount_full_images();
-			request_chamount_full_images();
-			request_chamount_full_images();
-			DBG_PR_VAR_I32(left_accum/left_accum_cnt);
-			DBG_PR_VAR_I32(left_accum_cnt);
-			DBG_PR_VAR_I32(right_accum/right_accum_cnt);
-			DBG_PR_VAR_I32(right_accum_cnt);
-
-
-			results.left_accum_cnt = left_accum_cnt;
-			results.mid_accum_cnt = middle_cnt;
-			results.right_accum_cnt = right_accum_cnt;
-
-			int middle_w = middle_max_y - middle_min_y;
-			if(middle_cnt < 150 || left_accum_cnt < 400 || right_accum_cnt < 400 || middle_w < MIDDLE_BAR_WIDTH-30 || middle_w > MIDDLE_BAR_WIDTH+40)
+			if(substate == 0)
 			{
-				chafind_state = CHAFIND_FAIL;
+				chafind_empty_accum1();
+				request_chamount_full_images();
+				DBG_PR_VAR_I32(nearest_hit_x);
+				DBG_PR_VAR_I32(nearest_hit_y);
+				substate++;
 			}
-			else
+			else if(substate == 1)
 			{
-				pass++;
-				int ang, shift, dist;
-				chafind_calc(&ang, &shift, &dist);
+				// get middle tower:
+				chafind_empty_accum2();
+				request_chamount_full_images();
+				request_chamount_full_images();
+				DBG_PR_VAR_I32(middle_cnt);
+				DBG_PR_VAR_I32(middle_min_y);
+				DBG_PR_VAR_I32(middle_max_y);
+				substate++;
+			}
+			else if(substate == 2)
+			{
+				// get left and right:
+				chafind_empty_accum3();
+				request_chamount_full_images();
+				request_chamount_full_images();
+				substate++;
+			}
+			else if(substate == 3)
+			{
+				substate++; // to set erroneous state
+				request_chamount_full_images();
+				request_chamount_full_images();
+				DBG_PR_VAR_I32(left_accum/left_accum_cnt);
+				DBG_PR_VAR_I32(left_accum_cnt);
+				DBG_PR_VAR_I32(right_accum/right_accum_cnt);
+				DBG_PR_VAR_I32(right_accum_cnt);
 
-				DBG_PR_VAR_I32(ang/ANG_0_1_DEG);
-				DBG_PR_VAR_I32(shift);
-				DBG_PR_VAR_I32(dist);
 
-				// dist-100, because the final angle correction is done approx. 100mm before the targer
-				int32_t corr_ang_to_hit_mid = atan2(shift, (dist-100))*(4294967296.0/(2.0*M_PI));
-				final_push_store_ang = -1*ang - corr_ang_to_hit_mid;
+				results.left_accum_cnt = left_accum_cnt;
+				results.mid_accum_cnt = middle_cnt;
+				results.right_accum_cnt = right_accum_cnt;
 
-				if(ang > -1*CHAFIND_PASS1_ACCEPT_ANGLE && ang < CHAFIND_PASS1_ACCEPT_ANGLE &&
-					shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT &&
-					corr_ang_to_hit_mid > -15*ANG_1_DEG && corr_ang_to_hit_mid < 15*ANG_1_DEG &&
-					final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
+				int middle_w = middle_max_y - middle_min_y;
+				if(middle_cnt < 150 || left_accum_cnt < 400 || right_accum_cnt < 400 || middle_w < MIDDLE_BAR_WIDTH-30 || middle_w > MIDDLE_BAR_WIDTH+40)
 				{
-					results.accepted_pos++;
-					set_top_speed_max(30);
-
-					int dist2 = (left_accum+right_accum)/(left_accum_cnt+right_accum_cnt);
-
-					results.dist_before_push = dist2;
-
-					int final_movement = dist2-ORIGIN_TO_CONTACTS-CHAFIND_PUSH_TUNE;
-					#ifdef CONTACTS_ON_BACK
-						final_movement *= -1;
-					#endif
-
-
-					uart_print_string_blocking("Accepted!\r\n"); 
-					DBG_PR_VAR_I32(dist2);
-					DBG_PR_VAR_I32(final_movement);
-					DBG_PR_VAR_I32(corr_ang_to_hit_mid/ANG_0_1_DEG);
-					DBG_PR_VAR_I32(final_push_store_ang/ANG_0_1_DEG);
-
-
-					#ifdef CHAFIND_DO_IT
-						ignore_obst();
-						cmd_motors(8000);
-						rotate_and_straight_rel(corr_ang_to_hit_mid, final_movement, 1);
-						chafind_state = CHAFIND_WAIT_PUSH;
-					#else
-						chafind_state = CHAFIND_SUCCESS;
-					#endif
+					chafind_state = CHAFIND_FAIL;
 				}
 				else
 				{
-					set_top_speed_max(30);
+					pass++;
+					int ang, shift, dist;
+					chafind_calc(&ang, &shift, &dist);
 
-					if(shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT &&
-					   corr_ang_to_hit_mid > -15*ANG_1_DEG && corr_ang_to_hit_mid < 15*ANG_1_DEG &&
-					   final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
+					DBG_PR_VAR_I32(ang/ANG_0_1_DEG);
+					DBG_PR_VAR_I32(shift);
+					DBG_PR_VAR_I32(dist);
+
+					// dist-100, because the final angle correction is done approx. 100mm before the targer
+					int32_t corr_ang_to_hit_mid = atan2(shift, (dist-100))*(4294967296.0/(2.0*M_PI));
+					final_push_store_ang = -1*ang - corr_ang_to_hit_mid;
+
+					if(ang > -1*CHAFIND_PASS1_ACCEPT_ANGLE && ang < CHAFIND_PASS1_ACCEPT_ANGLE &&
+						shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT &&
+						corr_ang_to_hit_mid > -15*ANG_1_DEG && corr_ang_to_hit_mid < 15*ANG_1_DEG &&
+						final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
 					{
-						results.turning_passes_needed++;
-						uart_print_string_blocking("rotation only\r\n"); 
+						results.accepted_pos++;
+						set_top_speed_max(30);
 
-						#ifdef CHAFIND_DO_IT
-							ignore_obst();
-							rotate_rel(-1*ang, 1);
-							chafind_state = CHAFIND_WAIT_REBACKING;
-						#else
-							chafind_state = CHAFIND_SUCCESS;
+						int dist2 = (left_accum+right_accum)/(left_accum_cnt+right_accum_cnt);
+
+						results.dist_before_push = dist2;
+
+						int final_movement = dist2-ORIGIN_TO_CONTACTS-CHAFIND_PUSH_TUNE;
+						#ifdef CONTACTS_ON_BACK
+							final_movement *= -1;
 						#endif
 
-					}
-					else // vexling needed
-					{
-						results.vexling_passes_needed++;
 
-						int shift_ang;
-						if(shift > 170)       shift_ang = 30*ANG_1_DEG;
-						else if(shift > 70)   shift_ang = 15*ANG_1_DEG;
-						else if(shift > 0)    shift_ang =  8*ANG_1_DEG;
-						else if(shift < -170) shift_ang = -30*ANG_1_DEG;
-						else if(shift < -70)  shift_ang = -15*ANG_1_DEG;
-						else                  shift_ang =  -8*ANG_1_DEG;
+						uart_print_string_blocking("Accepted!\r\n"); 
+						DBG_PR_VAR_I32(dist2);
+						DBG_PR_VAR_I32(final_movement);
+						DBG_PR_VAR_I32(corr_ang_to_hit_mid/ANG_0_1_DEG);
+						DBG_PR_VAR_I32(final_push_store_ang/ANG_0_1_DEG);
 
-						int d = ((float)shift)/tan((float)shift_ang*(2.0*M_PI)/4294967296.0);
-
-						uart_print_string_blocking("vexling needed\r\n");
-						int32_t mov_ang =  
-							#ifdef CONTACTS_ON_BACK
-								-1*(ang+shift_ang);
-							#else
-								-1*(ang+shift_ang);
-							#endif
-
-						int32_t mov_d = 
-							#ifdef CONTACTS_ON_BACK
-								+1*d;
-							#else
-								-1*d;
-							#endif
-						DBG_PR_VAR_I32(mov_ang/ANG_0_1_DEG);
-						DBG_PR_VAR_I32(mov_d);
 
 						#ifdef CHAFIND_DO_IT
 							ignore_obst();
 							cmd_motors(8000);
-
-							rotate_and_straight_rel(mov_ang, mov_d, 1);
-
-							store_back = d;
-							store_shift_ang = shift_ang;
-							chafind_state = CHAFIND_WAIT_BACKING;
+							rotate_and_straight_rel(corr_ang_to_hit_mid, final_movement, 1);
+							chafind_state = CHAFIND_WAIT_PUSH;
 						#else
 							chafind_state = CHAFIND_SUCCESS;
 						#endif
-
 					}
+					else
+					{
+						set_top_speed_max(30);
+
+						if(shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT &&
+						   corr_ang_to_hit_mid > -15*ANG_1_DEG && corr_ang_to_hit_mid < 15*ANG_1_DEG &&
+						   final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
+						{
+							results.turning_passes_needed++;
+							uart_print_string_blocking("rotation only\r\n"); 
+
+							#ifdef CHAFIND_DO_IT
+								ignore_obst();
+								rotate_rel(-1*ang, 1);
+								chafind_state = CHAFIND_WAIT_REBACKING;
+							#else
+								chafind_state = CHAFIND_SUCCESS;
+							#endif
+
+						}
+						else // vexling needed
+						{
+							results.vexling_passes_needed++;
+
+							int shift_ang;
+							if(shift > 170)       shift_ang = 30*ANG_1_DEG;
+							else if(shift > 70)   shift_ang = 15*ANG_1_DEG;
+							else if(shift > 0)    shift_ang =  8*ANG_1_DEG;
+							else if(shift < -170) shift_ang = -30*ANG_1_DEG;
+							else if(shift < -70)  shift_ang = -15*ANG_1_DEG;
+							else                  shift_ang =  -8*ANG_1_DEG;
+
+							int d = ((float)shift)/tan((float)shift_ang*(2.0*M_PI)/4294967296.0);
+
+							uart_print_string_blocking("vexling needed\r\n");
+							int32_t mov_ang =  
+								#ifdef CONTACTS_ON_BACK
+									-1*(ang+shift_ang);
+								#else
+									-1*(ang+shift_ang);
+								#endif
+
+							int32_t mov_d = 
+								#ifdef CONTACTS_ON_BACK
+									+1*d;
+								#else
+									-1*d;
+								#endif
+							DBG_PR_VAR_I32(mov_ang/ANG_0_1_DEG);
+							DBG_PR_VAR_I32(mov_d);
+
+							#ifdef CHAFIND_DO_IT
+								ignore_obst();
+								cmd_motors(8000);
+
+								rotate_and_straight_rel(mov_ang, mov_d, 1);
+
+								store_back = d;
+								store_shift_ang = shift_ang;
+								chafind_state = CHAFIND_WAIT_BACKING;
+							#else
+								chafind_state = CHAFIND_SUCCESS;
+							#endif
+
+						}
+					}
+					
 				}
-				
 			}
-	
+			else
+				error(444);	
 		}
 		break;
 
