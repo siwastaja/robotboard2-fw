@@ -1512,20 +1512,52 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 	}
 #else // individually calibrated sensors:
 
-	#ifdef VACUUM_APP
+	#if defined(TOWER_APP) && !defined(VACUUM_APP)
 		// General Y limit:
-		#define OBST_AVOID_WIDTH 750
+		#define OBST_AVOID_WIDTH 650
 
 		// Y limits for turning:
-		#define VERY_NEAR_SIDE_LIMIT 300
-		#define SIDE_LIMIT 360
+		#define VERY_NEAR_SIDE_LIMIT 450
+		#define SIDE_LIMIT 500
 
 		// X limits for fwd / bwd movement:
-		#define FRONT_LIMIT 550
-		#define BACK_LIMIT -750
+		#define FRONT_LIMIT 750
+		#define BACK_LIMIT -1000
 
 		// X limit for turning
 		#define BACK_TURN_LIMIT -540
+
+	#elif defined(VACUUM_APP)
+
+		#ifdef(TOWER_APP)
+			// General Y limit:
+			#define OBST_AVOID_WIDTH 750
+
+			// Y limits for turning:
+			#define VERY_NEAR_SIDE_LIMIT 400
+			#define SIDE_LIMIT 460
+
+			// X limits for fwd / bwd movement:
+			#define FRONT_LIMIT 650
+			#define BACK_LIMIT -850
+
+			// X limit for turning
+			#define BACK_TURN_LIMIT -540
+		#else
+			// General Y limit:
+			#define OBST_AVOID_WIDTH 750
+
+			// Y limits for turning:
+			#define VERY_NEAR_SIDE_LIMIT 300
+			#define SIDE_LIMIT 360
+
+			// X limits for fwd / bwd movement:
+			#define FRONT_LIMIT 550
+			#define BACK_LIMIT -750
+
+			// X limit for turning
+			#define BACK_TURN_LIMIT -540
+		#endif
 	#else
 
 		// General Y limit:
@@ -1584,7 +1616,7 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 				{
 					for(int i=0; i<5; i++)
 					{
-						if(dists[i] != DIST_UNDEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+						if(dists[i] != (DIST_UNDEREXP<<DIST_SHIFT) && dists[i] > avg-120 && dists[i] < avg+120)
 						{
 							n_conform++;
 							conform_avg += dists[i];
@@ -1595,7 +1627,7 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 				{
 					for(int i=0; i<5; i++)
 					{
-						if(dists[i] != DIST_UNDEREXP && dists[i] != DIST_OVEREXP && dists[i] > avg-120 && dists[i] < avg+120)
+						if(dists[i] != (DIST_UNDEREXP<<DIST_SHIFT) && dists[i] != (DIST_OVEREXP<<DIST_SHIFT) && dists[i] > avg-120 && dists[i] < avg+120)
 						{
 							n_conform++;
 							conform_avg += dists[i];
@@ -1657,7 +1689,7 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 								obstacle_front_far++;
 							}
 
-							if(local_x <= -450 && local_x > BACK_LIMIT)
+							if(local_x <= -500 && local_x > BACK_LIMIT)
 							{
 								led_status(sidx, RED, LED_MODE_FADE);
 								obstacle_back_near++;
