@@ -50,6 +50,8 @@ and pose estimate, and commands the bldc.c module to produce wheel motion.
 
 #define MOVING_RESET_VALUE 500
 
+#define GYRO_INIT_PERIOD 3000
+
 static int moving = MOVING_RESET_VALUE/2;
 static inline void robot_moves()
 {
@@ -75,6 +77,15 @@ void hires_pos_to_hw_pose(hw_pose_t* out, hires_pos_t* in)
 	out->roll = in->roll;
 	out->x = in->x>>16;
 	out->y = in->y>>16;
+}
+
+void hw_pose_to_hires_pos(hires_pos_t* out, hw_pose_t* in)
+{
+	out->ang = in->ang;
+	out->pitch = in->pitch;
+	out->roll = in->roll;
+	out->x = (int64_t)(in->x)<<16;
+	out->y = (int64_t)(in->y)<<16;
 }
 
 
@@ -288,6 +299,11 @@ void cmd_corr_pos(s2b_corr_pos_t* cmd)
 {
 	memcpy(&stored_corrpos, cmd, sizeof(s2b_corr_pos_t));
 	corrpos_in_queue = 1;
+}
+
+void cmd_set_pose(s2b_set_pose_t* cmd)
+{
+	hw_pose_to_hires_pos(&cur_pos, &cmd->new_pose);
 }
 
 void execute_corr_pos()
@@ -1167,7 +1183,7 @@ void drive_handler()
 		if(cur_gz < -G_DC_MOTDET_TH || cur_gz > G_DC_MOTDET_TH || 
 		   cur_gx < -G_DC_MOTDET_TH || cur_gx > G_DC_MOTDET_TH ||
 		   cur_gy < -G_DC_MOTDET_TH || cur_gy > G_DC_MOTDET_TH ||
-		   ((ac_th_det_on>3000) && (
+		   ((ac_th_det_on>GYRO_INIT_PERIOD) && (
 		   cur_gz_dccor < -G_AC_MOTDET_TH || cur_gz_dccor > G_AC_MOTDET_TH ||
 		   cur_gx_dccor < -G_AC_MOTDET_TH || cur_gx_dccor > G_AC_MOTDET_TH ||
 		   cur_gy_dccor < -G_AC_MOTDET_TH || cur_gy_dccor > G_AC_MOTDET_TH)))
@@ -1180,7 +1196,7 @@ void drive_handler()
 		}
 		else
 		{
-			if(ac_th_det_on>3000)
+			if(ac_th_det_on>GYRO_INIT_PERIOD)
 			{
 				gyro_dc_x[imu] = ((cur_gx<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_x[imu])>>G_DC_FILT;
 				gyro_dc_y[imu] = ((cur_gy<<15) + ((1<<G_DC_FILT)-1)*gyro_dc_y[imu])>>G_DC_FILT;
@@ -1319,7 +1335,7 @@ void drive_handler()
 	*/
 
 
-	if(ac_th_det_on>3000)
+	if(ac_th_det_on>GYRO_INIT_PERIOD)
 	{
 		ignore_commands = 0;
 
