@@ -804,13 +804,13 @@ void parse_rx_packet()
 					drive_inject_gyrocal(&(((s2b_inject_gyrocal_t*)p_data)->gyrocal));
 				}
 				break;
-
+/*
 				case CMD_SET_POSE:
 				{
 					cmd_set_pose((s2b_set_pose_t*)p_data);
 				}
 				break;
-
+*/
 			#endif
 
 			

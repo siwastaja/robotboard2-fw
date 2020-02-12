@@ -20,6 +20,7 @@ int nearest_hit_y;
 int nearest_hit_z;
 int left_accum, left_accum_cnt;
 int right_accum, right_accum_cnt;
+int32_t marker_y;
 int middle_min_y, middle_max_y;
 int middle_cnt;
 //int total_front_accum, total_front_accum_cnt;
@@ -42,7 +43,7 @@ static chafind_results_t results;
 
 	#define CHAFIND_PUSH_TUNE 0 // in mm, lower number = go further
 
-	#define CHAFIND_AIM_Y_TUNE 0 // positive = aim right
+	#define CHAFIND_AIM_Y_TUNE 15 // positive = aim right
 
 #else
 
@@ -75,6 +76,7 @@ static void chafind_empty_accum2()
 	accum_state = 1;
 	middle_min_y = 9999;
 	middle_max_y = -9999;
+	marker_y = -9999;
 	middle_cnt = 0;
 //	total_front_accum = 0;
 //	total_front_accum_cnt = 0;
@@ -98,10 +100,13 @@ static void chafind_empty_accum3()
 #define ORIGIN_TO_CONTACTS ROBOT_ORIGIN_TO_FRONT_TIGHT
 #endif
 
-
+/*
+	Source 0 is normal x,y,z pointcloud data, anything the sensors see.
+	Source 1 is the x,y,z of the detected charger marker (two black and two white squares)
+*/
 void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_necessary, int source)
 {
-//	y += CHAFIND_AIM_Y_TUNE;
+	y += CHAFIND_AIM_Y_TUNE;
 
 	#ifdef CONTACTS_ON_BACK
 	x *= -1;
@@ -111,6 +116,8 @@ void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_nec
 	// Z already filtered below 290mm
 	if(accum_state == 0)
 	{
+		if(source != 0)
+			return;
 		if(z > 230)
 			return;
 		if(y < (ROBOT_YS_TIGHT/2+80) && y > (-1*ROBOT_YS_TIGHT/2-80) &&
@@ -127,21 +134,31 @@ void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_nec
 	}
 	else if(accum_state == 1)
 	{
-		if(z > 230)
-			return;
-		if(
-//			(x < nearest_hit_x+60 && y > nearest_hit_y-MIDDLE_BAR_WIDTH/2 && y < nearest_hit_y+MIDDLE_BAR_WIDTH/2) ||
-//			(x < nearest_hit_x+40 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
 
-			(x < nearest_hit_x+50 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
+		if(source == 0)
 		{
-			middle_cnt++;
-			if(y < middle_min_y) middle_min_y = y;
-			if(y > middle_max_y) middle_max_y = y;
+			if(z > 230)
+				return;
+			if(
+	//			(x < nearest_hit_x+60 && y > nearest_hit_y-MIDDLE_BAR_WIDTH/2 && y < nearest_hit_y+MIDDLE_BAR_WIDTH/2) ||
+	//			(x < nearest_hit_x+40 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
+
+				(x < nearest_hit_x+50 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
+			{
+				middle_cnt++;
+				if(y < middle_min_y) middle_min_y = y;
+				if(y > middle_max_y) middle_max_y = y;
+			}
+		}
+		else if(source == 1)
+		{
+			marker_y = y;
 		}
 	}
 	else if(accum_state == 2)
 	{
+		if(source != 0)
+			return;
 
 		if(x > nearest_hit_x && x < nearest_hit_x+MIDDLE_BAR_DEPTH+200)
 		{
@@ -180,10 +197,12 @@ static int chafind_calc(int* p_ang, int* p_shift, int* p_dist)
 	results.backwall_ang = ang;
 
 	int midmark_x = nearest_hit_x;
-	int midmark_y = (middle_min_y + middle_max_y)/2;
+//	int midmark_y = (middle_min_y + middle_max_y)/2;
+	int midmark_y = marker_y;
 
 	results.midmark_x = midmark_x;
 	results.midmark_y = midmark_y;
+	results.midmark_y_oldway = (middle_min_y + middle_max_y)/2;
 
 	// Rotate middle mark coordinates to find required sideway drift
 
@@ -258,6 +277,7 @@ void chamount_freerun_fsm()
 //	if(micronavi_status)
 //	{
 //		chafind_state = CHAFIND_FAIL;
+//		results.result = 5;
 //	}
 
 	static int substate;
@@ -272,6 +292,7 @@ void chamount_freerun_fsm()
 			if(nearest_hit_x < 200 || nearest_hit_x > 1200) // todo: also check obstacles from back
 			{
 				chafind_state = CHAFIND_FAIL;
+				results.result = 1;
 			}
 			else
 			{
@@ -338,24 +359,28 @@ void chamount_freerun_fsm()
 			if(substate == 0)
 			{
 				chafind_empty_accum1();
+				chafind_empty_accum2();
 				request_chamount_full_images();
 				DBG_PR_VAR_I32(nearest_hit_x);
 				DBG_PR_VAR_I32(nearest_hit_y);
-				substate++;
-			}
-			else if(substate == 1)
-			{
-				// get middle tower:
-				chafind_empty_accum2();
-				request_chamount_full_images();
-				request_chamount_full_images();
 				DBG_PR_VAR_I32(middle_cnt);
 				DBG_PR_VAR_I32(middle_min_y);
 				DBG_PR_VAR_I32(middle_max_y);
+
+				substate += 2;
+			}
+			else if(substate == 1)
+			{
+
 				substate++;
 			}
 			else if(substate == 2)
 			{
+				if(marker_y == -9999)
+				{
+					chafind_state = CHAFIND_FAIL;
+					results.result = 2;
+				}
 				// get left and right:
 				chafind_empty_accum3();
 				request_chamount_full_images();
@@ -378,15 +403,20 @@ void chamount_freerun_fsm()
 				results.right_accum_cnt = right_accum_cnt;
 
 				int middle_w = middle_max_y - middle_min_y;
-				if(middle_cnt < 150 || left_accum_cnt < 400 || right_accum_cnt < 400 || middle_w < MIDDLE_BAR_WIDTH-30 || middle_w > MIDDLE_BAR_WIDTH+40)
+				if(left_accum_cnt < 400 || right_accum_cnt < 400/* || middle_cnt < 150 || middle_w < MIDDLE_BAR_WIDTH-30 || middle_w > MIDDLE_BAR_WIDTH+40*/)
 				{
 					chafind_state = CHAFIND_FAIL;
+					results.result = 3;
 				}
 				else
 				{
 					pass++;
 					int ang, shift, dist;
 					chafind_calc(&ang, &shift, &dist);
+
+//chafind_state = CHAFIND_FAIL;
+//results.result = 42;
+
 
 					DBG_PR_VAR_I32(ang/ANG_0_1_DEG);
 					DBG_PR_VAR_I32(shift);
@@ -402,7 +432,7 @@ void chamount_freerun_fsm()
 						final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
 					{
 						results.accepted_pos++;
-						set_top_speed_max(30);
+						set_top_speed_max(40);
 
 						int dist2 = (left_accum+right_accum)/(left_accum_cnt+right_accum_cnt);
 
@@ -432,7 +462,7 @@ void chamount_freerun_fsm()
 					}
 					else
 					{
-						set_top_speed_max(30);
+						set_top_speed_max(40);
 
 						if(shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT &&
 						   corr_ang_to_hit_mid > -15*ANG_1_DEG && corr_ang_to_hit_mid < 15*ANG_1_DEG &&
@@ -555,9 +585,9 @@ void chamount_freerun_fsm()
 			int remai = abso(get_remaining_lin());
 
 			//DBG_PR_VAR_I32(remai);
-			if(remai < 150)
+			if(remai < 170)
 			{
-				set_top_speed_max(16);
+				set_top_speed_max(13);
 
 				if(final_push_store_ang != 0)
 				{
@@ -568,13 +598,13 @@ void chamount_freerun_fsm()
 					final_push_store_ang = 0;
 				}
 			}
-			else if(remai < 200)
+			else if(remai < 220)
 			{
-				set_top_speed_max(20);
+				set_top_speed_max(16);
 			}
-			else if(remai < 250)
+			else if(remai < 270)
 			{
-				set_top_speed_max(24);
+				set_top_speed_max(22);
 			}
 
 			charger_freerunning_fsm();
@@ -592,14 +622,18 @@ void chamount_freerun_fsm()
 
 			if(mounted_cnt > 2)
 			{
+				uart_print_string_blocking("mounted!\r\n"); 
+
 				chafind_state = CHAFIND_SUCCESS;
 				mounted_cnt = 0;
 				cmd_stop_movement();
 			}
-
-			if(!is_driving())
+			else if(!is_driving())
 			{
+				uart_print_string_blocking("failed!\r\n"); 
 				chafind_state = CHAFIND_FAIL;
+				results.result = 4;
+
 				mounted_cnt = 0;
 			}
 		}
@@ -607,7 +641,7 @@ void chamount_freerun_fsm()
 
 		case CHAFIND_FAIL:
 		{
-			results.result = 99;
+			// results.result already set. Set it whenever going to this state.
 			cmd_stop_movement();
 		}
 		break;

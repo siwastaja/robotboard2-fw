@@ -3,11 +3,7 @@
 
 
 DEVUSR = pulu
-#DEVIP = 10.3.0.6
-#DEVIP = 192.168.43.59
-DEVIP = 10.42.0.104
-#DEVIP = 192.168.137.235
-#DEVIP = 192.168.1.6
+DEVIP = 192.168.1.101
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
@@ -37,11 +33,11 @@ CFLAGS += -DBATTERY_SIZE_L
 CFLAGS += -DCONTACTS_ON_BACK
 
 # Power outputs that turn on automatically at boot time:
-#CFLAGS += PO1_DEFAULT_ON
+CFLAGS += -DPO4_DEFAULT_ON
+CFLAGS += -DPO3_DEFAULT_ON
 
 #Standard compilation
-OBJ_OS = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o  tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o
-#ext_vacuum_boost.o
+OBJ_OS = stm32init.o main.o flash.o own_std.o tof_muxing.o tof_ctrl.o  tof_table.o sin_lut.o micronavi.o adcs.o pwrswitch.o charger.o bldc.o imu.o drive.o audio.o sbc_comm.o timebase.o backup_ram.o run.o ext_vacuum_boost.o
 OBJ_O3 = tof_process.o
 #ASMS = stm32init.s main.s flash.s own_std.s tof_muxing.s tof_ctrl.s tof_process.s tof_table.s micronavi.s adcs.s pwrswitch.s charger.s bldc.s imu.s audio.s sbc_comm.s timebase.s backup_ram.s run.s
 

@@ -1228,11 +1228,13 @@ void ITCM compensated_tof_calc_ampldist(int is_narrow, uint16_t* restrict ampldi
 // If defined, the 4-bit amplitude output pixel is the actual amplitude
 // Otherwise, it's surface emissivity approximated by multiplying the amplitude with the square of distance, divided by integration time
 // warning: if enabled, one mechanism of removing false close readings is out
-//#define AMPL_OUTPUT_IS_AMPL
+#define AMPL_OUTPUT_IS_AMPL
 
 			#ifdef AMPL_OUTPUT_IS_AMPL
 				// 0..approx 32768 --> 0..15
-				ampl/=2048;
+				//ampl/=2048;
+				// 0..approx 4096 --> 0..15; near-field objects may overexpose
+				ampl/=256;
 				if(ampl>15) ampl=15;
 			#else
 				// ampl is now surface emissivity approx. 0 - 255. Remove suspiciously low values.
@@ -1529,7 +1531,7 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 
 	#elif defined(VACUUM_APP)
 
-		#ifdef(TOWER_APP)
+		#if defined(TOWER_APP)
 			// General Y limit:
 			#define OBST_AVOID_WIDTH 750
 
@@ -1748,10 +1750,304 @@ extern int obstacle_front_far, obstacle_back_far, obstacle_left_far, obstacle_ri
 	}
 #endif
 
+/*
+2020-01-07 A.A.: tof_detect_cha_marker:
+
+An amplitude-based marker is added to the charger so that the middle point can
+be reliably detected.
+
+The marker is four squares, two black, two white:
+	BW 
+	WB
+
+White continues to both sides of the marker, so you can think it as two black squares
+on white background:
+WWWWWWWWBWWWWWWWWW
+WWWWWWWWWBWWWWWWWW
+
+The marker is on the charger backplate, directly over the top of the middle bar.
+The middle of the four squares is at h=285mm, in the exact center of the charger.
+
+The squares are approx 4x4 pixels.
+
+Sensor coordinates:
+Y is horizontal - the direction that needs to be scanned widely. NOTE: inversed!
+X is vertical - the charger is expected to be on level floor with the robot, so
+	the vertical direction needs to be scanned only to account for inaccuracies
+
+4-bit amplitude numbers are already compensated for distance (the squared reduction of light power),
+so they fairly well reflect the actual surface reflectivity. Hence, using fixed thresholds to
+detect black & white should work.
+
+Return value:
+	0 success
+	-1 no marked found
+	-2 multiple markers found
+	-3 marker found, but white areas in marker underexposed
+	-4 marker found, but white areas in marker overexposed
+
+*/
+
+
+int ITCM tof_detect_cha_marker(uint16_t* ampldist, int sidx)
+{
+//	if(sidx != 5)
+//		return;
+
+	DBG_PR_VAR_I32(sidx);
+
+	int result_x = -1, result_y = -1;
+
+	int best_score = -1;
+
+	for(int px=TOF_XS/2-16; px<TOF_XS/2+16; px++)
+	{
+		for(int py=3; py<TOF_YS-3; py++)
+		{
+			/*
+			Look at this pattern:
+
+				xpaxbjt
+				xqcxdku
+				xxxoxxx
+				vlexfrx
+				wmgxhsx
+
+				y<	x^
+
+
+				o = don't care; the resulting location of the marker
+				x = don't care
+
+				Expected results:
+
+				xBBxWWW
+				xBBxWWW
+				xxxoxxx
+				WWWxBBx
+				WWWxBBx
+			*/
+
+			uint8_t ampl_a = (ampldist[(py+1)*TOF_XS+(px-2)] & 0xf000)>>12;
+			uint8_t ampl_p = (ampldist[(py+2)*TOF_XS+(px-2)] & 0xf000)>>12;
+			uint8_t ampl_b = (ampldist[(py-1)*TOF_XS+(px-2)] & 0xf000)>>12;
+			uint8_t ampl_j = (ampldist[(py-2)*TOF_XS+(px-2)] & 0xf000)>>12;
+			uint8_t ampl_t = (ampldist[(py-3)*TOF_XS+(px-2)] & 0xf000)>>12;
+			uint8_t ampl_c = (ampldist[(py+1)*TOF_XS+(px-1)] & 0xf000)>>12;
+			uint8_t ampl_q = (ampldist[(py+2)*TOF_XS+(px-1)] & 0xf000)>>12;
+			uint8_t ampl_d = (ampldist[(py-1)*TOF_XS+(px-1)] & 0xf000)>>12;
+			uint8_t ampl_k = (ampldist[(py-2)*TOF_XS+(px-1)] & 0xf000)>>12;
+			uint8_t ampl_u = (ampldist[(py-3)*TOF_XS+(px-1)] & 0xf000)>>12;
+			uint8_t ampl_e = (ampldist[(py+1)*TOF_XS+(px+1)] & 0xf000)>>12;
+			uint8_t ampl_l = (ampldist[(py+2)*TOF_XS+(px+1)] & 0xf000)>>12;
+			uint8_t ampl_v = (ampldist[(py+3)*TOF_XS+(px+1)] & 0xf000)>>12;
+			uint8_t ampl_f = (ampldist[(py-1)*TOF_XS+(px+1)] & 0xf000)>>12;
+			uint8_t ampl_r = (ampldist[(py-2)*TOF_XS+(px+1)] & 0xf000)>>12;
+			uint8_t ampl_g = (ampldist[(py+1)*TOF_XS+(px+2)] & 0xf000)>>12;
+			uint8_t ampl_m = (ampldist[(py+2)*TOF_XS+(px+2)] & 0xf000)>>12;
+			uint8_t ampl_w = (ampldist[(py+3)*TOF_XS+(px+2)] & 0xf000)>>12;
+			uint8_t ampl_h = (ampldist[(py-1)*TOF_XS+(px+2)] & 0xf000)>>12;
+			uint8_t ampl_s = (ampldist[(py-2)*TOF_XS+(px+2)] & 0xf000)>>12;
+/*
+			o_utoa8_fixed(px, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+			o_utoa8_fixed(py, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("   ");
+			o_utoa8_fixed(ampl_a, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+			o_utoa8_fixed(ampl_b, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+			o_utoa8_fixed(ampl_c, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+			o_utoa8_fixed(ampl_d, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+			o_utoa8_fixed(ampl_e, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+			o_utoa8_fixed(ampl_f, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+			o_utoa8_fixed(ampl_g, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
+			o_utoa8_fixed(ampl_h, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
+*/
+
+			// White has an expected minimum threshold - black is autoadjusted according
+			// to average measured white
+			#define WHITE_TH 4
+
+			int w_cnt = 
+			   (ampl_b >= WHITE_TH) +
+			   (ampl_d >= WHITE_TH) +
+			   (ampl_e >= WHITE_TH) +
+			   (ampl_g >= WHITE_TH) +
+			   (ampl_j >= WHITE_TH) +
+			   (ampl_k >= WHITE_TH) +
+			   (ampl_l >= WHITE_TH) +
+			   (ampl_m >= WHITE_TH) +
+			   (ampl_t >= WHITE_TH) +
+			   (ampl_u >= WHITE_TH) +
+			   (ampl_v >= WHITE_TH) +
+			   (ampl_w >= WHITE_TH);
+
+			if(w_cnt >= 11) // One of the supposed "whites" do not need to pass
+			{
+				int avg_white_x12 = (ampl_b+ampl_d+ampl_e+ampl_g+ampl_j+ampl_k+ampl_l+ampl_m+ampl_t+ampl_u+ampl_v+ampl_w);
+
+				int expected_black = avg_white_x12/(3*12);
+
+				int b_cnt =
+				   (ampl_a <= expected_black) +
+				   (ampl_c <= expected_black) + 
+				   (ampl_f <= expected_black) + 
+				   (ampl_h <= expected_black) +
+				   (ampl_p <= expected_black) +
+				   (ampl_q <= expected_black) +
+				   (ampl_r <= expected_black) +
+				   (ampl_s <= expected_black);
+
+				if(b_cnt >= 5)
+				{
+					if(result_x != -1)
+						uart_print_string_blocking("another marker found:\r\n");
+					else
+						uart_print_string_blocking("first marker found:\r\n");
+
+					DBG_PR_VAR_I32(px);
+					DBG_PR_VAR_I32(py);
+
+					int score = w_cnt + b_cnt;
+					DBG_PR_VAR_I32(score);
+
+					if(result_x != -1)
+					{
+						// Already found it; detecting multiples is an error
+						if(score > best_score)
+						{
+							best_score = score;
+							result_x = px;
+							result_y = py;
+						}
+						//return -2;
+					}
+					else
+					{
+						best_score = score;
+						result_x = px;
+						result_y = py;
+					}
+				}
+			}
+		}
+	}
+
+	if(result_x == -1)
+	{
+		uart_print_string_blocking("marker err: no marker\r\n");
+		// No marker found
+		return -1;
+	}
+
+	uint16_t local_sensor_hor_ang = tof_calibs[sidx]->mount.ang_rel_robot;
+	uint16_t local_sensor_ver_ang = tof_calibs[sidx]->mount.vert_ang_rel_ground;
+
+	int32_t  local_sensor_x = tof_calibs[sidx]->mount.x_rel_robot;
+	int32_t  local_sensor_y = tof_calibs[sidx]->mount.y_rel_robot;
+	int32_t  local_sensor_z = tof_calibs[sidx]->mount.z_rel_ground;
+
+
+	/*
+		Take the distance measurement using the white areas, averaging a few pixels
+
+		Actual number of avgs may be lower, if the marker is near the edge
+	*/
+	#define N_AVGS 12
+	static const int avgs_x[N_AVGS] = {+2,+3,+2,+3,+2,+3, -2,-3,-2,-3,-2,-3};
+	static const int avgs_y[N_AVGS] = {+2,+2,+3,+3,+4,+4, -2,-2,-3,-3,-4,-4};
+
+	int actual_n_avgs = 0;
+	int32_t d_accum = 0;
+	for(int i=0; i<N_AVGS; i++)
+	{
+		int px = result_x + avgs_x[i];
+		int py = result_y + avgs_y[i];
+
+		if(px < 0 || px >= TOF_XS || py < 0 || py >= TOF_YS)
+		{
+			continue;
+		}
+
+		int32_t dist = ampldist[(py)*TOF_XS+(px)]&DIST_MASK;
+		if(dist == DIST_UNDEREXP)
+		{
+			uart_print_string_blocking("marker err: underexposed distance in marker white\r\n");
+			return -3;
+		}
+		if(dist == DIST_OVEREXP)
+		{
+			uart_print_string_blocking("marker err: overexposed distance in marker white\r\n");
+			return -4;
+		}
+
+		d_accum += dist;
+		actual_n_avgs++;
+	}
+
+	if(actual_n_avgs < 4)
+		error(666);
+
+	int32_t d = (d_accum<<DIST_SHIFT) / actual_n_avgs;
+
+	DBG_PR_VAR_I32(d);
+
+	uint16_t hor_ang, ver_ang;
+
+	int px_idx = result_x/2;
+	int py_idx = result_y/2;
+
+	int px_rema = result_x-px_idx*2;
+	int py_rema = result_y-py_idx*2;
+
+	hor_ang = -(tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + tof_calibs[sidx]->hor_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+1)])/2;
+	ver_ang =  (tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + tof_calibs[sidx]->ver_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+1)])/2;
+
+	// Angular calibration is at half*half resolution - interpolate
+	if(px_rema && py_rema)
+	{
+		hor_ang = -((int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+1)])/2;
+		ver_ang =  ((int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+1)])/2;
+	}
+	else if(px_rema)
+	{
+		hor_ang = -((int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx+0)*(TOF_XS/2)+(px_idx+1)])/2;
+		ver_ang =  ((int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx+0)*(TOF_XS/2)+(px_idx+1)])/2;
+	}
+	else if(py_rema)
+	{
+		hor_ang = -((int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->hor_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+0)])/2;
+		ver_ang =  ((int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)] + (int32_t)(int16_t)tof_calibs[sidx]->ver_angs[(py_idx+1)*(TOF_XS/2)+(px_idx+0)])/2;
+	}
+	else
+	{
+		hor_ang = -tof_calibs[sidx]->hor_angs[(py_idx)*(TOF_XS/2)+(px_idx)];
+		ver_ang =  tof_calibs[sidx]->ver_angs[(py_idx)*(TOF_XS/2)+(px_idx)];
+	}
+
+	uint16_t local_comb_hor_ang = hor_ang + local_sensor_hor_ang;
+	uint16_t local_comb_ver_ang = ver_ang + local_sensor_ver_ang;
+
+	DBG_PR_VAR_I32(local_comb_hor_ang/182);
+	DBG_PR_VAR_I32(local_comb_ver_ang/182);
+
+	int32_t local_x = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_cos_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_x;
+	int32_t local_y = (((int64_t)d * (int64_t)lut_cos_from_u16(local_comb_ver_ang) * (int64_t)lut_sin_from_u16(local_comb_hor_ang))>>(2*SIN_LUT_RESULT_SHIFT)) + local_sensor_y;
+	int32_t local_z = (((int64_t)d * (int64_t)lut_sin_from_u16(local_comb_ver_ang))>>SIN_LUT_RESULT_SHIFT) + local_sensor_z;
+
+	DBG_PR_VAR_I32(local_x);
+	DBG_PR_VAR_I32(local_y);
+	DBG_PR_VAR_I32(local_z);
+
+	/*
+		source=1 means the middle detector
+	*/
+	extern void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_necessary, int source);
+	micronavi_point_in_chafind(local_x, local_y, local_z, 0, 1);
+}
 
 void ITCM tof_to_chamount(uint16_t* ampldist, int sidx)
 {
 	if(sidx < 0 || sidx >= N_SENSORS) error(150);
+
+	tof_detect_cha_marker(ampldist, sidx);
 
 //		uart_print_string_blocking("\r\n");
 

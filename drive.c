@@ -301,10 +301,12 @@ void cmd_corr_pos(s2b_corr_pos_t* cmd)
 	corrpos_in_queue = 1;
 }
 
+/*
 void cmd_set_pose(s2b_set_pose_t* cmd)
 {
 	hw_pose_to_hires_pos(&cur_pos, &cmd->new_pose);
 }
+*/
 
 void execute_corr_pos()
 {
