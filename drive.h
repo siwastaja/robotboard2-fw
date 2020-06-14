@@ -23,6 +23,7 @@ void cmd_corr_pos(s2b_corr_pos_t* cmd);
 void execute_corr_pos();
 //void cmd_set_pose(s2b_set_pose_t* cmd);
 
+uint32_t get_micronavi_status();
 
 
 void cmd_stop_movement();

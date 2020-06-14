@@ -13,6 +13,7 @@
 
 #include "micronavi.h"
 
+#define CHAFIND_DO_IT
 
 
 int nearest_hit_x;
@@ -21,16 +22,12 @@ int nearest_hit_z;
 int left_accum, left_accum_cnt;
 int right_accum, right_accum_cnt;
 int32_t marker_y;
-int middle_min_y, middle_max_y;
-int middle_cnt;
 //int total_front_accum, total_front_accum_cnt;
 
 static chafind_results_t results;
 
 #define MIDDLE_BAR_DEPTH 103
 #define MIDDLE_BAR_WIDTH 130
-#define CHAFIND_LOOK_SIDEWAY_MAX 200
-#define CHAFIND_LOOK_SIDEWAY_MIN 150
 
 
 #ifdef CONTACTS_ON_BACK
@@ -38,20 +35,20 @@ static chafind_results_t results;
 	#define CHAFIND_FIRST_DIST 920
 	#define CHAFIND_FIRST_DIST_TOLERANCE 50
 
-	#define CHAFIND_PASS1_ACCEPT_ANGLE (7*ANG_1_DEG) 
-	#define CHAFIND_PASS1_ACCEPT_SHIFT 40
+	#define CHAFIND_PASS1_ACCEPT_ANGLE (5*ANG_1_DEG) 
+	#define CHAFIND_PASS1_ACCEPT_SHIFT 30
 
 	#define CHAFIND_PUSH_TUNE 0 // in mm, lower number = go further
 
-	#define CHAFIND_AIM_Y_TUNE 15 // positive = aim right
+	#define CHAFIND_AIM_Y_TUNE 5 // positive = aim right
 
 #else
 
 	#define CHAFIND_FIRST_DIST 550
 	#define CHAFIND_FIRST_DIST_TOLERANCE 50
 
-	#define CHAFIND_PASS1_ACCEPT_ANGLE (7*ANG_1_DEG) 
-	#define CHAFIND_PASS1_ACCEPT_SHIFT 40
+	#define CHAFIND_PASS1_ACCEPT_ANGLE (5*ANG_1_DEG) 
+	#define CHAFIND_PASS1_ACCEPT_SHIFT 30
 
 	#define CHAFIND_PUSH_TUNE 0 // in mm, lower number = go further
 
@@ -59,27 +56,16 @@ static chafind_results_t results;
 
 #endif
 
-//#define CHAFIND_SIDE (CHAFIND_LOOK_SIDEWAY_MAX+CHAFIND_LOOK_SIDEWAY_MIN)  //  /2 * 2  // y dist between the two side points looked at
 #define CHAFIND_SIDE (500) // Use a bit more than in reality to reduce corrections to avoid overcorrecting
 
 static int accum_state = 0;
 static void chafind_empty_accum1()
 {
 	accum_state = 0;
+	marker_y = -9999;
 	nearest_hit_x = 9999;
 	nearest_hit_y = 0;
 	nearest_hit_z = 0;
-}
-
-static void chafind_empty_accum2()
-{
-	accum_state = 1;
-	middle_min_y = 9999;
-	middle_max_y = -9999;
-	marker_y = -9999;
-	middle_cnt = 0;
-//	total_front_accum = 0;
-//	total_front_accum_cnt = 0;
 }
 
 static void chafind_empty_accum3()
@@ -116,43 +102,34 @@ void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_nec
 	// Z already filtered below 290mm
 	if(accum_state == 0)
 	{
-		if(source != 0)
-			return;
-		if(z > 230)
-			return;
-		if(y < (ROBOT_YS_TIGHT/2+80) && y > (-1*ROBOT_YS_TIGHT/2-80) &&
-			x > ORIGIN_TO_CONTACTS)
+		if(source == 1)
 		{
-			// Look at area in front of the robot
-			if(x < nearest_hit_x)
+			marker_y = y;
+		}
+		else
+		{
+			if(z > 230)
+				return;
+			if(y < (ROBOT_YS_TIGHT/2+80) && y > (-1*ROBOT_YS_TIGHT/2-80) &&
+				x > ORIGIN_TO_CONTACTS)
 			{
-				nearest_hit_x = x;
-				nearest_hit_y = y;
-				nearest_hit_z = z;
+				// Look at area in front of the robot
+				if(x < nearest_hit_x)
+				{
+					nearest_hit_x = x;
+					nearest_hit_y = y;
+					nearest_hit_z = z;
+				}
 			}
 		}
+
 	}
 	else if(accum_state == 1)
 	{
 
 		if(source == 0)
 		{
-			if(z > 230)
-				return;
-			if(
-	//			(x < nearest_hit_x+60 && y > nearest_hit_y-MIDDLE_BAR_WIDTH/2 && y < nearest_hit_y+MIDDLE_BAR_WIDTH/2) ||
-	//			(x < nearest_hit_x+40 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
-
-				(x < nearest_hit_x+50 && y > nearest_hit_y-MIDDLE_BAR_WIDTH-10 && y < nearest_hit_y+MIDDLE_BAR_WIDTH+10) )
-			{
-				middle_cnt++;
-				if(y < middle_min_y) middle_min_y = y;
-				if(y > middle_max_y) middle_max_y = y;
-			}
-		}
-		else if(source == 1)
-		{
-			marker_y = y;
+			return;
 		}
 	}
 	else if(accum_state == 2)
@@ -160,14 +137,17 @@ void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_nec
 		if(source != 0)
 			return;
 
-		if(x > nearest_hit_x && x < nearest_hit_x+MIDDLE_BAR_DEPTH+200)
+		if(z < 100 || z > 420)
+			return;
+
+		if(x > nearest_hit_x && x < nearest_hit_x+MIDDLE_BAR_DEPTH+250)
 		{
-			if(y < middle_min_y-80 && y > middle_min_y-160)
+			if(y < marker_y-160 && y > marker_y-250)
 			{
 				right_accum += x;
 				right_accum_cnt++;
 			}
-			else if(y > middle_max_y+80 && y < middle_max_y+160)
+			else if(y > marker_y+160 && y < marker_y+250)
 			{
 				left_accum += x;
 				left_accum_cnt++;
@@ -202,7 +182,7 @@ static int chafind_calc(int* p_ang, int* p_shift, int* p_dist)
 
 	results.midmark_x = midmark_x;
 	results.midmark_y = midmark_y;
-	results.midmark_y_oldway = (middle_min_y + middle_max_y)/2;
+	//results.midmark_y_oldway = (middle_min_y + middle_max_y)/2;
 
 	// Rotate middle mark coordinates to find required sideway drift
 
@@ -254,7 +234,6 @@ static int pass;
 extern void request_chamount_full_images();
 extern void request_chamount_mid_image();
 
-#define CHAFIND_DO_IT
 
 
 static void ignore_obst()
@@ -289,7 +268,7 @@ void chamount_freerun_fsm()
 			chafind_empty_accum1();
 			request_chamount_full_images();
 
-			if(nearest_hit_x < 200 || nearest_hit_x > 1200) // todo: also check obstacles from back
+			if(nearest_hit_x < 200 || nearest_hit_x > 1400) // todo: also check obstacles from back
 			{
 				chafind_state = CHAFIND_FAIL;
 				results.result = 1;
@@ -308,9 +287,9 @@ void chamount_freerun_fsm()
 					DBG_PR_VAR_I32(movement);
 
 					#ifdef CHAFIND_DO_IT
-						ignore_obst();
+						//ignore_obst();
 						cmd_motors(8000);
-						set_top_speed_max(25);
+						set_top_speed_max(40);
 						straight_rel(movement);
 						chafind_state = CHAFIND_WAIT_FWD1;
 					#else
@@ -323,7 +302,6 @@ void chamount_freerun_fsm()
 					uart_print_string_blocking("initial distance ok\r\n"); 
 					DBG_PR_VAR_I32(movement);
 
-					chafind_empty_accum2();
 					results.first_movement_needed = 0;
 					chafind_state = CHAFIND_ACCUM_DATA;
 					substate = 0;
@@ -335,7 +313,12 @@ void chamount_freerun_fsm()
 
 		case CHAFIND_WAIT_FWD1:
 		{
-			if(!is_driving())
+			if(get_micronavi_status() != 0)
+			{
+				uart_print_string_blocking("OBSTACLE - CANCEL\r\n"); 
+				chafind_state = CHAFIND_FAIL;
+			}
+			else if(!is_driving())
 			{
 				timer = 15;
 				chafind_state = CHAFIND_WAIT_FWD1_STOPEXTRA;
@@ -359,19 +342,14 @@ void chamount_freerun_fsm()
 			if(substate == 0)
 			{
 				chafind_empty_accum1();
-				chafind_empty_accum2();
 				request_chamount_full_images();
 				DBG_PR_VAR_I32(nearest_hit_x);
 				DBG_PR_VAR_I32(nearest_hit_y);
-				DBG_PR_VAR_I32(middle_cnt);
-				DBG_PR_VAR_I32(middle_min_y);
-				DBG_PR_VAR_I32(middle_max_y);
 
 				substate += 2;
 			}
 			else if(substate == 1)
 			{
-
 				substate++;
 			}
 			else if(substate == 2)
@@ -399,12 +377,13 @@ void chamount_freerun_fsm()
 
 
 				results.left_accum_cnt = left_accum_cnt;
-				results.mid_accum_cnt = middle_cnt;
+				//results.mid_accum_cnt = middle_cnt;
 				results.right_accum_cnt = right_accum_cnt;
 
-				int middle_w = middle_max_y - middle_min_y;
-				if(left_accum_cnt < 400 || right_accum_cnt < 400/* || middle_cnt < 150 || middle_w < MIDDLE_BAR_WIDTH-30 || middle_w > MIDDLE_BAR_WIDTH+40*/)
+				if(left_accum_cnt < 400 || right_accum_cnt < 400)
 				{
+					uart_print_string_blocking("Fail, too little data!\r\n"); 
+
 					chafind_state = CHAFIND_FAIL;
 					results.result = 3;
 				}
@@ -422,8 +401,8 @@ void chamount_freerun_fsm()
 					DBG_PR_VAR_I32(shift);
 					DBG_PR_VAR_I32(dist);
 
-					// dist-100, because the final angle correction is done approx. 100mm before the targer
-					int32_t corr_ang_to_hit_mid = atan2(shift, (dist-100))*(4294967296.0/(2.0*M_PI));
+					// dist-130, because the final angle correction is done approx. 130mm before the target
+					int32_t corr_ang_to_hit_mid = atan2(shift, (dist-130))*(4294967296.0/(2.0*M_PI));
 					final_push_store_ang = -1*ang - corr_ang_to_hit_mid;
 
 					if(ang > -1*CHAFIND_PASS1_ACCEPT_ANGLE && ang < CHAFIND_PASS1_ACCEPT_ANGLE &&
@@ -432,7 +411,7 @@ void chamount_freerun_fsm()
 						final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
 					{
 						results.accepted_pos++;
-						set_top_speed_max(40);
+						set_top_speed_max(50);
 
 						int dist2 = (left_accum+right_accum)/(left_accum_cnt+right_accum_cnt);
 
@@ -462,11 +441,11 @@ void chamount_freerun_fsm()
 					}
 					else
 					{
-						set_top_speed_max(40);
+						set_top_speed_max(50);
 
 						if(shift > -1*CHAFIND_PASS1_ACCEPT_SHIFT && shift < CHAFIND_PASS1_ACCEPT_SHIFT &&
 						   corr_ang_to_hit_mid > -15*ANG_1_DEG && corr_ang_to_hit_mid < 15*ANG_1_DEG &&
-						   final_push_store_ang > -8*ANG_1_DEG && final_push_store_ang < 8*ANG_1_DEG)
+						   final_push_store_ang > -6*ANG_1_DEG && final_push_store_ang < 6*ANG_1_DEG)
 						{
 							results.turning_passes_needed++;
 							uart_print_string_blocking("rotation only\r\n"); 
@@ -536,7 +515,12 @@ void chamount_freerun_fsm()
 
 		case CHAFIND_WAIT_BACKING:
 		{
-			if(!is_driving())
+			if(get_micronavi_status() != 0)
+			{
+				uart_print_string_blocking("OBSTACLE - CANCEL\r\n"); 
+				chafind_state = CHAFIND_FAIL;
+			}
+			else if(!is_driving())
 			{
 				chafind_state = CHAFIND_START_REBACKING;
 			}
@@ -561,7 +545,12 @@ void chamount_freerun_fsm()
 
 		case CHAFIND_WAIT_REBACKING:
 		{
-			if(!is_driving())
+			if(get_micronavi_status() != 0)
+			{
+				uart_print_string_blocking("OBSTACLE - CANCEL\r\n"); 
+				chafind_state = CHAFIND_FAIL;
+			}
+			else if(!is_driving())
 			{
 				timer = 10;
 				chafind_state = CHAFIND_WAIT_FWD2_STOPEXTRA;
@@ -585,7 +574,7 @@ void chamount_freerun_fsm()
 			int remai = abso(get_remaining_lin());
 
 			//DBG_PR_VAR_I32(remai);
-			if(remai < 170)
+			if(remai < 190)
 			{
 				set_top_speed_max(13);
 
@@ -661,8 +650,8 @@ void chamount_freerun_fsm()
 	results.nearest_hit_x = nearest_hit_x;
 	results.nearest_hit_y = nearest_hit_y;
 	results.nearest_hit_z = nearest_hit_z;
-	results.middle_bar_min_y = middle_min_y;
-	results.middle_bar_max_y = middle_max_y;
+	//results.middle_bar_min_y = middle_min_y;
+	//results.middle_bar_max_y = middle_max_y;
 
 	if(chafind_results)
 	{

@@ -1949,10 +1949,15 @@ int ITCM tof_detect_cha_marker(uint16_t* ampldist, int sidx)
 		Take the distance measurement using the white areas, averaging a few pixels
 
 		Actual number of avgs may be lower, if the marker is near the edge
+
+		Do not include close pixels to the black areas, these have lens flare effects. Look one pixel further.
 	*/
 	#define N_AVGS 12
 	static const int avgs_x[N_AVGS] = {+2,+3,+2,+3,+2,+3, -2,-3,-2,-3,-2,-3};
 	static const int avgs_y[N_AVGS] = {+2,+2,+3,+3,+4,+4, -2,-2,-3,-3,-4,-4};
+
+	DBG_PR_VAR_I32(result_x);
+	DBG_PR_VAR_I32(result_y);
 
 	int actual_n_avgs = 0;
 	int32_t d_accum = 0;
@@ -1988,6 +1993,30 @@ int ITCM tof_detect_cha_marker(uint16_t* ampldist, int sidx)
 	int32_t d = (d_accum<<DIST_SHIFT) / actual_n_avgs;
 
 	DBG_PR_VAR_I32(d);
+
+	// Every pixel used to average the white area distance, must be within close range of said average
+	// (a level surface)
+	for(int i=0; i<N_AVGS; i++)
+	{
+		int px = result_x + avgs_x[i];
+		int py = result_y + avgs_y[i];
+
+		if(px < 0 || px >= TOF_XS || py < 0 || py >= TOF_YS)
+		{
+			continue;
+		}
+
+		int32_t dist = (ampldist[(py)*TOF_XS+(px)]&DIST_MASK)<<DIST_SHIFT;
+
+		int32_t d_diff = dist - d;
+
+		if(d_diff < -160 || d_diff > +160)
+		{
+			uart_print_string_blocking("marker err: unstable distance within white marker areas\r\n");
+			DBG_PR_VAR_I32(dist);
+			return -5;
+		}
+	}
 
 	uint16_t hor_ang, ver_ang;
 
@@ -2036,11 +2065,20 @@ int ITCM tof_detect_cha_marker(uint16_t* ampldist, int sidx)
 	DBG_PR_VAR_I32(local_y);
 	DBG_PR_VAR_I32(local_z);
 
+	// The marker has to be at z=280mm level, otherwise it's a false detection
+	if(local_z < 280-40 || local_z > 280+40)
+	{
+		uart_print_string_blocking("marker err: wrong z\r\n");
+		return -6;
+	}
+
 	/*
 		source=1 means the middle detector
 	*/
 	extern void micronavi_point_in_chafind(int32_t x, int32_t y, int16_t z, int stop_if_necessary, int source);
 	micronavi_point_in_chafind(local_x, local_y, local_z, 0, 1);
+
+	return 0;
 }
 
 void ITCM tof_to_chamount(uint16_t* ampldist, int sidx)

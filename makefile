@@ -3,7 +3,7 @@
 
 
 DEVUSR = pulu
-DEVIP = 192.168.1.101
+DEVIP = 192.168.1.100
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc

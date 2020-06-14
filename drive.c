@@ -107,6 +107,11 @@ int motors_enabled = 0;
 int32_t cur_id;
 uint32_t micronavi_status;
 
+uint32_t get_micronavi_status()
+{
+	return micronavi_status;
+}
+
 int new_direction;
 int backmode;
 
@@ -216,6 +221,8 @@ void straight_rel(int32_t mm)
 
 	accurot = 1;
 
+	micronavi_status = 0;
+
 //	do_start = 1;
 }
 
@@ -238,6 +245,8 @@ void rotate_rel(int32_t ang32, int accurate)
 		beep(75, 800, -600, 30);
 
 	accurot = accurate;
+
+	micronavi_status = 0;
 
 //	do_start = 1;
 }
@@ -283,6 +292,8 @@ void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_fi
 		beep(75, 800, -600, 30);
 
 	accurot = accurate_rotation_first;
+
+	micronavi_status = 0;
 
 //	do_start = 1;
 }

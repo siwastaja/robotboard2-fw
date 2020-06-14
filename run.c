@@ -628,7 +628,8 @@ static void chamount_set(int sidx)
 	run_lens_model(img31, img31_lenscorr, tof_calibs[sidx]);
 
 	// Remove data that needed high amounts of correction - it's likely too wrong, despite correction:
-	mask_highly_corrected(0, img20_lenscorr, img31_lenscorr, img20, img31);
+	// This is NOT called on the chamount set - masking causes empty black spots on the amplitude.
+	//mask_highly_corrected(0, img20_lenscorr, img31_lenscorr, img20, img31);
 
 	// Dealias and calculate final amplitude&distance map:
 	compensated_tof_calc_ampldist(0, ampldist, img20_lenscorr, img31_lenscorr, lofreq_dist, 0, long_exp);
