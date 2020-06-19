@@ -50,7 +50,7 @@ and pose estimate, and commands the bldc.c module to produce wheel motion.
 
 #define MOVING_RESET_VALUE 500
 
-#define GYRO_INIT_PERIOD 3000
+#define GYRO_INIT_PERIOD -1 //3000
 
 static int moving = MOVING_RESET_VALUE/2;
 static inline void robot_moves()
@@ -1512,15 +1512,13 @@ void drive_handler()
 		hires_pos_to_hw_pose(hw_pose, &cur_pos);
 	}
 
-
-
-
+	// The above is just pose calculation
 
 	if(lock_processing)
 		return;
 
 	
-
+	// The rest is movement control, processing when to start and commanding motors
 
 
 	int64_t lin_err;
@@ -1558,6 +1556,7 @@ void drive_handler()
 	new_direction = 0;
 
 	int32_t ang_err = cur_pos.ang - ang_to_target;
+
 
 	if(mode_xy)
 	{
@@ -1630,6 +1629,9 @@ void drive_handler()
 	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(136);
 
 
+	int dbg1, dbg2, dbg3, dbg4, dbg5, dbg6;
+
+
 	static int correcting_angle = 1;
 	static int correcting_linear = 0;
 
@@ -1640,9 +1642,15 @@ void drive_handler()
 		{
 			rotation_happening = 1;
 			correcting_linear = 0;
+			dbg6 = 1;
 		}
 		else if((abso(ang_err) < 3*ANG_1_DEG) && abso(lin_err) > 50*65535)
+		{
 			correcting_linear = 1;
+			dbg6 = 2;
+		}
+		else
+			dbg6 = 3;
 	}
 	else
 	{
@@ -1650,9 +1658,15 @@ void drive_handler()
 		{
 			rotation_happening = 1;
 			correcting_linear = 0;
+			dbg6 = 4;
 		}
 		else if((abso(ang_err) < 8*ANG_1_DEG) && abso(lin_err) > 50*65536)
+		{
 			correcting_linear = 1;
+			dbg6 = 5;
+		}
+		else
+			dbg6 = 6;
 	}
 
 	drive_is_rotating = rotation_happening;
@@ -1687,6 +1701,8 @@ void drive_handler()
 		else
 			max_lin_speed_by_ang_err = ((double)ANG_1_DEG*180.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 18 units.
 	}
+
+
 	// Calculate the target wheel positions to correct the measured angular error
 	// In theory, this movement produces the "correct" end result automatically
 	// However, only the _remaining_ error (by gyro!) is used on each cycle, so the target
@@ -1729,7 +1745,6 @@ void drive_handler()
 	if(ang_speed < 0.0) ang_speed = 0.0;
 
 
-	int dbg1, dbg2, dbg3, dbg4, dbg5, dbg6;
 
 	if(!correcting_linear || lin_speed > max_lin_speed || lin_speed > max_lin_speed_by_lin_err || lin_speed > max_lin_speed_by_ang_err)
 		lin_speed -= 0.20;
@@ -1738,12 +1753,13 @@ void drive_handler()
 
 	if(lin_speed < 0.0) lin_speed = 0.0;
 
+
 	dbg1 = max_lin_speed;
 	dbg2 = max_lin_speed_by_lin_err;
 	dbg3 = max_lin_speed_by_ang_err;
 	dbg4 = lin_speed;
 	dbg5 = correcting_linear;
-	dbg6 = 0;
+	//dbg6 = 0;
 
 	if(correcting_linear)
 	{
@@ -1783,6 +1799,28 @@ void drive_handler()
 	// We know the target wheel positions, but limit the rate of change
 	int ang_speed_i = (int)ang_speed;
 	int lin_speed_i = (int)lin_speed;
+
+	int manual_drive = 1;
+	if(manual_drive)
+	{
+		lin_err = 100*65536;
+		ang_err = 10*ANG_1_DEG;
+
+		lin_speed_i = 0;
+		ang_speed_i = 10;
+		delta_mpos_lin[0] = lin_err / (int64_t)(wheel_diam[0]/HALL_STEPS_PER_TURN);
+		delta_mpos_lin[1] = -1*lin_err / (int64_t)(wheel_diam[1]/HALL_STEPS_PER_TURN);
+		delta_mpos_ang[0] = (ang_err/ANG_0_01_DEG);
+		delta_mpos_ang[1] = (ang_err/ANG_0_01_DEG);
+
+
+		ang_speed_i = 0;
+		correcting_linear = 1;
+		correcting_angle = 1;
+		motors_enabled = 1000;
+
+	}
+
 
 	if(delta_mpos_ang[0] != 0 || delta_mpos_ang[1] != 0 || delta_mpos_lin[0] != 0 || delta_mpos_lin[1] != 0)
 		robot_moves();
@@ -1978,6 +2016,9 @@ void drive_handler()
 //			bldc_pos_set[1] = bldc_pos[1];
 		}
 	}
+
+
+
 
 	if(motors_enabled > 0) motors_enabled--;
 

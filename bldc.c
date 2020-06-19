@@ -637,6 +637,7 @@ void bldc_safety_shutdown()
 	MC1_DIS_GATE();
 
 }
+
 void motor_run(int m) __attribute__((section(".text_itcm")));
 void motor_run(int m)
 {
@@ -653,6 +654,24 @@ void motor_run(int m)
 	wanna_stop[m] = 0;
 	ENA_IRQ();
 }
+
+void motor_run_a_bit(int m, int amount) __attribute__((section(".text_itcm")));
+void motor_run_a_bit(int m, int amount)
+{
+	if(m < 0 || m > 1) error(120);
+
+	if(m==0)
+		MC0_EN_GATE();
+	else
+		MC1_EN_GATE();
+
+	DIS_IRQ();
+	bldc_pos_set[m] = bldc_pos[m] + amount;
+	run[m] = 1;
+	wanna_stop[m] = 1;
+	ENA_IRQ();
+}
+
 
 void motor_let_stop(int m) __attribute__((section(".text_itcm")));
 void motor_let_stop(int m)
