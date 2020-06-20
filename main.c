@@ -544,8 +544,10 @@ void main()
 	init_power_outputs();
 
 	#ifndef CALIBRATOR
-		init_imu();
+		//init_imu();
 		init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
+		extern void bldc_test();
+		bldc_test();
 		init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
 		#ifdef EXT_VACUUM
