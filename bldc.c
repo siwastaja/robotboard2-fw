@@ -158,9 +158,6 @@ static int32_t pid_d = 0;
 
 volatile int32_t currlim_mult_flt;
 volatile int32_t curr_info_ma[2];
-#define TRACE_LEN 32
-int trace_at = -1;
-volatile int ia_trace[TRACE_LEN], ib_trace[TRACE_LEN], ic_trace[TRACE_LEN];
 
 #define ADC_MID 8192
 #define ADC_CURR_SAFETY_LIMIT 4000  // 7500
@@ -226,6 +223,22 @@ void bldc_1khz()
 
 volatile int dbg_err0, dbg_err1, dbg_sin_mult, dbg_m;
 
+#define TRACE_LEN 8192
+int trace_at = -1;
+
+typedef struct __attribute__((packed))
+{
+	int16_t ib;
+	int16_t sp_ib;
+	uint16_t pwmb;
+	int16_t ic;
+	int16_t sp_ic;
+	uint16_t pwmc;
+} trace_elem_t;
+
+volatile trace_elem_t trace[TRACE_LEN];
+
+
 volatile int latest_ia, latest_ib, latest_ic;
 volatile int max_ia, max_ib, max_ic;
 volatile int min_ia, min_ib, min_ic;
@@ -233,11 +246,12 @@ volatile int min_ia, min_ib, min_ic;
 
 volatile int dbg_pwma, dbg_pwmb, dbg_pwmc;
 
-volatile int cc_fw = 21845; // 1000 PWM units result in 3000 current units -> 1/3 = 21845>>16
+volatile int cc_fw = 30000; //21845; // 1000 PWM units result in 3000 current units -> 1/3 = 21845>>16
 volatile int cc_p = 0;
 volatile int cc_i = 0;
 volatile int errint_ib, errint_ic;
 volatile int powder;
+volatile int mode;
 
 volatile int stop_state_dbg[2];
 void bldc0_inthandler() __attribute__((section(".text_itcm")));
@@ -273,13 +287,40 @@ void bldc0_inthandler()
 
 	int sp_ib, sp_ic;
 
-//	int hall_pos = hall_loc[MC0_HALL_CBA()];
-	int reverse = 0;
-	//int loc = base_hall_aims[hall_pos] + timing_shift + PH90SHIFT; // (reverse?(-PH90SHIFT):(PH90SHIFT));
-
 	static int loc;
 
-	loc += PH001SHIFT;
+	if(mode == 0)
+	{
+		int hall_pos = hall_loc[MC0_HALL_CBA()];
+		loc = base_hall_aims[hall_pos] + timing_shift + PH90SHIFT; // (reverse?(-PH90SHIFT):(PH90SHIFT));
+		
+	}
+	else if(mode == 1)
+	{
+		loc += PH01SHIFT;
+	}
+	else
+	{
+		static int prev_hall_pos;
+		int hall_pos = hall_loc[MC0_HALL_CBA()];
+
+		static int pekka;
+		if(prev_hall_pos != hall_pos)
+		{
+			loc = base_hall_aims[hall_pos] + timing_shift + 65*PH1SHIFT; // (reverse?(-PH90SHIFT):(PH90SHIFT));
+			pekka = 0;
+		}
+		else
+		{
+			if(pekka < 50*PH1SHIFT)
+			{
+				pekka += PH01SHIFT + 5*PH001SHIFT;
+				loc += PH01SHIFT + 5*PH001SHIFT;
+			}
+		}
+
+		prev_hall_pos = hall_pos;
+	}
 
 	int idxb = (((uint32_t)loc+PH120SHIFT)&0xff000000)>>24;
 	int idxc = (((uint32_t)loc+2*PH120SHIFT)&0xff000000)>>24;
@@ -349,9 +390,13 @@ void bldc0_inthandler()
 
 	if(trace_at >= 0)
 	{
-		ia_trace[trace_at] = ia;
-		ib_trace[trace_at] = ib;
-		ic_trace[trace_at] = ic;
+		trace[trace_at].ib = ib;
+		trace[trace_at].sp_ib = sp_ib;
+		trace[trace_at].pwmb = pwmb;
+		trace[trace_at].ic = ic;
+		trace[trace_at].sp_ic = sp_ic;
+		trace[trace_at].pwmc = pwmc;
+
 		trace_at++;
 		if(trace_at == TRACE_LEN)
 			trace_at = -1;
@@ -492,7 +537,9 @@ void bldc_test()
 
 	int32_t loc = 0;
 
-	int tmp_p = 0, tmp_i = 0;
+	int tmp_p = 12000, tmp_i = 400;
+
+	int do_trace = 0;
 	while(1)
 	{
 		//profile_cpu_blocking_20ms();
@@ -503,7 +550,27 @@ void bldc_test()
 		int ic = latest_ic;
 		ENA_IRQ();
 
-		trace_at = 0;
+		if(do_trace && trace_at == -1) // Trace done
+		{
+			do_trace = 0;
+			uart_print_string_blocking("ib,sp_ib,pwmb,ic,sp_ic,pwmc\r\n");
+			for(int i=0; i<TRACE_LEN; i++)
+			{
+				o_itoa16(trace[i].ib, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking(",");
+				o_itoa16(trace[i].sp_ib, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking(",");
+				o_itoa16(trace[i].pwmb, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking(",");
+				o_itoa16(trace[i].ic, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking(",");
+				o_itoa16(trace[i].sp_ic, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking(",");
+				o_itoa16(trace[i].pwmc, printbuf); uart_print_string_blocking(printbuf);
+				uart_print_string_blocking("\r\n");
+			}
+		}
+
 
 		int hall = hall_loc[MC0_HALL_CBA()];
 
@@ -545,45 +612,6 @@ void bldc_test()
 		uart_print_string_blocking(" pwmc = "); o_utoa16_fixed(dbg_pwmc, printbuf); uart_print_string_blocking(printbuf);
 
 		uart_print_string_blocking("\r\n");
-
-		if(trace_at != -1)
-		{
-			uart_print_string_blocking("WARNING: TRACE DIDN'T MAKE IT!\r\n");
-			uart_print_string_blocking("\r\n");
-		}
-		else
-		{
-			int min = 99999;
-			int max = -99999;
-			for(int i=0; i<TRACE_LEN; i++)
-			{
-				o_itoa16_fixed(ia_trace[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				if(ia_trace[i] > max) max = ia_trace[i];
-				if(ia_trace[i] < min) min = ia_trace[i];
-			}
-			uart_print_string_blocking("  ");
-			o_utoa16_fixed(max-min, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-			min = 99999;
-			max = -99999;
-			for(int i=0; i<TRACE_LEN; i++)
-			{
-				o_itoa16_fixed(ib_trace[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				if(ib_trace[i] > max) max = ib_trace[i];
-				if(ib_trace[i] < min) min = ib_trace[i];
-			}
-			uart_print_string_blocking("  ");
-			o_utoa16_fixed(max-min, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-			min = 99999;
-			max = -99999;
-			for(int i=0; i<TRACE_LEN; i++)
-			{
-				o_itoa16_fixed(ic_trace[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
-				if(ic_trace[i] > max) max = ic_trace[i];
-				if(ic_trace[i] < min) min = ic_trace[i];
-			}
-			uart_print_string_blocking("  ");
-			o_utoa16_fixed(max-min, printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking("\r\n");
-		}
 
 		uart_print_string_blocking("\r\n");
 
@@ -669,15 +697,33 @@ void bldc_test()
 			}
 			else if(cmd == 'z')
 			{
-				cc_fw = 21845;
+				cc_fw = 30000;
 				cc_i = 0;
 				cc_p = 0;
 			}
 			else if(cmd == 'x')
 			{
-				cc_fw = 21845;
+				cc_fw = 30000;
 				cc_i = tmp_i;
 				cc_p = tmp_p;
+			}
+			else if(cmd == '5')
+			{
+				mode = 0;
+			}
+			else if(cmd == '6')
+			{
+				mode = 1;
+			}
+			else if(cmd == '7')
+			{
+				mode = 2;
+			}
+			else if(cmd == 't')
+			{
+				do_trace = 1;
+				trace_at = 0;
+				delay_ms(2000);
 			}
 		}
 	}
