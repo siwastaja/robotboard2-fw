@@ -81,17 +81,6 @@ const int base_hall_aims[6] =
 	PH120SHIFT*2+PH120SHIFT/2
 };
 
-const int base_hall_aims2[6] =
-{
-	PH120SHIFT*2+PH120SHIFT/2,
-	PH120SHIFT*2,
-	PH120SHIFT+PH120SHIFT/2,
-	PH120SHIFT,
-	PH120SHIFT/2,
-	0
-};
-volatile int timing_shift2 = -5800*65536; // hall sensors are not exactly where you could think they are.
-
 /*
 The sine table is indexed with 8 MSBs of uint32; this way, a huge resolution is implemented for the frequency,
 since the frequency is a term added to the indexing each round.
@@ -286,6 +275,7 @@ volatile uint32_t dbg_rotor_ang;
 volatile int dbg_rotcos, dbg_rotsin;
 
 volatile int stop_state_dbg[2];
+// runs at 12200Hz
 void bldc0_inthandler() __attribute__((section(".text_itcm")));
 void bldc0_inthandler()
 {
@@ -311,11 +301,71 @@ void bldc0_inthandler()
 
 	int hall_pos = hall_loc[MC0_HALL_CBA()];
 
+	// negative iq = hall_pos & rotor_ang values increase
+
 	static int prev_hall_pos;
+
+	static uint32_t time_last_hall_change;
+	static uint32_t cur_time;
+	cur_time++;
+
+	int expected_hall_pos = prev_hall_pos;
+	if(sp_iq < 0)
+	{
+		expected_hall_pos++;
+		if(expected_hall_pos > 5) expected_hall_pos = 0;
+	}
+	else if(sp_iq > 0)
+	{
+		expected_hall_pos--;
+		if(expected_hall_pos < 0) expected_hall_pos = 5;
+	}
+
+
+	static int interp_len = 0;
+
+	uint32_t rotor_ang;
+	static int32_t ang_per_timestep;
+	static int32_t rotor_ang_tune;
+
+	uint32_t dt = cur_time - time_last_hall_change;
+	if(dt > 6000)
+	{
+		ang_per_timestep = 0; // stop interpolating. keep rotor_ang_tune.
+	}
+
+	if(hall_pos == expected_hall_pos) // had a hall step just now: in expected direction
+	{
+		time_last_hall_change = cur_time;
+
+		if(dt > 20 && dt < 6000) // interpolate
+		{
+			ang_per_timestep = ((40*ANG_1_DEG) / dt) * ((sp_iq<0)?1:-1);
+			rotor_ang_tune = -20*ANG_1_DEG * ((sp_iq<0)?1:-1);
+			interp_len = dt;
+		}
+		else // don't interpolate
+		{
+			ang_per_timestep = 0;
+			rotor_ang_tune = 0;
+		}
+	}
+	else if(hall_pos != prev_hall_pos) // had a hall step just now: in unexpected direction: do not interpolate
+	{
+		time_last_hall_change = cur_time;
+		ang_per_timestep = 0;
+		rotor_ang_tune = 0;
+	}
 
 	prev_hall_pos = hall_pos;
 
-	uint32_t rotor_ang = base_hall_aims[hall_pos] + timing_shift;
+	if(rotor_ang_tune < -22*ANG_1_DEG || rotor_ang_tune > 22*ANG_1_DEG)
+		error(18);
+
+	rotor_ang = base_hall_aims[hall_pos] + timing_shift + (uint32_t)rotor_ang_tune;
+
+	if(dt < interp_len)
+		rotor_ang_tune += ang_per_timestep;
 
 	/*
 		Transform from 3-phase coordinate space defined by 3 vectors 120 deg apart, to
@@ -518,7 +568,73 @@ void bldc1_inthandler()
 
 
 	int hall_pos = hall_loc[MC1_HALL_CBA()];
-	uint32_t rotor_ang = base_hall_aims[hall_pos] + timing_shift;
+
+	// negative iq = hall_pos & rotor_ang values increase
+
+	static int prev_hall_pos;
+
+	static uint32_t time_last_hall_change;
+	static uint32_t cur_time;
+	cur_time++;
+
+	int expected_hall_pos = prev_hall_pos;
+	if(sp_iq < 0)
+	{
+		expected_hall_pos++;
+		if(expected_hall_pos > 5) expected_hall_pos = 0;
+	}
+	else if(sp_iq > 0)
+	{
+		expected_hall_pos--;
+		if(expected_hall_pos < 0) expected_hall_pos = 5;
+	}
+
+
+	static int interp_len = 0;
+
+	uint32_t rotor_ang;
+	static int32_t ang_per_timestep;
+	static int32_t rotor_ang_tune;
+
+	uint32_t dt = cur_time - time_last_hall_change;
+	if(dt > 6000)
+	{
+		ang_per_timestep = 0; // stop interpolating. keep rotor_ang_tune.
+	}
+
+	if(hall_pos == expected_hall_pos) // had a hall step just now: in expected direction
+	{
+		time_last_hall_change = cur_time;
+
+		if(dt > 20 && dt < 6000) // interpolate
+		{
+			ang_per_timestep = ((40*ANG_1_DEG) / dt) * ((sp_iq<0)?1:-1);
+			rotor_ang_tune = -20*ANG_1_DEG * ((sp_iq<0)?1:-1);
+			interp_len = dt;
+		}
+		else // don't interpolate
+		{
+			ang_per_timestep = 0;
+			rotor_ang_tune = 0;
+		}
+	}
+	else if(hall_pos != prev_hall_pos) // had a hall step just now: in unexpected direction: do not interpolate
+	{
+		time_last_hall_change = cur_time;
+		ang_per_timestep = 0;
+		rotor_ang_tune = 0;
+	}
+
+	prev_hall_pos = hall_pos;
+
+	if(rotor_ang_tune < -22*ANG_1_DEG || rotor_ang_tune > 22*ANG_1_DEG)
+		error(18);
+
+	rotor_ang = base_hall_aims[hall_pos] + timing_shift + (uint32_t)rotor_ang_tune;
+
+	if(dt < interp_len)
+		rotor_ang_tune += ang_per_timestep;
+
 
 	/*
 		Transform from 3-phase coordinate space defined by 3 vectors 120 deg apart, to
