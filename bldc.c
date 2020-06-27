@@ -260,10 +260,23 @@ volatile int min_ia, min_ib, min_ic;
 
 volatile int dbg_pwma, dbg_pwmb, dbg_pwmc;
 
-volatile int cc_p = 8000;
-volatile int cc_i = 200;
+volatile int cc_p = 24000;
+volatile int cc_i = 1200;
 volatile int powder;
+static const int powders[10] = {0, -2200, -1600, -1000, -500, 0, 500, 1000, 1600, 2200};
+
 volatile int mode;
+
+volatile int max_errint;
+static void calc_max_errint()
+{
+	#define MAX_PWM_EXCURSION_BY_I 5000
+	if(cc_i == 0)
+		max_errint = 0;
+	else
+		max_errint = 65536/cc_i * MAX_PWM_EXCURSION_BY_I;
+}
+
 
 // To help tuning PI
 volatile int32_t avgd_err_id;
@@ -289,76 +302,21 @@ void bldc0_inthandler()
 	}
 	int ia = -ib - ic;
 
-/*
-	int tmp = ia;
-	ia = ic;
-	ic = tmp;
-*/
-	latest_ia = ia;
-	latest_ib = ib;
-	latest_ic = ic;
-
-	if(ia > max_ia) max_ia = ia;
-	if(ib > max_ib) max_ib = ib;
-	if(ic > max_ic) max_ic = ic;
-
-	if(ia < min_ia) min_ia = ia;
-	if(ib < min_ib) min_ib = ib;
-	if(ic < min_ic) min_ic = ic;
-
-
 	int sp_iq, sp_id;
 
-	if(powder == 1)
-	{
-		sp_iq = 1500;
-		sp_id = 0;
-	}
-	else if(powder == 2)
-	{
-		sp_iq = 0;
-		sp_id = 500;
-	}
-	else if(powder == 3)
-	{
-		sp_iq = -1500;
-		sp_id = 0;
-	}
-	else if(powder == 4)
-	{
-		sp_iq = 0;
-		sp_id = -500;
-	}
-	else if(powder == 5)
-	{
-		sp_iq = 500;
-		sp_id = 500;
-	}
-	else if(powder == 6)
-	{
-		sp_iq = -500;
-		sp_id = -500;
-	}
-	else if(powder == 7)
-	{
-		sp_iq = 500;
-		sp_id = -500;
-	}
-	else if(powder == 8)
-	{
-		sp_iq = -500;
-		sp_id = 500;
-	}
-	else
-	{
-		sp_iq = 0;
-		sp_id = 0;
-	}
+	sp_id = 0;
+	sp_iq = 0;
+
+	if(powder >= 0 && powder < 10) sp_iq = powders[powder];
 
 	int hall_pos = hall_loc[MC0_HALL_CBA()];
+
+	static int prev_hall_pos;
+
+	prev_hall_pos = hall_pos;
+
 	uint32_t rotor_ang = base_hall_aims[hall_pos] + timing_shift;
 
-	dbg_rotor_ang = rotor_ang;
 	/*
 		Transform from 3-phase coordinate space defined by 3 vectors 120 deg apart, to
 		the more understandable 2-phase x,y coordinate space (defined by 2 vectors 90 deg apart)
@@ -390,9 +348,6 @@ void bldc0_inthandler()
 	int rotcos = lut_cos_from_u32((uint32_t)rotor_ang);
 	int rotsin = lut_sin_from_u32((uint32_t)rotor_ang);
 
-	dbg_rotcos = rotcos;
-	dbg_rotsin = rotsin;
-
 	int id = (i_alpha * rotcos + i_beta  * rotsin)>>SIN_LUT_RESULT_SHIFT;
 	int iq = (i_beta  * rotcos - i_alpha * rotsin)>>SIN_LUT_RESULT_SHIFT;
 
@@ -400,23 +355,29 @@ void bldc0_inthandler()
 
 	// Now the PI control loops for id, iq
 
-
 	int err_id = sp_id - id;
 	int err_iq = sp_iq - iq;
 
-	avgd_err_id = (4095*avgd_err_id + (err_id<<8))>>12;
-	avgd_err_iq = (4095*avgd_err_iq + (err_iq<<8))>>12;
+	avgd_err_id = (65535*(int64_t)avgd_err_id + (int64_t)(abso(err_id)<<8))>>16;
+	avgd_err_iq = (65535*(int64_t)avgd_err_iq + (int64_t)(abso(err_iq)<<8))>>16;
 
 	static int32_t errint_id, errint_iq;
 
-	errint_id += err_id;
-	errint_iq += err_iq;
+	if(powder == 5 || powder == 0)
+	{
+		errint_id = 0;
+		errint_iq = 0;
+	}
+	else
+	{
+		errint_id += err_id;
+		errint_iq += err_iq;
+	}
 
-	#define MAXI (32*10000)
-	if(errint_id > MAXI) errint_id = MAXI;
-	if(errint_id < -MAXI) errint_id = -MAXI;
-	if(errint_iq > MAXI) errint_iq = MAXI;
-	if(errint_iq < -MAXI) errint_iq = -MAXI;
+	if(errint_id > max_errint) errint_id = max_errint;
+	if(errint_id < -max_errint) errint_id = -max_errint;
+	if(errint_iq > max_errint) errint_iq = max_errint;
+	if(errint_iq < -max_errint) errint_iq = -max_errint;
 
 	int cmd_d = 
 	       (((int64_t)cc_p  * (int64_t)err_id)>>16) +
@@ -459,66 +420,74 @@ void bldc0_inthandler()
 	
 	int pwma, pwmb, pwmc;
 
-
 	pwma = cmd_alpha;
 	pwmb = (-cmd_alpha + ((14189*cmd_beta)>>13))>>1;
 	pwmc = (-cmd_alpha - ((14189*cmd_beta)>>13))>>1;
-
 
 	pwma += PWM_MID;
 	pwmb += PWM_MID;
 	pwmc += PWM_MID;
 
-	if(pwma < 2000 || pwma > 6000 || pwmb < 2000 || pwmb > 6000 || pwmc < 2000 || pwmc > 6000)
-	{
-		MC0_DIS_GATE();
-		error(17);
-	}
+	int clipped = 0;
+	if(pwma < 100){ clipped = 1; pwma = 100;}
+	if(pwma > 8192-100){ clipped = 1; pwma = 8192-100;}
+	if(pwmb < 100){ clipped = 1; pwmb = 100;}
+	if(pwmb > 8192-100){ clipped = 1; pwmb = 8192-100;}
+	if(pwmc < 100){ clipped = 1; pwmc = 100;}
+	if(pwmc > 8192-100){ clipped = 1; pwmc = 8192-100;}
 
-	dbg_pwma = pwma;
-	dbg_pwmb = pwmb;
-	dbg_pwmc = pwmc;
+	static int clipped_cnt;
+
+	if(clipped)
+	{
+		clipped_cnt += 5;
+		if(clipped_cnt > 5*100)
+		{
+			MC0_DIS_GATE();
+			error(17);
+
+		}
+	}
+	else
+	{
+		if(clipped_cnt > 0)
+			clipped_cnt -= 1;
+	}
+	
 
 	TIM1->CCR1 = pwma;
 	TIM1->CCR2 = pwmb;
 	TIM1->CCR3 = pwmc;
 
-	/*
-	int loc = base_hall_aims2[hall_pos] + timing_shift2 + PH90SHIFT;
-
-	int idxa = (((uint32_t)loc)&0xff000000)>>24;
-	int idxb = (((uint32_t)loc+PH120SHIFT)&0xff000000)>>24;
-	int idxc = (((uint32_t)loc+2*PH120SHIFT)&0xff000000)>>24;
-
-	TIM1->CCR1 = PWM_MID + (sine[idxa]>>6);
-	TIM1->CCR2 = PWM_MID + (sine[idxb]>>6);
-	TIM1->CCR3 = PWM_MID + (sine[idxc]>>6);
-	*/
-
+	static int decim;
 	if(trace_at >= 0)
 	{
-		trace[trace_at].hall = hall_pos;
-		trace[trace_at].rotor_ang = rotor_ang>>24;
-		trace[trace_at].ia = ia;
-		trace[trace_at].ib = ib;
-		trace[trace_at].ic = ic;
-		trace[trace_at].ialpha = i_alpha;
-		trace[trace_at].ibeta = i_beta;
-		trace[trace_at].id = id;
-		trace[trace_at].sp_id = sp_id;
-		trace[trace_at].iq = iq;
-		trace[trace_at].sp_iq = sp_iq;
-		trace[trace_at].cmd_beta = cmd_alpha;
-		trace[trace_at].cmd_beta = cmd_beta;
-		trace[trace_at].pwma = pwma;
-		trace[trace_at].pwmb = pwmb;
-		trace[trace_at].pwmc = pwmc;
-		trace[trace_at].errint_id = errint_id;
-		trace[trace_at].errint_iq = errint_iq;
+		if(++decim >= 12)
+		{
+			decim = 0;
+			trace[trace_at].hall = hall_pos;
+			trace[trace_at].rotor_ang = rotor_ang>>24;
+			trace[trace_at].ia = ia;
+			trace[trace_at].ib = ib;
+			trace[trace_at].ic = ic;
+			trace[trace_at].ialpha = i_alpha;
+			trace[trace_at].ibeta = i_beta;
+			trace[trace_at].id = id;
+			trace[trace_at].sp_id = sp_id;
+			trace[trace_at].iq = iq;
+			trace[trace_at].sp_iq = sp_iq;
+			trace[trace_at].cmd_beta = cmd_alpha;
+			trace[trace_at].cmd_beta = cmd_beta;
+			trace[trace_at].pwma = pwma;
+			trace[trace_at].pwmb = pwmb;
+			trace[trace_at].pwmc = pwmc;
+			trace[trace_at].errint_id = errint_id;
+			trace[trace_at].errint_iq = errint_iq;
 
-		trace_at++;
-		if(trace_at == TRACE_LEN)
-			trace_at = -1;
+			trace_at++;
+			if(trace_at == TRACE_LEN)
+				trace_at = -1;
+		}
 	}
 }
 
@@ -529,13 +498,168 @@ void bldc1_inthandler()
 	__DSB();
 
 	int ib = ADC_MID-adc1.s.mc1_imeasb;
-	int ic = ADC_MID-adc1.s.mc1_imeasc;
+	int ic = adc1.s.mc1_imeasc-ADC_MID; // Swapped polarity (PCB layout optimization)
 
 	if(ib < -ADC_CURR_SAFETY_LIMIT || ib > ADC_CURR_SAFETY_LIMIT || ic < -ADC_CURR_SAFETY_LIMIT || ic > ADC_CURR_SAFETY_LIMIT)
 	{
 		MC1_DIS_GATE();
 		error(16);
 	}
+	int ia = -ib - ic;
+
+	int sp_iq, sp_id;
+
+	sp_id = 0;
+	sp_iq = 0;
+
+	if(powder >= 0 && powder < 10) sp_iq = powders[powder];
+
+
+
+
+	int hall_pos = hall_loc[MC1_HALL_CBA()];
+	uint32_t rotor_ang = base_hall_aims[hall_pos] + timing_shift;
+
+	/*
+		Transform from 3-phase coordinate space defined by 3 vectors 120 deg apart, to
+		the more understandable 2-phase x,y coordinate space (defined by 2 vectors 90 deg apart)
+		This operation of two multiplications by constants and one summation 
+		is called "Clarke transform" and considered high end math wizardry
+		by the literature which typically does not show the math to make
+		sure it stays mysterious.
+
+		i_alpha = ia
+		i_beta = (1/sqrt(3)) * (ia + 2ib)
+
+		1/sqrt(3) = 0.5773503 ~= 37387/65536 = 0.5773468
+	*/
+
+	int i_alpha = ia;
+	int i_beta = (37387*(ia + 2*ib))>>16;
+
+	// Clarke done! Didn't need a library for that.
+
+	/*
+		Now, rotate the current measurement vectors so that they are referenced to the rotor.
+
+		For some reason, in context of motors, this is called "Park transform". 
+
+		positive iq is the current 90 degrees ahead of the rotor
+		positive id is the current pulling directly to the current direction of rotor, can be used for holding torque. Typically regulated as 0
+	*/
+
+	int rotcos = lut_cos_from_u32((uint32_t)rotor_ang);
+	int rotsin = lut_sin_from_u32((uint32_t)rotor_ang);
+
+	int id = (i_alpha * rotcos + i_beta  * rotsin)>>SIN_LUT_RESULT_SHIFT;
+	int iq = (i_beta  * rotcos - i_alpha * rotsin)>>SIN_LUT_RESULT_SHIFT;
+
+	// Park done! Didn't need a library for that.
+
+	// Now the PI control loops for id, iq
+
+	int err_id = sp_id - id;
+	int err_iq = sp_iq - iq;
+
+	avgd_err_id = (65535*(int64_t)avgd_err_id + (int64_t)(abso(err_id)<<8))>>16;
+	avgd_err_iq = (65535*(int64_t)avgd_err_iq + (int64_t)(abso(err_iq)<<8))>>16;
+
+	static int32_t errint_id, errint_iq;
+
+	if(powder == 5 || powder == 0)
+	{
+		errint_id = 0;
+		errint_iq = 0;
+	}
+	else
+	{
+		errint_id += err_id;
+		errint_iq += err_iq;
+	}
+
+
+	if(errint_id > max_errint) errint_id = max_errint;
+	if(errint_id < -max_errint) errint_id = -max_errint;
+	if(errint_iq > max_errint) errint_iq = max_errint;
+	if(errint_iq < -max_errint) errint_iq = -max_errint;
+
+	int cmd_d = 
+	       (((int64_t)cc_p  * (int64_t)err_id)>>16) +
+	       (((int64_t)cc_i  * (int64_t)errint_id)>>16);
+
+	int cmd_q = 
+	       (((int64_t)cc_p  * (int64_t)err_iq)>>16) +
+	       (((int64_t)cc_i  * (int64_t)errint_iq)>>16);
+
+
+	// Now rotate commands back (inverse Park):
+
+	int cmd_alpha = (cmd_d * rotcos - cmd_q * rotsin)>>SIN_LUT_RESULT_SHIFT;
+	int cmd_beta  = (cmd_q * rotcos + cmd_d * rotsin)>>SIN_LUT_RESULT_SHIFT;
+
+	/*
+		Now the funny thing:
+
+		Outer Space Vectors have absolutely nothing to do with FOC.
+
+		Math doesn't even know about a concept called "space vector".
+
+		Thing marketing calls "Space Vector Modulation", is just a specific implementation of generating PWM
+		waveforms for gate drivers. There is absolutely nothing wrong generating PWMs in any other way, including
+		the bog standard timer-based PWM generation all microcontrollers provide in hardware.
+
+		The argument for using "Space Vector Modulation", is to get rid of doing Inverse Clarke, saving from a
+		few trivial multiplications! All of this "advantage" is naturally lost due to fact that microcontrollers
+		do not implement Space Vector Modulation hardware.
+
+		So finally, do the inverse clarke - i.e., convert the 2-phase pwm commands to 3-phase:
+
+		va = v_alpha
+		vb = (-v_alpha + sqrt(3)*v_beta)/2
+		vc = (-v_alpha - sqrt(3)*v_beta)/2
+
+
+		sqrt(3) = 1.732051 ~= 14189/2^13 = 1.732056
+	*/
+	
+	int pwma, pwmb, pwmc;
+
+	pwma = cmd_alpha;
+	pwmb = (-cmd_alpha + ((14189*cmd_beta)>>13))>>1;
+	pwmc = (-cmd_alpha - ((14189*cmd_beta)>>13))>>1;
+
+	pwma += PWM_MID;
+	pwmb += PWM_MID;
+	pwmc += PWM_MID;
+
+	int clipped = 0;
+	if(pwma < 100){ clipped = 1; pwma = 100;}
+	if(pwma > 8192-100){ clipped = 1; pwma = 8192-100;}
+	if(pwmb < 100){ clipped = 1; pwmb = 100;}
+	if(pwmb > 8192-100){ clipped = 1; pwmb = 8192-100;}
+	if(pwmc < 100){ clipped = 1; pwmc = 100;}
+	if(pwmc > 8192-100){ clipped = 1; pwmc = 8192-100;}
+
+	static int clipped_cnt;
+
+	if(clipped)
+	{
+		clipped_cnt += 5;
+		if(clipped_cnt > 5*100)
+		{
+			MC1_DIS_GATE();
+			error(17);
+
+		}
+	}
+	else
+	{
+		if(clipped_cnt > 0)
+			clipped_cnt -= 1;
+	}
+	TIM8->CCR1 = pwma;
+	TIM8->CCR2 = pwmb;
+	TIM8->CCR3 = pwmc;
 }
 
 void bldc_safety_shutdown() __attribute__((section(".text_itcm")));
@@ -656,21 +780,25 @@ void bldc_test()
 
 	int32_t loc = 0;
 
+	calc_max_errint();
+
 	int do_trace = 0;
+	int print = 1;
 	while(1)
 	{
 		//profile_cpu_blocking_20ms();
-
+/*
 		DIS_IRQ();
 		int ia = latest_ia;
 		int ib = latest_ib;
 		int ic = latest_ic;
 		ENA_IRQ();
-
+*/
 		if(do_trace && trace_at == -1) // Trace done
 		{
 			do_trace = 0;
 			MC0_DIS_GATE();
+			MC1_DIS_GATE();
 
 			uart_print_string_blocking("hall,ang,ia,ib,ic,ialpha,ibeta,id,sp_id,iq,sp_iq,cmd_alpha,cmd_beta,pwma,pwmb,pwmc,errint_id,errint_iq\r\n");
 			for(int i=0; i<TRACE_LEN; i++)
@@ -712,11 +840,9 @@ void bldc_test()
 				o_itoa32(trace[i].errint_iq, printbuf); uart_print_string_blocking(printbuf);
 				uart_print_string_blocking("\r\n");
 			}
-
-			delay_ms(5000);
 		}
 
-
+/*
 		int hall = hall_loc[MC0_HALL_CBA()];
 
 
@@ -742,6 +868,17 @@ void bldc_test()
 
 		uart_print_string_blocking("\r\n");
 		uart_print_string_blocking("\r\n");
+*/
+
+		if(print)
+		{		
+			uart_print_string_blocking(" cc_p = "); o_utoa16_fixed(cc_p, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" cc_i = "); o_utoa16_fixed(cc_i, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking("\r\n");
+			uart_print_string_blocking("\r\n");
+
+			print = 0;
+		}
 
 		for(int i=0; i<100; i++)
 		{
@@ -785,51 +922,72 @@ void bldc_test()
 			{
 				powder = 8;
 			}
+			else if(cmd == '9')
+			{
+				powder = 9;
+			}
 			else if(cmd == 'q')
 			{
-				timing_shift = -6000*65536;
+				do_trace = 1;
+				trace_at = 0;
+
+				powder = 1;
+				delay_ms(400);
+				powder = 4;
+				delay_ms(800);
+				powder = 9;
+				delay_ms(500);
+				powder = 6;
+				delay_ms(700);
+				powder = 5;
 			}
 			else if(cmd == 'w')
 			{
-				timing_shift = -2000*65536;
 			}
 			else if(cmd == 'e')
 			{
-				timing_shift = +2000*65536;
 			}
 			else if(cmd == 'r')
 			{
-				timing_shift = +6000*65536;
 			}
 			else if(cmd == 'a')
 			{
 				MC0_EN_GATE();
+				MC1_EN_GATE();
 			}
 			else if(cmd == 's')
 			{
 				MC0_DIS_GATE();
+				MC1_DIS_GATE();
 			}
 			else if(cmd == 'P')
 			{
-				cc_p += 200;
+				cc_p += 1000;
+				print = 1;
 			}
 			else if(cmd == 'p')
 			{
-				if(cc_p > 200)
-					cc_p -= 200;
+				if(cc_p > 1000)
+					cc_p -= 1000;
 				else
 					cc_p = 0;
+				print = 1;
 			}
 			else if(cmd == 'I')
 			{
-				cc_i += 10;
+				cc_i += 20;
+				calc_max_errint();
+				print = 1;
 			}
 			else if(cmd == 'i')
 			{
-				if(cc_i > 10)
-					cc_i -= 10;
+				if(cc_i > 20)
+					cc_i -= 20;
 				else
 					cc_i = 0;
+				calc_max_errint();
+				print = 1;
+
 			}
 			else if(cmd == 't')
 			{
