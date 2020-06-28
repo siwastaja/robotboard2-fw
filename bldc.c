@@ -254,6 +254,15 @@ volatile int cc_i = 1200;
 volatile int powder;
 static const int powders[10] = {0, -2200, -1600, -1000, -500, 0, 500, 1000, 1600, 2200};
 
+volatile int velo_p = 0;
+volatile int velo_i = 0;
+volatile int velo_d = 0;
+
+volatile int motor_enabled[2];
+volatile int sp_velo[2];
+volatile int dbg_velo;
+
+
 volatile int mode;
 
 volatile int max_errint;
@@ -266,6 +275,16 @@ static void calc_max_errint()
 		max_errint = 65536/cc_i * MAX_PWM_EXCURSION_BY_I;
 }
 
+volatile int max_errint_v;
+static void calc_max_errint_v()
+{
+	#define MAX_CURR_COMMAND_BY_I 2000
+	if(velo_i == 0)
+		max_errint_v = 0;
+	else
+		max_errint_v = 65536/velo_i * MAX_CURR_COMMAND_BY_I;
+}
+
 
 // To help tuning PI
 volatile int32_t avgd_err_id;
@@ -275,97 +294,291 @@ volatile uint32_t dbg_rotor_ang;
 volatile int dbg_rotcos, dbg_rotsin;
 
 volatile int stop_state_dbg[2];
-// runs at 12200Hz
-void bldc0_inthandler() __attribute__((section(".text_itcm")));
-void bldc0_inthandler()
+
+void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 {
-	TIM1->SR = 0; // Clear interrupt flags
-	__DSB();
+	static int illegal_hall_err_cnt; // Increased when hall value is either illegal, or a step is skipped
 
-	int ib = ADC_MID-adc1.s.mc0_imeasb;
-	int ic = adc1.s.mc0_imeasc-ADC_MID; // Swapped polarity (PCB layout optimization)
+	static uint32_t cur_time[2];
+	static uint32_t time_last_expected_edge[2];
 
-	if(ib < -ADC_CURR_SAFETY_LIMIT || ib > ADC_CURR_SAFETY_LIMIT || ic < -ADC_CURR_SAFETY_LIMIT || ic > ADC_CURR_SAFETY_LIMIT)
-	{
-		MC0_DIS_GATE();
-		error(16);
-	}
-	int ia = -ib - ic;
+	static int32_t prev_sp_v[2];
 
-	int sp_iq, sp_id;
+	static int32_t interp_ang_per_timeunit[2];
+	static uint32_t interp_time_left[2];
+
+	static uint32_t rotor_ang[2]; // Estimate of the rotor angle, interpolated based on hall-sensor inputs
+
+	static int32_t velo[2];
+
+	cur_time[mc]++;
+
+	int32_t ia = -ib - ic;
+
+	int32_t sp_iq, sp_id;
 
 	sp_id = 0;
 	sp_iq = 0;
 
-	if(powder >= 0 && powder < 10) sp_iq = powders[powder];
 
-	int hall_pos = hall_loc[MC0_HALL_CBA()];
+	int32_t sp_v = sp_velo[mc]; // read the volatile var once here
+	int32_t sp_acc = sp_v - prev_sp_v[mc];
+	prev_sp_v[mc] = sp_v;
 
-	// negative iq = hall_pos & rotor_ang values increase
 
-	static int prev_hall_pos;
+	// positive velocity setpoint = negative iq = hall,rotor_ang values increase
 
-	static uint32_t time_last_hall_change;
-	static uint32_t cur_time;
-	cur_time++;
+	static int prev_hall;
 
-	int expected_hall_pos = prev_hall_pos;
-	if(sp_iq < 0)
+	/*
+		When hall == expected_hall, the current hall position has JUST increased
+		to the correct direction (defined by the direction of velocity setpoint).
+
+		This means:
+			If velocity > 0:
+				Rotor is at current_hall_angle - 30 deg
+				Rotor is turning towards current_hall_angle + 30 deg
+
+			If velocity < 0:
+				Rotor is at current_hall_angle + 30 deg
+				Rotor is turning towards current_hall_angle - 30 deg
+
+			-> action: if possible, interpolate between these. If interpolation
+			is uncertain, use fixed current_hall_angle, because error is then guaranteed to be
+			30 deg max.
+		
+
+		When hall == unexpected_hall, the current hall position has JUST decreased
+		to the opposite direction (from what is defined by the direction of velocity setpoint).
+
+		This means:
+			If velocity > 0:
+				Rotor is at current_hall_angle + 30 deg
+				Rotor is turning towards current_hall_angle + 60 + 30 deg
+
+				-> action: use fixed current_hall_angle + 30 deg as the estimate (instead of current_hall_angle),
+					more torque is generated to the right direction to take the rotor back to the
+					expected direction
+
+			If velocity < 0:
+				Rotor is at current_hall_angle - 30 deg
+				Rotor is turning towards current_hall_angle - 60 - 30 deg
+
+				-> action: use fixed current_hall_angle - 30 deg as the estimate (instead of current_hall_angle),
+					more torque is generated to the right direction to take the rotor back to the
+					expected direction
+
+
+		Consider 6-step resolution (60 deg step), directly from hall. Whenever the rotor is
+		rotating in the expected direction, the rotor angle estimation accuracy swings between
+		-30 and +30 deg, around zero error. As a result, the quadrature current vector swings between
+		60 and 120 degrees.
+
+
+		
+
+	*/
+
+	int hall_forward  = prev_hall + 1; if(hall_forward > 5) hall_forward = 0;
+	int hall_backward = prev_hall - 1; if(hall_backward < 0) hall_backward = 5;
+
+	int expected_hall;
+	int unexpected_hall;
+	if(sp_v >= 0)
 	{
-		expected_hall_pos++;
-		if(expected_hall_pos > 5) expected_hall_pos = 0;
+		expected_hall = hall_forward;
+		unexpected_hall = hall_backward;
 	}
-	else if(sp_iq > 0)
+	else
 	{
-		expected_hall_pos--;
-		if(expected_hall_pos < 0) expected_hall_pos = 5;
+		expected_hall = hall_backward;
+		unexpected_hall = hall_forward;
 	}
 
 
-	static int interp_len = 0;
+	// Velocity calculation
+	// Note: in absence of hall pulses, the velocity number needs to start ramping down, obviously
+	// (i.e., it can't only be calculated at the pulse edge.)
 
-	uint32_t rotor_ang;
-	static int32_t ang_per_timestep;
-	static int32_t rotor_ang_tune;
+	static uint32_t time_last_velo[2];
+	uint32_t dt_for_velo = cur_time[mc] - time_last_velo[mc];
+	static int prev_dir[2];
 
-	uint32_t dt = cur_time - time_last_hall_change;
-	if(dt > 6000)
+	if(hall == prev_hall)
 	{
-		ang_per_timestep = 0; // stop interpolating. keep rotor_ang_tune.
-	}
+		int32_t velo_would_be = (prev_dir[mc]?-65536:+65536) / (int32_t)dt_for_velo;
 
-	if(hall_pos == expected_hall_pos) // had a hall step just now: in expected direction
-	{
-		time_last_hall_change = cur_time;
-
-		if(dt > 20 && dt < 6000) // interpolate
+		if(abso(velo_would_be) < abso(velo[mc]))
 		{
-			ang_per_timestep = ((40*ANG_1_DEG) / dt) * ((sp_iq<0)?1:-1);
-			rotor_ang_tune = -20*ANG_1_DEG * ((sp_iq<0)?1:-1);
-			interp_len = dt;
-		}
-		else // don't interpolate
-		{
-			ang_per_timestep = 0;
-			rotor_ang_tune = 0;
+			velo[mc] = velo_would_be;
 		}
 	}
-	else if(hall_pos != prev_hall_pos) // had a hall step just now: in unexpected direction: do not interpolate
+	else if(hall == hall_forward)
 	{
-		time_last_hall_change = cur_time;
-		ang_per_timestep = 0;
-		rotor_ang_tune = 0;
+		time_last_velo[mc] = cur_time[mc];
+
+		if(prev_dir[mc]) // previously backward, now forward - speed really is 0
+			velo[mc] = 0;
+		else
+			velo[mc] = +65536/(int32_t)dt_for_velo; // really going forward
+
+		prev_dir[mc] = 0;
+
+	}
+	else if(hall == hall_backward)
+	{
+		time_last_velo[mc] = cur_time[mc];
+
+		if(!prev_dir[mc]) // previously forward, now backward - speed really is 0
+			velo[mc] = 0;
+		else
+			velo[mc] = -65536/(int32_t)dt_for_velo; // really going backward
+
+		prev_dir[mc] = 1;
+
 	}
 
-	prev_hall_pos = hall_pos;
 
-	if(rotor_ang_tune < -22*ANG_1_DEG || rotor_ang_tune > 22*ANG_1_DEG)
-		error(18);
+	if(mc == 0)
+		dbg_velo = velo[mc];
 
-	rotor_ang = base_hall_aims[hall_pos] + timing_shift + (uint32_t)rotor_ang_tune;
+	int pwma, pwmb, pwmc;
 
-	if(dt < interp_len)
-		rotor_ang_tune += ang_per_timestep;
+	if(!motor_enabled[mc])
+	{
+		pwma = PWM_MID;
+		pwmb = PWM_MID;
+		pwmc = PWM_MID;
+		goto SKIP_CONTROLLING;
+	}
+
+	// Rotor angle estimation, and hall signal error handling
+
+	if(hall == prev_hall)
+	{
+		// running between hall edges. Interpolate according to the parameters
+		// decided earlier (at the previous edge).
+
+		if(interp_time_left[mc] > 0)
+		{
+			rotor_ang[mc] += interp_ang_per_timeunit[mc];
+			interp_time_left[mc]--;
+		}
+	}
+	else if(hall == expected_hall) 
+	{
+		// At the hall step edge: in correct direction
+		// The motor produces torque in this direction.
+		if(illegal_hall_err_cnt > 0 )
+			illegal_hall_err_cnt--;
+
+		uint32_t dt = cur_time[mc] - time_last_expected_edge[mc];
+		time_last_expected_edge[mc] = cur_time[mc];
+
+		rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
+
+
+		if(dt < 3)
+		{
+			// The motor just can't turn this fast, the hall must be wrong.
+			// Do not interpolate.
+			illegal_hall_err_cnt += 50;
+			interp_ang_per_timeunit[mc] = 0;
+			interp_time_left[mc] = 0;
+		}
+		else if(dt > 6000)
+		{
+			// Too slow to guess what's actually happening, do not try to interpolate
+			interp_ang_per_timeunit[mc] = 0;
+			interp_time_left[mc] = 0;
+		}
+		else
+		{
+			if(sp_v > 0)
+				rotor_ang[mc] -= 15*ANG_1_DEG;
+			else if(sp_v < 0)
+				rotor_ang[mc] += 15*ANG_1_DEG;
+
+			interp_ang_per_timeunit[mc] = 30*ANG_1_DEG / dt;
+			interp_time_left[mc] = dt;
+		}
+	}
+	else if(hall == unexpected_hall)
+	{
+		// At the hall step edge: to the wrong direction
+		// Note: the motor does not produce torque in this direction, but the opposite
+		// This state is caused by a fairly strong physical jerk or oscillation.
+		// Assuming the control loop works properly and quickly, the next transition 
+		// to the expected direction should happen soon. Hence, we assume that the rotor does not
+		// move much further backwards.
+		// Do not interpolate: use a fixed rotor position estimate, but don't estimate it
+		// at the middle of the current hall position; estimate it stays at barely where it is,
+		// close to the edge of the expected hall.
+		illegal_hall_err_cnt += 2;
+
+		rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
+		if(sp_v > 0)
+			rotor_ang[mc] += 20*ANG_1_DEG;
+		else if(sp_v < 0)
+			rotor_ang[mc] -= 20*ANG_1_DEG;
+
+		interp_ang_per_timeunit[mc] = 0;
+		interp_time_left[mc] = 0;
+	}
+	else if(hall >= 0 && hall <= 5)
+	{
+		// Completely skipped a step, or got an illegal signal combination (6 legal and 2 illegal combinations exist)
+		// Both scenarios likely mean the connections are intermittent and going to break.
+		// Even if the hall combination is legal, it may be wrong.
+		// We have no idea how to estimate the angle.
+		// Keep the previous and increase the error counter fast.
+
+		illegal_hall_err_cnt += 50;
+
+		rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
+
+	}
+
+	if(illegal_hall_err_cnt > 50*50)
+	{
+		MC0_DIS_GATE();
+		MC1_DIS_GATE();
+		error(19);
+	}
+
+
+	//rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
+
+	int err_v = sp_v - velo[mc];
+
+	static int32_t errint_v[2];
+
+	if(sp_v == 0)
+	{
+		errint_v[mc] = 0;
+	}
+	else
+	{
+		errint_v[mc] += err_v;
+	}
+
+
+	if(errint_v[mc] > max_errint_v) errint_v[mc] = max_errint_v;
+	if(errint_v[mc] < -max_errint_v) errint_v[mc] = -max_errint_v;
+
+	int current = 
+	       (((int64_t)velo_p  * (int64_t)err_v)>>16) +
+	       (((int64_t)velo_i  * (int64_t)errint_v[mc])>>16);
+
+
+	#define current_limit 2000
+
+	if(current > current_limit) current = current_limit;
+	else if(current < -current_limit) current = -current_limit;
+
+
+//	sp_iq = -1*current;
+	sp_iq = -1*sp_v;
 
 	/*
 		Transform from 3-phase coordinate space defined by 3 vectors 120 deg apart, to
@@ -384,58 +597,57 @@ void bldc0_inthandler()
 	int i_alpha = ia;
 	int i_beta = (37387*(ia + 2*ib))>>16;
 
-	// Clarke done! Didn't need a library for that.
-
 	/*
 		Now, rotate the current measurement vectors so that they are referenced to the rotor.
 
 		For some reason, in context of motors, this is called "Park transform". 
 
-		positive iq is the current 90 degrees ahead of the rotor
-		positive id is the current pulling directly to the current direction of rotor, can be used for holding torque. Typically regulated as 0
+		positive iq is the current 90 degrees ahead of the rotor when going backwards
+		negative iq is the current 90 degrees ahead of the rotor when going forward
+		positive id is the current pulling directly to the current direction of rotor. Typically regulated as 0
 	*/
 
-	int rotcos = lut_cos_from_u32((uint32_t)rotor_ang);
-	int rotsin = lut_sin_from_u32((uint32_t)rotor_ang);
+	int rotcos = lut_cos_from_u32((uint32_t)rotor_ang[mc]);
+	int rotsin = lut_sin_from_u32((uint32_t)rotor_ang[mc]);
 
 	int id = (i_alpha * rotcos + i_beta  * rotsin)>>SIN_LUT_RESULT_SHIFT;
 	int iq = (i_beta  * rotcos - i_alpha * rotsin)>>SIN_LUT_RESULT_SHIFT;
 
-	// Park done! Didn't need a library for that.
+	// Park done! Didn't need a library for that either.
 
 	// Now the PI control loops for id, iq
 
 	int err_id = sp_id - id;
 	int err_iq = sp_iq - iq;
 
-	avgd_err_id = (65535*(int64_t)avgd_err_id + (int64_t)(abso(err_id)<<8))>>16;
-	avgd_err_iq = (65535*(int64_t)avgd_err_iq + (int64_t)(abso(err_iq)<<8))>>16;
+//	avgd_err_id = (65535*(int64_t)avgd_err_id + (int64_t)(abso(err_id)<<8))>>16;
+//	avgd_err_iq = (65535*(int64_t)avgd_err_iq + (int64_t)(abso(err_iq)<<8))>>16;
 
-	static int32_t errint_id, errint_iq;
+	static int32_t errint_id[2], errint_iq[2];
 
-	if(powder == 5 || powder == 0)
+	if(sp_velo[mc] == 0)
 	{
-		errint_id = 0;
-		errint_iq = 0;
+		errint_id[mc] = 0;
+		errint_iq[mc] = 0;
 	}
 	else
 	{
-		errint_id += err_id;
-		errint_iq += err_iq;
+		errint_id[mc] += err_id;
+		errint_iq[mc] += err_iq;
 	}
 
-	if(errint_id > max_errint) errint_id = max_errint;
-	if(errint_id < -max_errint) errint_id = -max_errint;
-	if(errint_iq > max_errint) errint_iq = max_errint;
-	if(errint_iq < -max_errint) errint_iq = -max_errint;
+	if(errint_id[mc] > max_errint) errint_id[mc] = max_errint;
+	if(errint_id[mc] < -max_errint) errint_id[mc] = -max_errint;
+	if(errint_iq[mc] > max_errint) errint_iq[mc] = max_errint;
+	if(errint_iq[mc] < -max_errint) errint_iq[mc] = -max_errint;
 
 	int cmd_d = 
 	       (((int64_t)cc_p  * (int64_t)err_id)>>16) +
-	       (((int64_t)cc_i  * (int64_t)errint_id)>>16);
+	       (((int64_t)cc_i  * (int64_t)errint_id[mc])>>16);
 
 	int cmd_q = 
 	       (((int64_t)cc_p  * (int64_t)err_iq)>>16) +
-	       (((int64_t)cc_i  * (int64_t)errint_iq)>>16);
+	       (((int64_t)cc_i  * (int64_t)errint_iq[mc])>>16);
 
 
 	// Now rotate commands back (inverse Park):
@@ -450,15 +662,20 @@ void bldc0_inthandler()
 
 		Math doesn't even know about a concept called "space vector".
 
-		Thing marketing calls "Space Vector Modulation", is just a specific implementation of generating PWM
-		waveforms for gate drivers. There is absolutely nothing wrong generating PWMs in any other way, including
+		"Space Vector Modulation" is just a completely made-up name for a certain, specific class of methods of generating PWM
+		waveforms for gate drivers. The result is just PWM. There is absolutely nothing wrong generating PWMs in any other way, including
 		the bog standard timer-based PWM generation all microcontrollers provide in hardware.
 
 		The argument for using "Space Vector Modulation", is to get rid of doing Inverse Clarke, saving from a
 		few trivial multiplications! All of this "advantage" is naturally lost due to fact that microcontrollers
 		do not implement Space Vector Modulation hardware.
 
-		So finally, do the inverse clarke - i.e., convert the 2-phase pwm commands to 3-phase:
+		Depending on the actual "Space vector modulation" implementation, it may or may not reduce switching losses compared
+		to the classical triangle-wave-comparison PWM.
+
+		Obviously, using the classical way here because it's implemented in MCU hardware and, uhm, well, it just works.
+
+		So finally, do the inverse clarke - i.e., convert the 2-phase pwm commands to 3-phase, using these formulae:
 
 		va = v_alpha
 		vb = (-v_alpha + sqrt(3)*v_beta)/2
@@ -468,15 +685,10 @@ void bldc0_inthandler()
 		sqrt(3) = 1.732051 ~= 14189/2^13 = 1.732056
 	*/
 	
-	int pwma, pwmb, pwmc;
+	pwma = PWM_MID + cmd_alpha;
+	pwmb = PWM_MID + ((-cmd_alpha + ((14189*cmd_beta)>>13))>>1);
+	pwmc = PWM_MID + ((-cmd_alpha - ((14189*cmd_beta)>>13))>>1);
 
-	pwma = cmd_alpha;
-	pwmb = (-cmd_alpha + ((14189*cmd_beta)>>13))>>1;
-	pwmc = (-cmd_alpha - ((14189*cmd_beta)>>13))>>1;
-
-	pwma += PWM_MID;
-	pwmb += PWM_MID;
-	pwmc += PWM_MID;
 
 	int clipped = 0;
 	if(pwma < 100){ clipped = 1; pwma = 100;}
@@ -491,9 +703,10 @@ void bldc0_inthandler()
 	if(clipped)
 	{
 		clipped_cnt += 5;
-		if(clipped_cnt > 5*100)
+		if(clipped_cnt > 5*1000000)
 		{
 			MC0_DIS_GATE();
+			MC1_DIS_GATE();
 			error(17);
 
 		}
@@ -505,17 +718,32 @@ void bldc0_inthandler()
 	}
 	
 
-	TIM1->CCR1 = pwma;
-	TIM1->CCR2 = pwmb;
-	TIM1->CCR3 = pwmc;
+	SKIP_CONTROLLING:;
 
+	prev_hall = hall;
+	
+	if(mc == 0)
+	{
+		TIM1->CCR1 = pwma;
+		TIM1->CCR2 = pwmb;
+		TIM1->CCR3 = pwmc;
+	}
+	else
+	{
+		TIM8->CCR1 = pwma;
+		TIM8->CCR2 = pwmb;
+		TIM8->CCR3 = pwmc;
+	}
+
+
+/*
 	static int decim;
 	if(trace_at >= 0)
 	{
 		if(++decim >= 12)
 		{
 			decim = 0;
-			trace[trace_at].hall = hall_pos;
+			trace[trace_at].hall = hall;
 			trace[trace_at].rotor_ang = rotor_ang>>24;
 			trace[trace_at].ia = ia;
 			trace[trace_at].ib = ib;
@@ -539,6 +767,29 @@ void bldc0_inthandler()
 				trace_at = -1;
 		}
 	}
+
+*/
+
+}
+
+
+// runs at 12200Hz
+void bldc0_inthandler() __attribute__((section(".text_itcm")));
+void bldc0_inthandler()
+{
+	TIM1->SR = 0; // Clear interrupt flags
+	__DSB();
+
+	int ib = ADC_MID-adc1.s.mc0_imeasb;
+	int ic = adc1.s.mc0_imeasc-ADC_MID; // Swapped polarity (PCB layout optimization)
+
+	if(ib < -ADC_CURR_SAFETY_LIMIT || ib > ADC_CURR_SAFETY_LIMIT || ic < -ADC_CURR_SAFETY_LIMIT || ic > ADC_CURR_SAFETY_LIMIT)
+	{
+		MC0_DIS_GATE();
+		error(16);
+	}
+
+	bldc_handler(0, ib, ic, hall_loc[MC0_HALL_CBA()]);
 }
 
 void bldc1_inthandler() __attribute__((section(".text_itcm")));
@@ -555,228 +806,10 @@ void bldc1_inthandler()
 		MC1_DIS_GATE();
 		error(16);
 	}
-	int ia = -ib - ic;
 
-	int sp_iq, sp_id;
-
-	sp_id = 0;
-	sp_iq = 0;
-
-	if(powder >= 0 && powder < 10) sp_iq = powders[powder];
-
-
-
-
-	int hall_pos = hall_loc[MC1_HALL_CBA()];
-
-	// negative iq = hall_pos & rotor_ang values increase
-
-	static int prev_hall_pos;
-
-	static uint32_t time_last_hall_change;
-	static uint32_t cur_time;
-	cur_time++;
-
-	int expected_hall_pos = prev_hall_pos;
-	if(sp_iq < 0)
-	{
-		expected_hall_pos++;
-		if(expected_hall_pos > 5) expected_hall_pos = 0;
-	}
-	else if(sp_iq > 0)
-	{
-		expected_hall_pos--;
-		if(expected_hall_pos < 0) expected_hall_pos = 5;
-	}
-
-
-	static int interp_len = 0;
-
-	uint32_t rotor_ang;
-	static int32_t ang_per_timestep;
-	static int32_t rotor_ang_tune;
-
-	uint32_t dt = cur_time - time_last_hall_change;
-	if(dt > 6000)
-	{
-		ang_per_timestep = 0; // stop interpolating. keep rotor_ang_tune.
-	}
-
-	if(hall_pos == expected_hall_pos) // had a hall step just now: in expected direction
-	{
-		time_last_hall_change = cur_time;
-
-		if(dt > 20 && dt < 6000) // interpolate
-		{
-			ang_per_timestep = ((40*ANG_1_DEG) / dt) * ((sp_iq<0)?1:-1);
-			rotor_ang_tune = -20*ANG_1_DEG * ((sp_iq<0)?1:-1);
-			interp_len = dt;
-		}
-		else // don't interpolate
-		{
-			ang_per_timestep = 0;
-			rotor_ang_tune = 0;
-		}
-	}
-	else if(hall_pos != prev_hall_pos) // had a hall step just now: in unexpected direction: do not interpolate
-	{
-		time_last_hall_change = cur_time;
-		ang_per_timestep = 0;
-		rotor_ang_tune = 0;
-	}
-
-	prev_hall_pos = hall_pos;
-
-	if(rotor_ang_tune < -22*ANG_1_DEG || rotor_ang_tune > 22*ANG_1_DEG)
-		error(18);
-
-	rotor_ang = base_hall_aims[hall_pos] + timing_shift + (uint32_t)rotor_ang_tune;
-
-	if(dt < interp_len)
-		rotor_ang_tune += ang_per_timestep;
-
-
-	/*
-		Transform from 3-phase coordinate space defined by 3 vectors 120 deg apart, to
-		the more understandable 2-phase x,y coordinate space (defined by 2 vectors 90 deg apart)
-		This operation of two multiplications by constants and one summation 
-		is called "Clarke transform" and considered high end math wizardry
-		by the literature which typically does not show the math to make
-		sure it stays mysterious.
-
-		i_alpha = ia
-		i_beta = (1/sqrt(3)) * (ia + 2ib)
-
-		1/sqrt(3) = 0.5773503 ~= 37387/65536 = 0.5773468
-	*/
-
-	int i_alpha = ia;
-	int i_beta = (37387*(ia + 2*ib))>>16;
-
-	// Clarke done! Didn't need a library for that.
-
-	/*
-		Now, rotate the current measurement vectors so that they are referenced to the rotor.
-
-		For some reason, in context of motors, this is called "Park transform". 
-
-		positive iq is the current 90 degrees ahead of the rotor
-		positive id is the current pulling directly to the current direction of rotor, can be used for holding torque. Typically regulated as 0
-	*/
-
-	int rotcos = lut_cos_from_u32((uint32_t)rotor_ang);
-	int rotsin = lut_sin_from_u32((uint32_t)rotor_ang);
-
-	int id = (i_alpha * rotcos + i_beta  * rotsin)>>SIN_LUT_RESULT_SHIFT;
-	int iq = (i_beta  * rotcos - i_alpha * rotsin)>>SIN_LUT_RESULT_SHIFT;
-
-	// Park done! Didn't need a library for that.
-
-	// Now the PI control loops for id, iq
-
-	int err_id = sp_id - id;
-	int err_iq = sp_iq - iq;
-
-	avgd_err_id = (65535*(int64_t)avgd_err_id + (int64_t)(abso(err_id)<<8))>>16;
-	avgd_err_iq = (65535*(int64_t)avgd_err_iq + (int64_t)(abso(err_iq)<<8))>>16;
-
-	static int32_t errint_id, errint_iq;
-
-	if(powder == 5 || powder == 0)
-	{
-		errint_id = 0;
-		errint_iq = 0;
-	}
-	else
-	{
-		errint_id += err_id;
-		errint_iq += err_iq;
-	}
-
-
-	if(errint_id > max_errint) errint_id = max_errint;
-	if(errint_id < -max_errint) errint_id = -max_errint;
-	if(errint_iq > max_errint) errint_iq = max_errint;
-	if(errint_iq < -max_errint) errint_iq = -max_errint;
-
-	int cmd_d = 
-	       (((int64_t)cc_p  * (int64_t)err_id)>>16) +
-	       (((int64_t)cc_i  * (int64_t)errint_id)>>16);
-
-	int cmd_q = 
-	       (((int64_t)cc_p  * (int64_t)err_iq)>>16) +
-	       (((int64_t)cc_i  * (int64_t)errint_iq)>>16);
-
-
-	// Now rotate commands back (inverse Park):
-
-	int cmd_alpha = (cmd_d * rotcos - cmd_q * rotsin)>>SIN_LUT_RESULT_SHIFT;
-	int cmd_beta  = (cmd_q * rotcos + cmd_d * rotsin)>>SIN_LUT_RESULT_SHIFT;
-
-	/*
-		Now the funny thing:
-
-		Outer Space Vectors have absolutely nothing to do with FOC.
-
-		Math doesn't even know about a concept called "space vector".
-
-		Thing marketing calls "Space Vector Modulation", is just a specific implementation of generating PWM
-		waveforms for gate drivers. There is absolutely nothing wrong generating PWMs in any other way, including
-		the bog standard timer-based PWM generation all microcontrollers provide in hardware.
-
-		The argument for using "Space Vector Modulation", is to get rid of doing Inverse Clarke, saving from a
-		few trivial multiplications! All of this "advantage" is naturally lost due to fact that microcontrollers
-		do not implement Space Vector Modulation hardware.
-
-		So finally, do the inverse clarke - i.e., convert the 2-phase pwm commands to 3-phase:
-
-		va = v_alpha
-		vb = (-v_alpha + sqrt(3)*v_beta)/2
-		vc = (-v_alpha - sqrt(3)*v_beta)/2
-
-
-		sqrt(3) = 1.732051 ~= 14189/2^13 = 1.732056
-	*/
-	
-	int pwma, pwmb, pwmc;
-
-	pwma = cmd_alpha;
-	pwmb = (-cmd_alpha + ((14189*cmd_beta)>>13))>>1;
-	pwmc = (-cmd_alpha - ((14189*cmd_beta)>>13))>>1;
-
-	pwma += PWM_MID;
-	pwmb += PWM_MID;
-	pwmc += PWM_MID;
-
-	int clipped = 0;
-	if(pwma < 100){ clipped = 1; pwma = 100;}
-	if(pwma > 8192-100){ clipped = 1; pwma = 8192-100;}
-	if(pwmb < 100){ clipped = 1; pwmb = 100;}
-	if(pwmb > 8192-100){ clipped = 1; pwmb = 8192-100;}
-	if(pwmc < 100){ clipped = 1; pwmc = 100;}
-	if(pwmc > 8192-100){ clipped = 1; pwmc = 8192-100;}
-
-	static int clipped_cnt;
-
-	if(clipped)
-	{
-		clipped_cnt += 5;
-		if(clipped_cnt > 5*100)
-		{
-			MC1_DIS_GATE();
-			error(17);
-
-		}
-	}
-	else
-	{
-		if(clipped_cnt > 0)
-			clipped_cnt -= 1;
-	}
-	TIM8->CCR1 = pwma;
-	TIM8->CCR2 = pwmb;
-	TIM8->CCR3 = pwmc;
+	bldc_handler(1, ib, ic, hall_loc[MC0_HALL_CBA()]);
 }
+
 
 void bldc_safety_shutdown() __attribute__((section(".text_itcm")));
 void bldc_safety_shutdown()
@@ -897,6 +930,7 @@ void bldc_test()
 	int32_t loc = 0;
 
 	calc_max_errint();
+	calc_max_errint_v();
 
 	int do_trace = 0;
 	int print = 1;
@@ -986,10 +1020,14 @@ void bldc_test()
 		uart_print_string_blocking("\r\n");
 */
 
+		uart_print_string_blocking(" velo = "); o_itoa32(dbg_velo, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking("\r\n");
+
+
 		if(print)
 		{		
-			uart_print_string_blocking(" cc_p = "); o_utoa16_fixed(cc_p, printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking(" cc_i = "); o_utoa16_fixed(cc_i, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" velo_p = "); o_utoa32(velo_p, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" velo_i = "); o_utoa32(velo_i, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking("\r\n");
 			uart_print_string_blocking("\r\n");
 
@@ -1008,39 +1046,40 @@ void bldc_test()
 			}
 			else if(cmd == '1')
 			{
-				powder = 1;
+				sp_velo[0] = -800;
 			}
 			else if(cmd == '2')
 			{
-				powder = 2;
+				sp_velo[0] = -400;
 			}
 			else if(cmd == '3')
 			{
-				powder = 3;
+				sp_velo[0] = -200;
 			}
 			else if(cmd == '4')
 			{
-				powder = 4;
+				sp_velo[0] = -100;
 			}
 			else if(cmd == '5')
 			{
-				powder = 5;
+				sp_velo[0] = 0;
 			}
 			else if(cmd == '6')
 			{
-				powder = 6;
+				sp_velo[0] = 100;
+
 			}
 			else if(cmd == '7')
 			{
-				powder = 7;
+				sp_velo[0] = 200;
 			}
 			else if(cmd == '8')
 			{
-				powder = 8;
+				sp_velo[0] = 400;
 			}
 			else if(cmd == '9')
 			{
-				powder = 9;
+				sp_velo[0] = 800;
 			}
 			else if(cmd == 'q')
 			{
@@ -1068,14 +1107,18 @@ void bldc_test()
 			}
 			else if(cmd == 'a')
 			{
+				motor_enabled[0] = 1;
 				MC0_EN_GATE();
-				MC1_EN_GATE();
+//				MC1_EN_GATE();
 			}
 			else if(cmd == 's')
 			{
+				motor_enabled[0] = 0;
+				motor_enabled[1] = 0;
 				MC0_DIS_GATE();
 				MC1_DIS_GATE();
 			}
+/*
 			else if(cmd == 'P')
 			{
 				cc_p += 1000;
@@ -1102,6 +1145,36 @@ void bldc_test()
 				else
 					cc_i = 0;
 				calc_max_errint();
+				print = 1;
+
+			}
+*/
+			else if(cmd == 'P')
+			{
+				velo_p += 4000;
+				print = 1;
+			}
+			else if(cmd == 'p')
+			{
+				if(velo_p > 4000)
+					velo_p -= 4000;
+				else
+					velo_p = 0;
+				print = 1;
+			}
+			else if(cmd == 'I')
+			{
+				velo_i += 10;
+				calc_max_errint_v();
+				print = 1;
+			}
+			else if(cmd == 'i')
+			{
+				if(velo_i > 10)
+					velo_i -= 10;
+				else
+					velo_i = 0;
+				calc_max_errint_v();
 				print = 1;
 
 			}
