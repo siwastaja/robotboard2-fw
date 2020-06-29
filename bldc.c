@@ -455,10 +455,10 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	int pwma, pwmb, pwmc;
 
-	static int prev_motor_enabled[2];	
+//	static int prev_motor_enabled[2];	
 
-	int was_disabled = !prev_motor_enabled[mc];
-	prev_motor_enabled[mc] = motor_enabled[mc];
+//	int was_disabled = !prev_motor_enabled[mc];
+//	prev_motor_enabled[mc] = motor_enabled[mc];
 
 	if(!motor_enabled[mc])
 	{
@@ -469,12 +469,18 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		errint_id[mc] = 0;
 		errint_iq[mc] = 0;
 
+		if(hall >= 0 && hall <= 5)
+			rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
+
+		interp_ang_per_timeunit[mc] = 0;
+		interp_time_left[mc] = 0;
+
 		goto SKIP_CONTROLLING;
 	}
 
 	// Rotor angle estimation, and hall signal error handling
 
-	if(prev_hall[mc] == -1 || was_disabled)
+	if(prev_hall[mc] == -1)
 	{
 		if(hall >= 0 && hall <= 5)
 		{
@@ -484,7 +490,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		}
 		else
 		{
-			illegal_hall_err_cnt += 50;
+			illegal_hall_err_cnt += 200;
 		}
 	}
 	else if(hall == prev_hall[mc])
@@ -522,7 +528,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 			{
 				// The motor just can't turn this fast, the hall must be wrong.
 				// Do not interpolate.
-				illegal_hall_err_cnt += 50;
+				illegal_hall_err_cnt += 800;
 				interp_ang_per_timeunit[mc] = 0;
 				interp_time_left[mc] = 0;
 			}
@@ -605,11 +611,12 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		// We have no idea how to estimate the angle.
 		// Keep the previous and increase the error counter fast.
 
-		illegal_hall_err_cnt += 50;
+		illegal_hall_err_cnt += 200;
+		error(57);
 
 	}
 
-	if(illegal_hall_err_cnt > 20*50)
+	if(illegal_hall_err_cnt > 20*200)
 	{
 		MC0_DIS_GATE();
 		MC1_DIS_GATE();
