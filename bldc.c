@@ -7,11 +7,10 @@
 #include "bldc.h"
 #include "sin_lut.h"
 #include "../robotsoft/datatypes.h" // ANG_xx_DEG
+#include "audio.h"
 
 #define PWM_MAX 8192
 #define PWM_MID (PWM_MAX/2)
-#define MIN_FREQ 1*65536
-#define MAX_FREQ 100*65536
 
 // Gates enabled, or just freewheeling.
 // Same mappings for REV2A,B
@@ -140,18 +139,11 @@ void set_curr_lim(int ma)
 }
 
 
-static uint32_t pid_i_max = 3000*256;
-static int32_t pid_p = 60;
-static int32_t pid_i = 250;
-static int32_t pid_i_threshold = (3*SUBSTEPS)/2;
-static int32_t pid_d = 0;
 
-
-volatile int32_t currlim_mult_flt;
 volatile int32_t curr_info_ma[2];
 
 #define ADC_MID 8192
-#define ADC_CURR_SAFETY_LIMIT 4000  // 7500
+#define ADC_CURR_SAFETY_LIMIT 7500
 
 #if ADC_CURR_SAFETY_LIMIT > (ADC_MID-2)
 #error Recheck ADC_CURR_SAFETY_LIMIT
@@ -249,20 +241,37 @@ volatile int min_ia, min_ib, min_ic;
 
 volatile int dbg_pwma, dbg_pwmb, dbg_pwmc;
 
+// FOC current control loop is fairly forgiving and easy to tune to work well-enough.
+// If even quicker response is needed, I suggest adding feedforward here, too, then tune
+// carefully.
+// plant process variable = measured current. setpoint = desired current. plant output = pwm duty
+// The loop is decoupled from the rotation by the FOC transformations
 volatile int cc_p = 24000;
 volatile int cc_i = 1200;
-volatile int powder;
-static const int powders[10] = {0, -2200, -1600, -1000, -500, 0, 500, 1000, 1600, 2200};
 
-volatile int velo_p = 0;
-volatile int velo_i = 0;
+// Velocity control loop is very difficult due to very low speeds, low hall resolution,
+// and a lot of momentum in the robot due to the shape.
+// Feedforward and acceleration feedforward should do as much as possible.
+// Tune the loop by setting p, i, d all to zero. Adjust the two feedforwards to
+// give good approximate speed response over real-world usage (with actual loads)
+// without massive overshoot or massive undershoot.
+// Then bring up P, I, D like you are taught to do.
+// plant process variable = measured wheel velocity (from the hall sensors)
+// plant setpoint = desired wheel velocity
+// plant output = desired current (iq) to the FOC current control loop
+
+volatile int velo_fw = 2400;
+volatile int velo_acc_fw = 200000;
+volatile int velo_p = 6000;
+int velo_p_min = 150;
+volatile int velo_i = 10;
 volatile int velo_d = 0;
 
 volatile int motor_enabled[2];
 volatile int sp_velo[2];
 volatile int dbg_velo;
 
-volatile int enable_interp;
+volatile int enable_interp = 1;
 
 
 volatile int mode;
@@ -280,7 +289,7 @@ static void calc_max_errint()
 volatile int max_errint_v;
 static void calc_max_errint_v()
 {
-	#define MAX_CURR_COMMAND_BY_I 2000
+	#define MAX_CURR_COMMAND_BY_I 4000
 	if(velo_i == 0)
 		max_errint_v = 0;
 	else
@@ -299,6 +308,15 @@ volatile int stop_state_dbg[2];
 
 volatile int dbg_score;
 
+static int32_t velo[2];
+
+// Velocity is calculated as 1/dt, where dt = timesteps of 1/12.2kHz
+// Maximum possible calculated this way would be 1.0 (when dt=1, minimum possible value)
+// For fixed-point implementation, large nominator is used, defined here:
+#define VELO_NOM 16777216
+
+volatile int velo_p_bypass[2];
+
 void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 {
 	static int illegal_hall_err_cnt; // Increased when hall value is either illegal, or a step is skipped
@@ -313,9 +331,12 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	static uint32_t rotor_ang[2]; // Estimate of the rotor angle, interpolated based on hall-sensor inputs
 
-	static int32_t velo[2];
-
 	static int32_t errint_id[2], errint_iq[2];
+
+	static int32_t errint_v[2];
+	static int32_t prev_err_v[2];
+
+//	static int velo_p_bypass[2];
 
 
 	cur_time[mc]++;
@@ -329,8 +350,6 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 
 	int32_t sp_v = sp_velo[mc]; // read the volatile var once here
-	int32_t sp_acc = sp_v - prev_sp_v[mc];
-	prev_sp_v[mc] = sp_v;
 
 
 	// positive velocity setpoint = negative iq = hall,rotor_ang values increase
@@ -363,17 +382,13 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 				Rotor is at current_hall_angle + 30 deg
 				Rotor is turning towards current_hall_angle + 60 + 30 deg
 
-				-> action: use fixed current_hall_angle + 30 deg as the estimate (instead of current_hall_angle),
-					more torque is generated to the right direction to take the rotor back to the
-					expected direction
+				-> action: use fixed current_hall_angle
 
 			If velocity < 0:
 				Rotor is at current_hall_angle - 30 deg
 				Rotor is turning towards current_hall_angle - 60 - 30 deg
 
-				-> action: use fixed current_hall_angle - 30 deg as the estimate (instead of current_hall_angle),
-					more torque is generated to the right direction to take the rotor back to the
-					expected direction
+				-> action: use fixed current_hall_angle
 
 
 		Consider 6-step resolution (60 deg step), directly from hall. Whenever the rotor is
@@ -381,9 +396,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		-30 and +30 deg, around zero error. As a result, the quadrature current vector swings between
 		60 and 120 degrees.
 
-
 		
-
 	*/
 
 	int hall_forward  = prev_hall[mc] + 1; if(hall_forward > 5) hall_forward = 0;
@@ -411,13 +424,15 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	uint32_t dt_for_velo = cur_time[mc] - time_last_velo[mc];
 	static int prev_dir[2];
 
+	static int dir_changes[2];
+
 	if(prev_hall[mc] == -1)
 	{
 		velo[mc] = 0;
 	}
 	else if(hall == prev_hall[mc])
 	{
-		int32_t velo_would_be = (prev_dir[mc]?-65536:+65536) / (int32_t)dt_for_velo;
+		int32_t velo_would_be = (prev_dir[mc]?-VELO_NOM:+VELO_NOM) / (int32_t)dt_for_velo;
 
 		if(abso(velo_would_be) < abso(velo[mc]))
 		{
@@ -429,9 +444,12 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		time_last_velo[mc] = cur_time[mc];
 
 		if(prev_dir[mc]) // previously backward, now forward - speed really is 0
+		{
 			velo[mc] = 0;
+			dir_changes[mc] += 10000000/(500+dt_for_velo);
+		}
 		else
-			velo[mc] = +65536/(int32_t)dt_for_velo; // really going forward
+			velo[mc] = +VELO_NOM/(int32_t)dt_for_velo; // really going forward
 
 		prev_dir[mc] = 0;
 
@@ -441,24 +459,57 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		time_last_velo[mc] = cur_time[mc];
 
 		if(!prev_dir[mc]) // previously forward, now backward - speed really is 0
+		{
 			velo[mc] = 0;
+			dir_changes[mc] += 10000000/(500+dt_for_velo);
+		}
 		else
-			velo[mc] = -65536/(int32_t)dt_for_velo; // really going backward
+			velo[mc] = -VELO_NOM/(int32_t)dt_for_velo; // really going backward
 
 		prev_dir[mc] = 1;
 
 	}
+
+	// dt (time units)  dt (ms)  dir_changes increase by
+	// >4950            >406     0
+	// 2000             82       400
+	// 1000             82       666
+	// 100              8.2      1666
+	// 10               0.82     1960
+	// 1                0.082    1996
+
+	if(dir_changes[mc] > 0) dir_changes[mc]--;
+
+
+	if(dir_changes[mc] < 5000)
+	{
+		if((cur_time[mc]&0xf) == 0xf)
+		{
+			if(velo_p_bypass[mc] < velo_p) velo_p_bypass[mc]++;
+		}
+	}
+	else if(dir_changes[mc] > 20000)
+	{
+		beep(75, 800, -600, 30);
+		velo_p_bypass[mc] = (velo_p_bypass[mc] * 3)>>2;
+		if(velo_p_bypass[mc] < velo_p_min) velo_p_bypass[mc] = velo_p_min;
+		dir_changes[mc] -= 10000;
+	}
+
+	// 20000 = tiny jiggle which may happen at normal-ish transients
+	// 160000 = something that normally does not happen, only in extreme cases (wheel totally in air)
+//	if(dir_changes[mc] > 20000)
+//	{
+//		beep(75, 800, -600, 30);
+//		dir_changes[mc] = 0;
+//	}
+
 
 
 	if(mc == 0)
 		dbg_velo = velo[mc];
 
 	int pwma, pwmb, pwmc;
-
-//	static int prev_motor_enabled[2];	
-
-//	int was_disabled = !prev_motor_enabled[mc];
-//	prev_motor_enabled[mc] = motor_enabled[mc];
 
 	if(!motor_enabled[mc])
 	{
@@ -469,9 +520,13 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		errint_id[mc] = 0;
 		errint_iq[mc] = 0;
 
+		errint_v[mc] = 0;
+
+		// Track rotor_ang so that code interpolating on that is on the right track whenever motor is enabled again
 		if(hall >= 0 && hall <= 5)
 			rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
 
+		// Keep interpolation off
 		interp_ang_per_timeunit[mc] = 0;
 		interp_time_left[mc] = 0;
 
@@ -623,39 +678,56 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		error(19);
 	}
 
-
+	// Interpolation bypass code for testing:
 	//rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
 
-	int err_v = sp_v - velo[mc];
 
-	static int32_t errint_v[2];
 
-	if(sp_v == 0)
+	static int32_t current[2];
+
+	static int32_t sp_acc[2];
+	// Velocity setpoint derivator loop (detect amount of acceleration command)
+	// Run every 64 cycles, i.e. at 191Hz
+	// Whenever this runs, the next one (velocity control loop) also runs
+	if((cur_time[mc] & 0x3f) == 0x3f)
 	{
-		errint_v[mc] = 0;
+		sp_acc[mc] = sp_v - prev_sp_v[mc];
+		prev_sp_v[mc] = sp_v;
 	}
-	else
+	// Velocity control loop
+	// Run every 16 cycles, i.e. at 763Hz
+
+	if((cur_time[mc] & 0xf) == 0xf)
 	{
+		int32_t err_v = sp_v - velo[mc];
+
+		int32_t der_v = err_v - prev_err_v[mc];
+		prev_err_v[mc] = err_v;
+
 		errint_v[mc] += err_v;
+
+		if(errint_v[mc] > max_errint_v) errint_v[mc] = max_errint_v;
+		if(errint_v[mc] < -max_errint_v) errint_v[mc] = -max_errint_v;
+
+		current[mc] = 
+		       (((int64_t)velo_fw * (int64_t)sp_v)>>16) +
+		       (((int64_t)velo_acc_fw * (int64_t)sp_acc[mc])>>16) +
+		       (((int64_t)velo_p_bypass[mc]  * (int64_t)err_v)>>16) +
+		       (((int64_t)velo_i  * (int64_t)errint_v[mc])>>16) +
+		       (((int64_t)velo_d  * (int64_t)der_v)>>16);
+
+		#define current_limit 4000
+
+		if(current[mc] > current_limit) current[mc] = current_limit;
+		else if(current[mc] < -current_limit) current[mc] = -current_limit;
+
+
 	}
 
 
-	if(errint_v[mc] > max_errint_v) errint_v[mc] = max_errint_v;
-	if(errint_v[mc] < -max_errint_v) errint_v[mc] = -max_errint_v;
 
-	int current = 
-	       (((int64_t)velo_p  * (int64_t)err_v)>>16) +
-	       (((int64_t)velo_i  * (int64_t)errint_v[mc])>>16);
-
-
-	#define current_limit 2000
-
-	if(current > current_limit) current = current_limit;
-	else if(current < -current_limit) current = -current_limit;
-
-
-//	sp_iq = -1*current;
-	sp_iq = -2*sp_v;
+	sp_iq = -1*current[mc];
+//	sp_iq = -2*sp_v;
 
 	/*
 		Transform from 3-phase coordinate space defined by 3 vectors 120 deg apart, to
@@ -944,11 +1016,7 @@ void motor_torque_lim(int m, int percent)
 	if(m < 0 || m > 1 || percent<0 || percent>100) error(122);
 
 	int curr = (percent*25000)/100;
-	int pp = 50 + (percent*50)/100;
-	int pi = 150 + (percent*250)/100;
 
-	pid_p = pp;
-	pid_i = pi;
 
 	set_curr_lim(curr);
 }
@@ -992,6 +1060,10 @@ void bldc_print_debug()
 #if 1
 void bldc_test()
 {
+
+	delay_ms(1000);
+	beep(75, 800, -600, 30);
+
 	init_cpu_profiler();
 
 	int32_t loc = 0;
@@ -1001,9 +1073,12 @@ void bldc_test()
 
 	int do_trace = 0;
 	int print = 1;
+	int cur_velo = 0;
+	int velotarg = 0;
+	int moodo = 0;
 	while(1)
 	{
-		profile_cpu_blocking_20ms();
+		//profile_cpu_blocking_20ms();
 /*
 		DIS_IRQ();
 		int ia = latest_ia;
@@ -1087,15 +1162,27 @@ void bldc_test()
 		uart_print_string_blocking("\r\n");
 */
 
-		uart_print_string_blocking(" velo = "); o_itoa32(dbg_velo, printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking(" score = "); o_itoa32(dbg_score, printbuf); uart_print_string_blocking(printbuf);
-		uart_print_string_blocking("\r\n");
+//		uart_print_string_blocking(" velo = "); o_itoa32(dbg_velo, printbuf); uart_print_string_blocking(printbuf);
+//		uart_print_string_blocking(" score = "); o_itoa32(dbg_score, printbuf); uart_print_string_blocking(printbuf);
+//		uart_print_string_blocking("\r\n");
 
+		static int kakka;
+
+		if(++kakka == 100)
+		{
+			uart_print_string_blocking(" p_bp[0] = "); o_itoa32(velo_p_bypass[0], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" p_bp[1] = "); o_itoa32(velo_p_bypass[1], printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking("\r\n");
+			kakka =0;
+		}
 
 		if(print)
 		{		
+			uart_print_string_blocking(" velo_fw = "); o_utoa32(velo_fw, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" velo_acc_fw = "); o_utoa32(velo_acc_fw, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(" velo_p = "); o_utoa32(velo_p, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(" velo_i = "); o_utoa32(velo_i, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" velo_d = "); o_utoa32(velo_d, printbuf); uart_print_string_blocking(printbuf);
 
 			uart_print_string_blocking(" interp = "); o_itoa32(enable_interp, printbuf); uart_print_string_blocking(printbuf);
 
@@ -1106,75 +1193,62 @@ void bldc_test()
 			print = 0;
 		}
 
-		for(int i=0; i<100; i++)
+		if(cur_velo < velotarg-8)
+			cur_velo+=8;
+
+		if(cur_velo > velotarg+8)
+			cur_velo-=8;
+
+		sp_velo[0] = cur_velo;
+		sp_velo[1] = moodo?-cur_velo:cur_velo;
+
+
+
+		for(int i=0; i<8; i++)
 		{
-			delay_ms(1);
+			delay_us(50);
 
 			uint8_t cmd = uart_input();
 
-			if(cmd == '0')
+			if(cmd == '1')
 			{
-				powder = 0;
-			}
-			else if(cmd == '1')
-			{
-				sp_velo[0] = -800;
-				sp_velo[1] = -800;
+				velotarg = -200*256;
 			}
 			else if(cmd == '2')
 			{
-				sp_velo[0] = -400;
-				sp_velo[1] = -400;
+				velotarg = -100*256;
 			}
 			else if(cmd == '3')
 			{
-				sp_velo[0] = -200;
-				sp_velo[1] = -200;
+				velotarg = -50*256;
 			}
 			else if(cmd == '4')
 			{
-				sp_velo[0] = -100;
-				sp_velo[1] = -100;
+				velotarg = -25*256;
 			}
-			else if(cmd == '5')
+			else if(cmd == '5' || cmd == '0')
 			{
-				sp_velo[0] = 0;
-				sp_velo[1] = 0;
+				velotarg = 0;
 			}
 			else if(cmd == '6')
 			{
-				sp_velo[0] = 100;
-				sp_velo[1] = 100;
+				velotarg = 25*256;
 			}
 			else if(cmd == '7')
 			{
-				sp_velo[0] = 200;
-				sp_velo[1] = 200;
+				velotarg = 50*256;
 			}
 			else if(cmd == '8')
 			{
-				sp_velo[0] = 400;
-				sp_velo[1] = 400;
+				velotarg = 100*256;
 			}
 			else if(cmd == '9')
 			{
-				sp_velo[0] = 800;
-				sp_velo[1] = 800;
+				velotarg = 200*256;
 			}
 			else if(cmd == 'q')
 			{
-				do_trace = 1;
-				trace_at = 0;
-
-				powder = 1;
-				delay_ms(400);
-				powder = 4;
-				delay_ms(800);
-				powder = 9;
-				delay_ms(500);
-				powder = 6;
-				delay_ms(700);
-				powder = 5;
+				moodo = !moodo;
 			}
 			else if(cmd == 'w')
 			{
@@ -1234,33 +1308,73 @@ void bldc_test()
 */
 			else if(cmd == 'P')
 			{
-				velo_p += 4000;
+				velo_p += 100;
 				print = 1;
 			}
 			else if(cmd == 'p')
 			{
-				if(velo_p > 4000)
-					velo_p -= 4000;
+				if(velo_p > 100)
+					velo_p -= 100;
 				else
 					velo_p = 0;
 				print = 1;
 			}
 			else if(cmd == 'I')
 			{
-				velo_i += 10;
+				velo_i += 1;
 				calc_max_errint_v();
 				print = 1;
 			}
 			else if(cmd == 'i')
 			{
-				if(velo_i > 10)
-					velo_i -= 10;
+				if(velo_i > 1)
+					velo_i -= 1;
 				else
 					velo_i = 0;
 				calc_max_errint_v();
 				print = 1;
 
 			}
+			else if(cmd == 'D')
+			{
+				velo_d += 1000;
+				print = 1;
+			}
+			else if(cmd == 'd')
+			{
+				if(velo_d > 1000)
+					velo_d -= 1000;
+				else
+					velo_d = 0;
+				print = 1;
+			}
+			else if(cmd == 'F')
+			{
+				velo_fw += 200;
+				print = 1;
+			}
+			else if(cmd == 'f')
+			{
+				if(velo_fw > 200)
+					velo_fw -= 200;
+				else
+					velo_fw = 0;
+				print = 1;
+			}
+			else if(cmd == 'G')
+			{
+				velo_acc_fw += 5000;
+				print = 1;
+			}
+			else if(cmd == 'g')
+			{
+				if(velo_acc_fw > 5000)
+					velo_acc_fw -= 5000;
+				else
+					velo_acc_fw = 0;
+				print = 1;
+			}
+
 			else if(cmd == 't')
 			{
 				delay_ms(2000);
