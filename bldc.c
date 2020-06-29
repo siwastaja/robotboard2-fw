@@ -262,6 +262,8 @@ volatile int motor_enabled[2];
 volatile int sp_velo[2];
 volatile int dbg_velo;
 
+volatile int enable_unexp_dir_estimation, enable_interp;
+
 
 volatile int mode;
 
@@ -328,7 +330,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	// positive velocity setpoint = negative iq = hall,rotor_ang values increase
 
-	static int prev_hall;
+	static int prev_hall[2];
 
 	/*
 		When hall == expected_hall, the current hall position has JUST increased
@@ -379,8 +381,8 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	*/
 
-	int hall_forward  = prev_hall + 1; if(hall_forward > 5) hall_forward = 0;
-	int hall_backward = prev_hall - 1; if(hall_backward < 0) hall_backward = 5;
+	int hall_forward  = prev_hall[mc] + 1; if(hall_forward > 5) hall_forward = 0;
+	int hall_backward = prev_hall[mc] - 1; if(hall_backward < 0) hall_backward = 5;
 
 	int expected_hall;
 	int unexpected_hall;
@@ -404,7 +406,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	uint32_t dt_for_velo = cur_time[mc] - time_last_velo[mc];
 	static int prev_dir[2];
 
-	if(hall == prev_hall)
+	if(hall == prev_hall[mc])
 	{
 		int32_t velo_would_be = (prev_dir[mc]?-65536:+65536) / (int32_t)dt_for_velo;
 
@@ -454,16 +456,17 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	// Rotor angle estimation, and hall signal error handling
 
-	if(hall == prev_hall)
+	if(hall == prev_hall[mc])
 	{
 		// running between hall edges. Interpolate according to the parameters
 		// decided earlier (at the previous edge).
 
-		if(interp_time_left[mc] > 0)
+		if(enable_interp && interp_time_left[mc] > 0)
 		{
 			rotor_ang[mc] += interp_ang_per_timeunit[mc];
 			interp_time_left[mc]--;
 		}
+
 	}
 	else if(hall == expected_hall) 
 	{
@@ -478,30 +481,46 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
 
 
-		if(dt < 3)
+		if(enable_interp)
 		{
-			// The motor just can't turn this fast, the hall must be wrong.
-			// Do not interpolate.
-			illegal_hall_err_cnt += 50;
-			interp_ang_per_timeunit[mc] = 0;
-			interp_time_left[mc] = 0;
-		}
-		else if(dt > 6000)
-		{
-			// Too slow to guess what's actually happening, do not try to interpolate
-			interp_ang_per_timeunit[mc] = 0;
-			interp_time_left[mc] = 0;
+			if(dt < 3)
+			{
+				// The motor just can't turn this fast, the hall must be wrong.
+				// Do not interpolate.
+				illegal_hall_err_cnt += 50;
+				interp_ang_per_timeunit[mc] = 0;
+				interp_time_left[mc] = 0;
+			}
+			else if(dt > 6000)
+			{
+				// Too slow to guess what's actually happening, do not try to interpolate
+				interp_ang_per_timeunit[mc] = 0;
+				interp_time_left[mc] = 0;
+			}
+			else
+			{
+				if(sp_v > 0)
+				{
+					rotor_ang[mc] -= 15*ANG_1_DEG;
+					interp_ang_per_timeunit[mc] = 30*ANG_1_DEG / (int32_t)dt;
+
+				}
+				else if(sp_v < 0)
+				{
+
+					rotor_ang[mc] += 15*ANG_1_DEG;
+					interp_ang_per_timeunit[mc] = -30*ANG_1_DEG / (int32_t)dt;
+				}
+
+				interp_time_left[mc] = dt;
+			}
 		}
 		else
 		{
-			if(sp_v > 0)
-				rotor_ang[mc] -= 15*ANG_1_DEG;
-			else if(sp_v < 0)
-				rotor_ang[mc] += 15*ANG_1_DEG;
-
-			interp_ang_per_timeunit[mc] = 30*ANG_1_DEG / dt;
-			interp_time_left[mc] = dt;
+			interp_ang_per_timeunit[mc] = 0;
+			interp_time_left[mc] = 0;
 		}
+
 	}
 	else if(hall == unexpected_hall)
 	{
@@ -517,15 +536,21 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		illegal_hall_err_cnt += 2;
 
 		rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
-		if(sp_v > 0)
-			rotor_ang[mc] += 20*ANG_1_DEG;
-		else if(sp_v < 0)
-			rotor_ang[mc] -= 20*ANG_1_DEG;
+
+		if(enable_unexp_dir_estimation)
+		{
+			if(sp_v > 0)
+				rotor_ang[mc] += 20*ANG_1_DEG;
+			else if(sp_v < 0)
+				rotor_ang[mc] -= 20*ANG_1_DEG;
+		}
 
 		interp_ang_per_timeunit[mc] = 0;
 		interp_time_left[mc] = 0;
+
+
 	}
-	else if(hall >= 0 && hall <= 5)
+	else
 	{
 		// Completely skipped a step, or got an illegal signal combination (6 legal and 2 illegal combinations exist)
 		// Both scenarios likely mean the connections are intermittent and going to break.
@@ -535,7 +560,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 		illegal_hall_err_cnt += 50;
 
-		rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
+		error(57);
 
 	}
 
@@ -578,7 +603,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 
 //	sp_iq = -1*current;
-	sp_iq = -1*sp_v;
+	sp_iq = -2*sp_v;
 
 	/*
 		Transform from 3-phase coordinate space defined by 3 vectors 120 deg apart, to
@@ -720,7 +745,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	SKIP_CONTROLLING:;
 
-	prev_hall = hall;
+	prev_hall[mc] = hall;
 	
 	if(mc == 0)
 	{
@@ -936,7 +961,7 @@ void bldc_test()
 	int print = 1;
 	while(1)
 	{
-		//profile_cpu_blocking_20ms();
+		profile_cpu_blocking_20ms();
 /*
 		DIS_IRQ();
 		int ia = latest_ia;
@@ -1028,6 +1053,11 @@ void bldc_test()
 		{		
 			uart_print_string_blocking(" velo_p = "); o_utoa32(velo_p, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(" velo_i = "); o_utoa32(velo_i, printbuf); uart_print_string_blocking(printbuf);
+
+			uart_print_string_blocking(" unexp = "); o_itoa32(enable_unexp_dir_estimation, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" interp = "); o_itoa32(enable_interp, printbuf); uart_print_string_blocking(printbuf);
+
+			
 			uart_print_string_blocking("\r\n");
 			uart_print_string_blocking("\r\n");
 
@@ -1098,9 +1128,13 @@ void bldc_test()
 			}
 			else if(cmd == 'w')
 			{
+				enable_interp = !enable_interp;
+				print = 1;
 			}
 			else if(cmd == 'e')
 			{
+				enable_unexp_dir_estimation = !enable_unexp_dir_estimation;
+				print = 1;
 			}
 			else if(cmd == 'r')
 			{
