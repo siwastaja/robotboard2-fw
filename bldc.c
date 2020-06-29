@@ -262,7 +262,7 @@ volatile int motor_enabled[2];
 volatile int sp_velo[2];
 volatile int dbg_velo;
 
-volatile int enable_unexp_dir_estimation, enable_interp;
+volatile int enable_interp;
 
 
 volatile int mode;
@@ -297,6 +297,8 @@ volatile int dbg_rotcos, dbg_rotsin;
 
 volatile int stop_state_dbg[2];
 
+volatile int dbg_score;
+
 void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 {
 	static int illegal_hall_err_cnt; // Increased when hall value is either illegal, or a step is skipped
@@ -312,6 +314,9 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	static uint32_t rotor_ang[2]; // Estimate of the rotor angle, interpolated based on hall-sensor inputs
 
 	static int32_t velo[2];
+
+	static int32_t errint_id[2], errint_iq[2];
+
 
 	cur_time[mc]++;
 
@@ -330,7 +335,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	// positive velocity setpoint = negative iq = hall,rotor_ang values increase
 
-	static int prev_hall[2];
+	static int prev_hall[2] = {-1, -1};
 
 	/*
 		When hall == expected_hall, the current hall position has JUST increased
@@ -406,7 +411,11 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	uint32_t dt_for_velo = cur_time[mc] - time_last_velo[mc];
 	static int prev_dir[2];
 
-	if(hall == prev_hall[mc])
+	if(prev_hall[mc] == -1)
+	{
+		velo[mc] = 0;
+	}
+	else if(hall == prev_hall[mc])
 	{
 		int32_t velo_would_be = (prev_dir[mc]?-65536:+65536) / (int32_t)dt_for_velo;
 
@@ -446,17 +455,39 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	int pwma, pwmb, pwmc;
 
+	static int prev_motor_enabled[2];	
+
+	int was_disabled = !prev_motor_enabled[mc];
+	prev_motor_enabled[mc] = motor_enabled[mc];
+
 	if(!motor_enabled[mc])
 	{
 		pwma = PWM_MID;
 		pwmb = PWM_MID;
 		pwmc = PWM_MID;
+
+		errint_id[mc] = 0;
+		errint_iq[mc] = 0;
+
 		goto SKIP_CONTROLLING;
 	}
 
 	// Rotor angle estimation, and hall signal error handling
 
-	if(hall == prev_hall[mc])
+	if(prev_hall[mc] == -1 || was_disabled)
+	{
+		if(hall >= 0 && hall <= 5)
+		{
+			rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
+			interp_ang_per_timeunit[mc] = 0;
+			interp_time_left[mc] = 0;
+		}
+		else
+		{
+			illegal_hall_err_cnt += 50;
+		}
+	}
+	else if(hall == prev_hall[mc])
 	{
 		// running between hall edges. Interpolate according to the parameters
 		// decided earlier (at the previous edge).
@@ -475,7 +506,11 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		if(illegal_hall_err_cnt > 0 )
 			illegal_hall_err_cnt--;
 
+		static uint32_t prev_dts[2];
 		uint32_t dt = cur_time[mc] - time_last_expected_edge[mc];
+		uint32_t prev_dt = prev_dts[mc];
+		prev_dts[mc] = dt;
+
 		time_last_expected_edge[mc] = cur_time[mc];
 
 		rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
@@ -493,23 +528,48 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 			}
 			else if(dt > 6000)
 			{
-				// Too slow to guess what's actually happening, do not try to interpolate
+				// Too slow to guess what's actually happening, do not try to interpolate at all.
+				// Use the middle point.
 				interp_ang_per_timeunit[mc] = 0;
 				interp_time_left[mc] = 0;
 			}
 			else
 			{
+				// If the rotation is quick and steady, do wide interpolation
+				// If the rotational speed is changing, or rotation is too slow to be certain,
+				// do limited, shallow interpolation around the middle point.
+				int score = 4;
+				if(dt < 4500) score++;
+				if(dt < 3000) score++;
+
+				// dt and prev_dt are quite close
+				// example, dt=100, prev_dt must be 67 .. 149
+				if(dt*2 < prev_dt*3 && dt*3 > prev_dt*2) score++;
+
+				// dt and prev_dt are very close
+				// example, dt=100, prev_dt must be 81 .. 124
+				if(dt*4 < prev_dt*5 && dt*5 > prev_dt*4) score++;
+
+				// score = 4 to 8
+				// interpolation depth = 20 deg @ score 4
+				// interpolation depth = 30 deg @ score 6
+				// interpolation depth = 40 deg @ score 8
+
+				//dbg_score = score;
+
+				int interp_depth = 5*ANG_1_DEG*score;
+
 				if(sp_v > 0)
 				{
-					rotor_ang[mc] -= 15*ANG_1_DEG;
-					interp_ang_per_timeunit[mc] = 30*ANG_1_DEG / (int32_t)dt;
+					rotor_ang[mc] -= interp_depth>>1;
+					interp_ang_per_timeunit[mc] = interp_depth / (int32_t)dt;
 
 				}
 				else if(sp_v < 0)
 				{
 
-					rotor_ang[mc] += 15*ANG_1_DEG;
-					interp_ang_per_timeunit[mc] = -30*ANG_1_DEG / (int32_t)dt;
+					rotor_ang[mc] += interp_depth>>1;
+					interp_ang_per_timeunit[mc] = -interp_depth / (int32_t)dt;
 				}
 
 				interp_time_left[mc] = dt;
@@ -527,27 +587,14 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		// At the hall step edge: to the wrong direction
 		// Note: the motor does not produce torque in this direction, but the opposite
 		// This state is caused by a fairly strong physical jerk or oscillation.
-		// Assuming the control loop works properly and quickly, the next transition 
-		// to the expected direction should happen soon. Hence, we assume that the rotor does not
-		// move much further backwards.
-		// Do not interpolate: use a fixed rotor position estimate, but don't estimate it
-		// at the middle of the current hall position; estimate it stays at barely where it is,
-		// close to the edge of the expected hall.
+
+		// Just no interpolation.
+
 		illegal_hall_err_cnt += 2;
 
 		rotor_ang[mc] = base_hall_aims[hall] + timing_shift;
-
-		if(enable_unexp_dir_estimation)
-		{
-			if(sp_v > 0)
-				rotor_ang[mc] += 20*ANG_1_DEG;
-			else if(sp_v < 0)
-				rotor_ang[mc] -= 20*ANG_1_DEG;
-		}
-
 		interp_ang_per_timeunit[mc] = 0;
 		interp_time_left[mc] = 0;
-
 
 	}
 	else
@@ -560,11 +607,9 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 		illegal_hall_err_cnt += 50;
 
-		error(57);
-
 	}
 
-	if(illegal_hall_err_cnt > 50*50)
+	if(illegal_hall_err_cnt > 20*50)
 	{
 		MC0_DIS_GATE();
 		MC1_DIS_GATE();
@@ -648,18 +693,8 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 //	avgd_err_id = (65535*(int64_t)avgd_err_id + (int64_t)(abso(err_id)<<8))>>16;
 //	avgd_err_iq = (65535*(int64_t)avgd_err_iq + (int64_t)(abso(err_iq)<<8))>>16;
 
-	static int32_t errint_id[2], errint_iq[2];
-
-	if(sp_velo[mc] == 0)
-	{
-		errint_id[mc] = 0;
-		errint_iq[mc] = 0;
-	}
-	else
-	{
-		errint_id[mc] += err_id;
-		errint_iq[mc] += err_iq;
-	}
+	errint_id[mc] += err_id;
+	errint_iq[mc] += err_iq;
 
 	if(errint_id[mc] > max_errint) errint_id[mc] = max_errint;
 	if(errint_id[mc] < -max_errint) errint_id[mc] = -max_errint;
@@ -832,7 +867,7 @@ void bldc1_inthandler()
 		error(16);
 	}
 
-	bldc_handler(1, ib, ic, hall_loc[MC0_HALL_CBA()]);
+	bldc_handler(1, ib, ic, hall_loc[MC1_HALL_CBA()]);
 }
 
 
@@ -1046,6 +1081,7 @@ void bldc_test()
 */
 
 		uart_print_string_blocking(" velo = "); o_itoa32(dbg_velo, printbuf); uart_print_string_blocking(printbuf);
+		uart_print_string_blocking(" score = "); o_itoa32(dbg_score, printbuf); uart_print_string_blocking(printbuf);
 		uart_print_string_blocking("\r\n");
 
 
@@ -1054,7 +1090,6 @@ void bldc_test()
 			uart_print_string_blocking(" velo_p = "); o_utoa32(velo_p, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(" velo_i = "); o_utoa32(velo_i, printbuf); uart_print_string_blocking(printbuf);
 
-			uart_print_string_blocking(" unexp = "); o_itoa32(enable_unexp_dir_estimation, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(" interp = "); o_itoa32(enable_interp, printbuf); uart_print_string_blocking(printbuf);
 
 			
@@ -1077,39 +1112,47 @@ void bldc_test()
 			else if(cmd == '1')
 			{
 				sp_velo[0] = -800;
+				sp_velo[1] = -800;
 			}
 			else if(cmd == '2')
 			{
 				sp_velo[0] = -400;
+				sp_velo[1] = -400;
 			}
 			else if(cmd == '3')
 			{
 				sp_velo[0] = -200;
+				sp_velo[1] = -200;
 			}
 			else if(cmd == '4')
 			{
 				sp_velo[0] = -100;
+				sp_velo[1] = -100;
 			}
 			else if(cmd == '5')
 			{
 				sp_velo[0] = 0;
+				sp_velo[1] = 0;
 			}
 			else if(cmd == '6')
 			{
 				sp_velo[0] = 100;
-
+				sp_velo[1] = 100;
 			}
 			else if(cmd == '7')
 			{
 				sp_velo[0] = 200;
+				sp_velo[1] = 200;
 			}
 			else if(cmd == '8')
 			{
 				sp_velo[0] = 400;
+				sp_velo[1] = 400;
 			}
 			else if(cmd == '9')
 			{
 				sp_velo[0] = 800;
+				sp_velo[1] = 800;
 			}
 			else if(cmd == 'q')
 			{
@@ -1133,8 +1176,6 @@ void bldc_test()
 			}
 			else if(cmd == 'e')
 			{
-				enable_unexp_dir_estimation = !enable_unexp_dir_estimation;
-				print = 1;
 			}
 			else if(cmd == 'r')
 			{
@@ -1142,8 +1183,9 @@ void bldc_test()
 			else if(cmd == 'a')
 			{
 				motor_enabled[0] = 1;
+				motor_enabled[1] = 1;
 				MC0_EN_GATE();
-//				MC1_EN_GATE();
+				MC1_EN_GATE();
 			}
 			else if(cmd == 's')
 			{
