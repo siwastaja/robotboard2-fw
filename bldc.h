@@ -45,6 +45,9 @@ void motor_torque_lim(int m, int percent);
 // Returns measured current converted to torque 0-100%
 int get_motor_torque(int m);
 
+int get_jerk_status(int m);
+
+
 // Completely frees the motor by floating the windings. Also does what motor_stop_now does.
 void motor_release(int m);
 

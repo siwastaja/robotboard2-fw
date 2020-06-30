@@ -9,6 +9,16 @@
 #include "../robotsoft/datatypes.h" // ANG_xx_DEG
 #include "audio.h"
 
+#ifdef BLDC_TEST
+#define TEST_VOLATILE volatile
+#else
+#define TEST_VOLATILE
+#endif
+
+
+#define MAX_CURRENT_LIMIT 6000
+static int current_limit = MAX_CURRENT_LIMIT/2;
+
 #define PWM_MAX 8192
 #define PWM_MID (PWM_MAX/2)
 
@@ -28,11 +38,11 @@
 #define DLED_ON() {}
 
 
-volatile int timing_shift = 0; //5800*65536; // hall sensors are not exactly where you could think they are.
-
-volatile int precise_curr_lim; // if exceeded, the duty cycle multiplier is kept (not increased like normally)
-volatile int higher_curr_lim;  // if exceeded, the duty cycle multiplier is lowered
-volatile int highest_curr_lim;
+#ifdef BLDC_TEST
+volatile int timing_shift = 0;
+#else
+#define timing_shift 0
+#endif
 
 /*
 	three adjacent hall io pins (active low) form a 3-bit number which can be used to index hall_loc table,
@@ -49,18 +59,7 @@ const int hall_loc[8] =
  2, // 110
  -1  // 111  ERROR
 };
-/*
-{
- -1, // 000  ERROR
- 1, // 001
- 3, // 010
- 2, // 011
- 5, // 100
- 0, // 101  Middle hall active - we'll call this zero position
- 4, // 110
- -1  // 111  ERROR
-};
-*/
+
 #define PH120SHIFT (1431655765UL)  // 120 deg shift between the phases in the 32-bit range.
 #define PH90SHIFT (1073741824UL)   // 90 deg shift between the phases in the 32-bit range.
 #define PH60SHIFT (715827882UL) 
@@ -79,37 +78,6 @@ const int base_hall_aims[6] =
 	PH120SHIFT*2,
 	PH120SHIFT*2+PH120SHIFT/2
 };
-
-/*
-The sine table is indexed with 8 MSBs of uint32; this way, a huge resolution is implemented for the frequency,
-since the frequency is a term added to the indexing each round.
-
-Sine table is 256 long. It is pointed to by the MSByte of uint32_t which rolls over, for
-good resolution of the fundamental frequency.
-
-*/
-
-const int sine[256] =
-{
-0,804,1607,2410,3211,4011,4807,5601,6392,7179,7961,8739,9511,10278,11038,11792,
-12539,13278,14009,14732,15446,16150,16845,17530,18204,18867,19519,20159,20787,21402,22004,22594,
-23169,23731,24278,24811,25329,25831,26318,26789,27244,27683,28105,28510,28897,29268,29621,29955,
-30272,30571,30851,31113,31356,31580,31785,31970,32137,32284,32412,32520,32609,32678,32727,32757,
-32767,32757,32727,32678,32609,32520,32412,32284,32137,31970,31785,31580,31356,31113,30851,30571,
-30272,29955,29621,29268,28897,28510,28105,27683,27244,26789,26318,25831,25329,24811,24278,23731,
-23169,22594,22004,21402,20787,20159,19519,18867,18204,17530,16845,16150,15446,14732,14009,13278,
-12539,11792,11038,10278,9511,8739,7961,7179,6392,5601,4807,4011,3211,2410,1607,804,
-0,-804,-1607,-2410,-3211,-4011,-4807,-5601,-6392,-7179,-7961,-8739,-9511,-10278,-11038,-11792,
--12539,-13278,-14009,-14732,-15446,-16150,-16845,-17530,-18204,-18867,-19519,-20159,-20787,-21402,-22004,-22594,
--23169,-23731,-24278,-24811,-25329,-25831,-26318,-26789,-27244,-27683,-28105,-28510,-28897,-29268,-29621,-29955,
--30272,-30571,-30851,-31113,-31356,-31580,-31785,-31970,-32137,-32284,-32412,-32520,-32609,-32678,-32727,-32757,
--32767,-32757,-32727,-32678,-32609,-32520,-32412,-32284,-32137,-31970,-31785,-31580,-31356,-31113,-30851,-30571,
--30272,-29955,-29621,-29268,-28897,-28510,-28105,-27683,-27244,-26789,-26318,-25831,-25329,-24811,-24278,-23731,
--23169,-22594,-22004,-21402,-20787,-20159,-19519,-18867,-18204,-17530,-16845,-16150,-15446,-14732,-14009,-13278,
--12539,-11792,-11038,-10278,-9511,-8739,-7961,-7179,-6392,-5601,-4807,-4011,-3211,-2410,-1607,-804
-};
-
-
 
 void set_curr_lim(int ma)
 {
@@ -169,85 +137,45 @@ volatile int32_t curr_info_ma[2];
 uint32_t bldc_pos_set[2];
 uint32_t bldc_pos[2];
 
-volatile int dbg_mult;
-volatile int32_t pid_int_info;
-
 int run[2] = {0};
 int wanna_stop[2] = {0};
 
-#if 0
-// Old test code
-volatile int go;
-volatile int gospeed = 12;
-void bldc_1khz()
-{
-	static int cnt = 0;
-	if(++cnt > gospeed)
+#ifdef BLDC_TEST
+	#define TRACE_LEN 2048
+	int trace_at = -1;
+
+	typedef struct __attribute__((packed))
 	{
-		cnt = 0;
+		uint8_t hall;
+		uint8_t rotor_ang;
+		int16_t ia;
+		int16_t ib;
+		int16_t ic;
+		int16_t ialpha;
+		int16_t ibeta;
+		int16_t id;
+		int16_t sp_id;
+		int16_t iq;
+		int16_t sp_iq;
+		int16_t cmd_alpha;
+		int16_t cmd_beta;
+		uint16_t pwma;
+		uint16_t pwmb;
+		uint16_t pwmc;
+		int32_t errint_id;
+		int32_t errint_iq;
+	} trace_elem_t;
 
-		if(go == 1)
-		{
-			bldc_pos_set[0] += 32;
-			bldc_pos_set[1] += 32;
-		}
-		else if(go == 2)
-		{
-			bldc_pos_set[0] -= 32;
-			bldc_pos_set[1] -= 32;
-		}
-	}
-}
+	volatile trace_elem_t trace[TRACE_LEN];
 #endif
-
-//#define STOP_LEN 6000 // approx half a second.
-#define STOP_LEN 9000
-#define STOP_THRESHOLD (SUBSTEPS*3/2)
-
-volatile int dbg_err0, dbg_err1, dbg_sin_mult, dbg_m;
-
-#define TRACE_LEN 2048
-int trace_at = -1;
-
-typedef struct __attribute__((packed))
-{
-	uint8_t hall;
-	uint8_t rotor_ang;
-	int16_t ia;
-	int16_t ib;
-	int16_t ic;
-	int16_t ialpha;
-	int16_t ibeta;
-	int16_t id;
-	int16_t sp_id;
-	int16_t iq;
-	int16_t sp_iq;
-	int16_t cmd_alpha;
-	int16_t cmd_beta;
-	uint16_t pwma;
-	uint16_t pwmb;
-	uint16_t pwmc;
-	int32_t errint_id;
-	int32_t errint_iq;
-} trace_elem_t;
-
-volatile trace_elem_t trace[TRACE_LEN];
-
-
-volatile int latest_ia, latest_ib, latest_ic;
-volatile int max_ia, max_ib, max_ic;
-volatile int min_ia, min_ib, min_ic;
-//volatile int sp_ib, sp_ic;
-
-volatile int dbg_pwma, dbg_pwmb, dbg_pwmc;
 
 // FOC current control loop is fairly forgiving and easy to tune to work well-enough.
 // If even quicker response is needed, I suggest adding feedforward here, too, then tune
 // carefully.
 // plant process variable = measured current. setpoint = desired current. plant output = pwm duty
 // The loop is decoupled from the rotation by the FOC transformations
-volatile int cc_p = 24000;
-volatile int cc_i = 1200;
+TEST_VOLATILE int cc_p = 24000;
+TEST_VOLATILE int cc_i = 1200;
 
 // Velocity control loop is very difficult due to very low speeds, low hall resolution,
 // and a lot of momentum in the robot due to the shape.
@@ -260,53 +188,51 @@ volatile int cc_i = 1200;
 // plant setpoint = desired wheel velocity
 // plant output = desired current (iq) to the FOC current control loop
 
-volatile int velo_fw = 2400;
-volatile int velo_acc_fw = 200000;
-volatile int velo_p = 6000;
-int velo_p_min = 150;
-volatile int velo_i = 10;
-volatile int velo_d = 0;
 
-volatile int motor_enabled[2];
-volatile int sp_velo[2];
-volatile int dbg_velo;
+TEST_VOLATILE int velo_fw = 2400;
+TEST_VOLATILE int velo_acc_fw = 200000;
+TEST_VOLATILE int velo_p = 3000;
+TEST_VOLATILE int velo_i = 10;
+TEST_VOLATILE int velo_d = 0;
 
+TEST_VOLATILE int motor_enabled[2];
+TEST_VOLATILE int sp_velo[2];
+
+#ifdef BLDC_TEST
 volatile int enable_interp = 1;
+#else
+#define enable_interp 1
+#endif
 
-
-volatile int mode;
-
-volatile int max_errint;
+// Calculates error integral saturation value for the FOC current PI loop
+static int max_errint;
 static void calc_max_errint()
 {
-	#define MAX_PWM_EXCURSION_BY_I 5000
 	if(cc_i == 0)
 		max_errint = 0;
 	else
-		max_errint = 65536/cc_i * MAX_PWM_EXCURSION_BY_I;
+		max_errint = 65536/cc_i * current_limit;
 }
 
-volatile int max_errint_v;
+// Calculates error integral saturation value for the velocity loop
+static int max_errint_v;
 static void calc_max_errint_v()
 {
-	#define MAX_CURR_COMMAND_BY_I 4000
 	if(velo_i == 0)
 		max_errint_v = 0;
 	else
-		max_errint_v = 65536/velo_i * MAX_CURR_COMMAND_BY_I;
+		max_errint_v = 65536/velo_i * current_limit;
 }
 
+// If the jerk (wheel oscillation) status increases this value even brifly, error() is generated right at the interrupt handler
+#define JERK_STATUS_ERROR_OUT 120000
 
-// To help tuning PI
-volatile int32_t avgd_err_id;
-volatile int32_t avgd_err_iq;
-
-volatile uint32_t dbg_rotor_ang;
-volatile int dbg_rotcos, dbg_rotsin;
-
-volatile int stop_state_dbg[2];
-
-volatile int dbg_score;
+static int jerk_status[2];
+int ITCM get_jerk_status(int m)
+{
+	if(m < 0 || m > 1) error(124);
+	return jerk_status[m];
+}
 
 static int32_t velo[2];
 
@@ -314,8 +240,6 @@ static int32_t velo[2];
 // Maximum possible calculated this way would be 1.0 (when dt=1, minimum possible value)
 // For fixed-point implementation, large nominator is used, defined here:
 #define VELO_NOM 16777216
-
-volatile int velo_p_bypass[2];
 
 void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 {
@@ -336,8 +260,6 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	static int32_t errint_v[2];
 	static int32_t prev_err_v[2];
 
-//	static int velo_p_bypass[2];
-
 
 	cur_time[mc]++;
 
@@ -349,7 +271,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	sp_iq = 0;
 
 
-	int32_t sp_v = sp_velo[mc]; // read the volatile var once here
+	int32_t sp_v = sp_velo[mc];
 
 
 	// positive velocity setpoint = negative iq = hall,rotor_ang values increase
@@ -480,20 +402,13 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 	if(dir_changes[mc] > 0) dir_changes[mc]--;
 
+	jerk_status[mc] = dir_changes[mc];
 
-	if(dir_changes[mc] < 5000)
+	if(dir_changes[mc] > JERK_STATUS_ERROR_OUT)
 	{
-		if((cur_time[mc]&0xf) == 0xf)
-		{
-			if(velo_p_bypass[mc] < velo_p) velo_p_bypass[mc]++;
-		}
-	}
-	else if(dir_changes[mc] > 20000)
-	{
-		beep(75, 800, -600, 30);
-		velo_p_bypass[mc] = (velo_p_bypass[mc] * 3)>>2;
-		if(velo_p_bypass[mc] < velo_p_min) velo_p_bypass[mc] = velo_p_min;
-		dir_changes[mc] -= 10000;
+		MC0_DIS_GATE();
+		MC1_DIS_GATE();
+		error(57);
 	}
 
 	// 20000 = tiny jiggle which may happen at normal-ish transients
@@ -686,13 +601,20 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	static int32_t current[2];
 
 	static int32_t sp_acc[2];
+	static int32_t der_v[2];
+
 	// Velocity setpoint derivator loop (detect amount of acceleration command)
+	// Error derivator (calculates the input for the d term more rarely than the actual loop runs at)
 	// Run every 64 cycles, i.e. at 191Hz
 	// Whenever this runs, the next one (velocity control loop) also runs
 	if((cur_time[mc] & 0x3f) == 0x3f)
 	{
 		sp_acc[mc] = sp_v - prev_sp_v[mc];
 		prev_sp_v[mc] = sp_v;
+
+		int32_t err_v = sp_v - velo[mc];
+		der_v[mc] = err_v - prev_err_v[mc];
+		prev_err_v[mc] = err_v;
 	}
 	// Velocity control loop
 	// Run every 16 cycles, i.e. at 763Hz
@@ -701,26 +623,23 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	{
 		int32_t err_v = sp_v - velo[mc];
 
-		int32_t der_v = err_v - prev_err_v[mc];
-		prev_err_v[mc] = err_v;
-
 		errint_v[mc] += err_v;
 
 		if(errint_v[mc] > max_errint_v) errint_v[mc] = max_errint_v;
 		if(errint_v[mc] < -max_errint_v) errint_v[mc] = -max_errint_v;
 
-		current[mc] = 
+		int32_t now_current = 
 		       (((int64_t)velo_fw * (int64_t)sp_v)>>16) +
 		       (((int64_t)velo_acc_fw * (int64_t)sp_acc[mc])>>16) +
-		       (((int64_t)velo_p_bypass[mc]  * (int64_t)err_v)>>16) +
+		       (((int64_t)velo_p  * (int64_t)err_v)>>16) +
 		       (((int64_t)velo_i  * (int64_t)errint_v[mc])>>16) +
-		       (((int64_t)velo_d  * (int64_t)der_v)>>16);
+		       (((int64_t)velo_d  * (int64_t)der_v[mc])>>16);
 
-		#define current_limit 4000
+		// A bit of IIR filter
+		current[mc] = (current[mc] + now_current)>>1;
 
 		if(current[mc] > current_limit) current[mc] = current_limit;
 		else if(current[mc] < -current_limit) current[mc] = -current_limit;
-
 
 	}
 
@@ -875,7 +794,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	}
 
 
-/*
+#ifdef BLDC_TEST
 	static int decim;
 	if(trace_at >= 0)
 	{
@@ -906,8 +825,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 				trace_at = -1;
 		}
 	}
-
-*/
+#endif
 
 }
 
@@ -1057,7 +975,7 @@ void bldc_print_debug()
 	DBG_PR_VAR_I32(dbg_err1);
 }
 
-#if 1
+#ifdef BLDC_TEST
 void bldc_test()
 {
 
@@ -1166,16 +1084,6 @@ void bldc_test()
 //		uart_print_string_blocking(" score = "); o_itoa32(dbg_score, printbuf); uart_print_string_blocking(printbuf);
 //		uart_print_string_blocking("\r\n");
 
-		static int kakka;
-
-		if(++kakka == 100)
-		{
-			uart_print_string_blocking(" p_bp[0] = "); o_itoa32(velo_p_bypass[0], printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking(" p_bp[1] = "); o_itoa32(velo_p_bypass[1], printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking("\r\n");
-			kakka =0;
-		}
-
 		if(print)
 		{		
 			uart_print_string_blocking(" velo_fw = "); o_utoa32(velo_fw, printbuf); uart_print_string_blocking(printbuf);
@@ -1193,18 +1101,27 @@ void bldc_test()
 			print = 0;
 		}
 
-		if(cur_velo < velotarg-8)
-			cur_velo+=8;
+		if(cur_velo < velotarg-16)
+			cur_velo+=16;
 
-		if(cur_velo > velotarg+8)
-			cur_velo-=8;
+		if(cur_velo > velotarg+16)
+			cur_velo-=16;
 
 		sp_velo[0] = cur_velo;
 		sp_velo[1] = moodo?-cur_velo:cur_velo;
 
 
+		int jerk0 = get_jerk_status(0);
+		int jerk1 = get_jerk_status(1);
 
-		for(int i=0; i<8; i++)
+		if(jerk0 > 50000 || jerk1 > 50000)
+		{
+			motor_enabled[0] = 0;
+			motor_enabled[1] = 0;
+		}
+
+
+		for(int i=0; i<6; i++)
 		{
 			delay_us(50);
 
@@ -1212,19 +1129,19 @@ void bldc_test()
 
 			if(cmd == '1')
 			{
-				velotarg = -200*256;
+				velotarg = -320*256;
 			}
 			else if(cmd == '2')
 			{
-				velotarg = -100*256;
+				velotarg = -160*256;
 			}
 			else if(cmd == '3')
 			{
-				velotarg = -50*256;
+				velotarg = -80*256;
 			}
 			else if(cmd == '4')
 			{
-				velotarg = -25*256;
+				velotarg = -40*256;
 			}
 			else if(cmd == '5' || cmd == '0')
 			{
@@ -1232,19 +1149,19 @@ void bldc_test()
 			}
 			else if(cmd == '6')
 			{
-				velotarg = 25*256;
+				velotarg = 40*256;
 			}
 			else if(cmd == '7')
 			{
-				velotarg = 50*256;
+				velotarg = 80*256;
 			}
 			else if(cmd == '8')
 			{
-				velotarg = 100*256;
+				velotarg = 160*256;
 			}
 			else if(cmd == '9')
 			{
-				velotarg = 200*256;
+				velotarg = 320*256;
 			}
 			else if(cmd == 'q')
 			{
