@@ -79,33 +79,6 @@ const int base_hall_aims[6] =
 	PH120SHIFT*2+PH120SHIFT/2
 };
 
-void set_curr_lim(int ma)
-{
-	static int prev_val = 9999999;
-
-	if(ma == prev_val)
-		return;
-
-	prev_val = ma;
-
-	if(ma < 0 || ma > 25000)
-		error(124);
-
-	int lim = (7*ma)/8+200;
-	int hilim = (6*lim)/5+500;
-	int highestlim = (3*lim)/2+2000;
-
-	if(lim > 30000) lim = 30000;
-	if(hilim > 30000) hilim = 30000;
-	if(highestlim > 30000) highestlim = 30000;
-
-	DIS_IRQ();
-	precise_curr_lim = lim;
-	higher_curr_lim = hilim;
-	highest_curr_lim = highestlim;
-	ENA_IRQ();
-}
-
 
 
 volatile int32_t curr_info_ma[2];
@@ -134,7 +107,6 @@ volatile int32_t curr_info_ma[2];
 #define I_SHIFT 12
 #define D_SHIFT 4
 
-uint32_t bldc_pos_set[2];
 uint32_t bldc_pos[2];
 
 int run[2] = {0};
@@ -182,18 +154,18 @@ TEST_VOLATILE int cc_i = 1200;
 // Feedforward and acceleration feedforward should do as much as possible.
 // Tune the loop by setting p, i, d all to zero. Adjust the two feedforwards to
 // give good approximate speed response over real-world usage (with actual loads)
-// without massive overshoot or massive undershoot.
+// without massive overshoot or massive undershoot (velo_acc_ff), or massively overspeeding or underspeeding (velo_ff).
 // Then bring up P, I, D like you are taught to do.
 // plant process variable = measured wheel velocity (from the hall sensors)
 // plant setpoint = desired wheel velocity
 // plant output = desired current (iq) to the FOC current control loop
 
 
-TEST_VOLATILE int velo_fw = 2400;
-TEST_VOLATILE int velo_acc_fw = 200000;
+TEST_VOLATILE int velo_ff = 2400;
+TEST_VOLATILE int velo_acc_ff = 200000;
 TEST_VOLATILE int velo_p = 3000;
 TEST_VOLATILE int velo_i = 10;
-TEST_VOLATILE int velo_d = 0;
+TEST_VOLATILE int velo_d = 1000;
 
 TEST_VOLATILE int motor_enabled[2];
 TEST_VOLATILE int sp_velo[2];
@@ -218,10 +190,12 @@ static void calc_max_errint()
 static int max_errint_v;
 static void calc_max_errint_v()
 {
+	// Formula by simple testing:
+	// 65536/velo_i * current_limit  leads to actual iq reching 63% of current limit
 	if(velo_i == 0)
 		max_errint_v = 0;
 	else
-		max_errint_v = 65536/velo_i * current_limit;
+		max_errint_v = 110000/velo_i * current_limit;
 }
 
 // If the jerk (wheel oscillation) status increases this value even brifly, error() is generated right at the interrupt handler
@@ -231,10 +205,12 @@ static int jerk_status[2];
 int ITCM get_jerk_status(int m)
 {
 	if(m < 0 || m > 1) error(124);
-	return jerk_status[m];
+	return (100*jerk_status[m])/JERK_STATUS_ERROR_OUT;
 }
 
 static int32_t velo[2];
+
+static int32_t iq_meas[2]; // measured IQ times 256 (IIR filtered)
 
 // Velocity is calculated as 1/dt, where dt = timesteps of 1/12.2kHz
 // Maximum possible calculated this way would be 1.0 (when dt=1, minimum possible value)
@@ -375,6 +351,8 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 		prev_dir[mc] = 0;
 
+		bldc_pos[mc] += SUBSTEPS;
+
 	}
 	else if(hall == hall_backward)
 	{
@@ -390,6 +368,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 		prev_dir[mc] = 1;
 
+		bldc_pos[mc] -= SUBSTEPS;
 	}
 
 	// dt (time units)  dt (ms)  dir_changes increase by
@@ -421,9 +400,6 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 
 
-	if(mc == 0)
-		dbg_velo = velo[mc];
-
 	int pwma, pwmb, pwmc;
 
 	if(!motor_enabled[mc])
@@ -436,6 +412,8 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		errint_iq[mc] = 0;
 
 		errint_v[mc] = 0;
+
+		iq_meas[mc] = (iq_meas[mc]*255 + 0*256)>>8;
 
 		// Track rotor_ang so that code interpolating on that is on the right track whenever motor is enabled again
 		if(hall >= 0 && hall <= 5)
@@ -629,8 +607,8 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		if(errint_v[mc] < -max_errint_v) errint_v[mc] = -max_errint_v;
 
 		int32_t now_current = 
-		       (((int64_t)velo_fw * (int64_t)sp_v)>>16) +
-		       (((int64_t)velo_acc_fw * (int64_t)sp_acc[mc])>>16) +
+		       (((int64_t)velo_ff * (int64_t)sp_v)>>16) +
+		       (((int64_t)velo_acc_ff * (int64_t)sp_acc[mc])>>16) +
 		       (((int64_t)velo_p  * (int64_t)err_v)>>16) +
 		       (((int64_t)velo_i  * (int64_t)errint_v[mc])>>16) +
 		       (((int64_t)velo_d  * (int64_t)der_v[mc])>>16);
@@ -682,6 +660,9 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 	int iq = (i_beta  * rotcos - i_alpha * rotsin)>>SIN_LUT_RESULT_SHIFT;
 
 	// Park done! Didn't need a library for that either.
+
+	// IIR filter for current measurement
+	iq_meas[mc] = (iq_meas[mc]*255 + iq*256)>>8;
 
 	// Now the PI control loops for id, iq
 
@@ -795,6 +776,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 
 
 #ifdef BLDC_TEST
+/*
 	static int decim;
 	if(trace_at >= 0)
 	{
@@ -825,6 +807,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 				trace_at = -1;
 		}
 	}
+*/
 #endif
 
 }
@@ -876,103 +859,47 @@ void bldc_safety_shutdown()
 
 }
 
-void motor_run(int m) __attribute__((section(".text_itcm")));
-void motor_run(int m)
+void ITCM enable_motors()
 {
-	if(m < 0 || m > 1) error(120);
+	MC0_EN_GATE();
+	MC1_EN_GATE();
 
-	if(m==0)
-		MC0_EN_GATE();
-	else
-		MC1_EN_GATE();
-
-	DIS_IRQ();
-	bldc_pos_set[m] = bldc_pos[m];
-	run[m] = 1;
-	wanna_stop[m] = 0;
-	ENA_IRQ();
+	motor_enabled[0] = 1;
+	motor_enabled[1] = 1;
 }
 
-void motor_run_a_bit(int m, int amount) __attribute__((section(".text_itcm")));
-void motor_run_a_bit(int m, int amount)
+void ITCM disable_motors()
 {
-	if(m < 0 || m > 1) error(120);
+	MC0_DIS_GATE();
+	MC1_DIS_GATE();
 
-	if(m==0)
-		MC0_EN_GATE();
-	else
-		MC1_EN_GATE();
-
-	DIS_IRQ();
-	bldc_pos_set[m] = bldc_pos[m] + amount;
-	run[m] = 1;
-	wanna_stop[m] = 1;
-	ENA_IRQ();
+	motor_enabled[0] = 0;
+	motor_enabled[1] = 0;
 }
 
-
-void motor_let_stop(int m) __attribute__((section(".text_itcm")));
-void motor_let_stop(int m)
-{
-	if(m < 0 || m > 1) error(121);
-	wanna_stop[m] = 1;
-}
-
-void motor_stop_now(int m) __attribute__((section(".text_itcm")));
-void motor_stop_now(int m)
-{
-	if(m < 0 || m > 1) error(122);
-	DIS_IRQ();
-	run[m] = 0;
-	bldc_pos_set[m] = bldc_pos[m];
-	ENA_IRQ();
-}
-
-void motor_torque_lim(int m, int percent) __attribute__((section(".text_itcm")));
-void motor_torque_lim(int m, int percent)
+void ITCM motor_torque_lim(int m, int percent)
 {
 	if(m < 0 || m > 1 || percent<0 || percent>100) error(122);
-
-	int curr = (percent*25000)/100;
-
-
-	set_curr_lim(curr);
+	
+	current_limit = (percent*MAX_CURRENT_LIMIT)/100;
+	calc_max_errint();
+	calc_max_errint_v();
 }
 
-void motor_release(int m) __attribute__((section(".text_itcm")));
-void motor_release(int m)
+int ITCM get_motor_torque(int m)
 {
-	if(m < 0 || m > 1) error(123);
+	if(m < 0 || m > 1) error(122);
 
-	if(m==0)
-		MC0_DIS_GATE();
-	else
-		MC1_DIS_GATE();
-
-	run[m] = 0;
-	bldc_pos_set[m] = bldc_pos[m];
+	return (100*(abso(iq_meas[m])>>8))/MAX_CURRENT_LIMIT;
 }
 
-int get_motor_torque(int m) __attribute__((section(".text_itcm")));
-int get_motor_torque(int m)
+void ITCM set_motor_velocities(int v1, int v2)
 {
-	if(m < 0 || m > 1) error(124);
-	return (curr_info_ma[m]*100)/25000;
-}
+	if(v1 < -400*256 || v1 > 400*256 || v2 < -400*256 || v2 > 400*256)
+		error(123);
 
-void bldc_print_debug()
-{
-	uart_print_string_blocking("\r\n");
-	DBG_PR_VAR_I32(run[0]);
-	DBG_PR_VAR_I32(run[1]);
-	DBG_PR_VAR_I32(wanna_stop[0]);
-	DBG_PR_VAR_I32(wanna_stop[1]);
-	DBG_PR_VAR_I32(bldc_pos_set[0]);
-	DBG_PR_VAR_I32(bldc_pos[0]);
-	DBG_PR_VAR_I32(dbg_err0);
-	DBG_PR_VAR_I32(bldc_pos_set[1]);
-	DBG_PR_VAR_I32(bldc_pos[1]);
-	DBG_PR_VAR_I32(dbg_err1);
+	sp_velo[0] = v1;
+	sp_velo[1] = v2;
 }
 
 #ifdef BLDC_TEST
@@ -994,6 +921,9 @@ void bldc_test()
 	int cur_velo = 0;
 	int velotarg = 0;
 	int moodo = 0;
+
+	motor_torque_lim(0, 90);
+	motor_torque_lim(1, 90);
 	while(1)
 	{
 		//profile_cpu_blocking_20ms();
@@ -1086,8 +1016,8 @@ void bldc_test()
 
 		if(print)
 		{		
-			uart_print_string_blocking(" velo_fw = "); o_utoa32(velo_fw, printbuf); uart_print_string_blocking(printbuf);
-			uart_print_string_blocking(" velo_acc_fw = "); o_utoa32(velo_acc_fw, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" velo_ff = "); o_utoa32(velo_ff, printbuf); uart_print_string_blocking(printbuf);
+			uart_print_string_blocking(" velo_acc_ff = "); o_utoa32(velo_acc_ff, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(" velo_p = "); o_utoa32(velo_p, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(" velo_i = "); o_utoa32(velo_i, printbuf); uart_print_string_blocking(printbuf);
 			uart_print_string_blocking(" velo_d = "); o_utoa32(velo_d, printbuf); uart_print_string_blocking(printbuf);
@@ -1114,10 +1044,20 @@ void bldc_test()
 		int jerk0 = get_jerk_status(0);
 		int jerk1 = get_jerk_status(1);
 
-		if(jerk0 > 50000 || jerk1 > 50000)
+		if(jerk0 > 50 || jerk1 > 50)
 		{
 			motor_enabled[0] = 0;
 			motor_enabled[1] = 0;
+		}
+
+
+		static int kak = 0;
+		if(++kak == 200)
+		{
+			uart_print_string_blocking(" t0 = "); o_utoa8_fixed(get_motor_torque(0), printbuf); uart_print_string_blocking(printbuf); 
+			uart_print_string_blocking(" t1 = "); o_utoa8_fixed(get_motor_torque(1), printbuf); uart_print_string_blocking(printbuf); 
+			uart_print_string_blocking("\r\n");
+			kak = 0;
 		}
 
 
@@ -1267,28 +1207,28 @@ void bldc_test()
 			}
 			else if(cmd == 'F')
 			{
-				velo_fw += 200;
+				velo_ff += 200;
 				print = 1;
 			}
 			else if(cmd == 'f')
 			{
-				if(velo_fw > 200)
-					velo_fw -= 200;
+				if(velo_ff > 200)
+					velo_ff -= 200;
 				else
-					velo_fw = 0;
+					velo_ff = 0;
 				print = 1;
 			}
 			else if(cmd == 'G')
 			{
-				velo_acc_fw += 5000;
+				velo_acc_ff += 5000;
 				print = 1;
 			}
 			else if(cmd == 'g')
 			{
-				if(velo_acc_fw > 5000)
-					velo_acc_fw -= 5000;
+				if(velo_acc_ff > 5000)
+					velo_acc_ff -= 5000;
 				else
-					velo_acc_fw = 0;
+					velo_acc_ff = 0;
 				print = 1;
 			}
 
@@ -1458,6 +1398,10 @@ void init_bldc()
 	TIM8->DIER = 1UL<<4 /*Compare 4 interrupt*/;
 	NVIC_SetPriority(TIM8_CC_IRQn, INTPRIO_BLDC);
 	NVIC_EnableIRQ(TIM8_CC_IRQn);
+
+	calc_max_errint();
+	calc_max_errint_v();
+
 
 }
 

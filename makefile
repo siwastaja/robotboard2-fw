@@ -3,7 +3,8 @@
 
 
 DEVUSR = pulu
-DEVIP = 192.168.1.101
+#DEVIP = 192.168.1.101
+DEVIP = 192.168.10.43
 
 CC = arm-none-eabi-gcc
 LD = arm-none-eabi-gcc
@@ -53,6 +54,7 @@ OBJ_O3 = tof_process.o
 #CFLAGS += -DCALIBRATOR_WALL
 
 
+#CFLAGS += -DBLDC_TEST
 
 
 CFLAGS += -DSBC_RASPI

@@ -122,23 +122,21 @@ int is_driving()
 	return run;
 }
 
-static double max_ang_speed = 13.0; // steps per cycle
-static double min_ang_speed = 3.0;
-static double max_lin_speed = 30.0;
-static double min_lin_speed = 5.0;
+static double max_ang_speed = 100.0;
+static double min_ang_speed = 30.0;
+static double max_lin_speed = 200.0;
+static double min_lin_speed = 50.0;
 
 void set_top_speed_max(int old_style_value)
 {
-	max_ang_speed = (double)old_style_value / 5.0;
-	max_lin_speed = (double)old_style_value / 2.0;
+	max_ang_speed = (double)old_style_value;// / 5.0;
+	max_lin_speed = (double)old_style_value*2.0;
 
-//	max_ang_speed = (double)old_style_value / 4.0;
-//	max_lin_speed = (double)old_style_value / 1.2;
 
 	if(max_ang_speed < min_ang_speed) max_ang_speed = min_ang_speed;
 	if(max_lin_speed < min_lin_speed) max_lin_speed = min_lin_speed;
-	if(max_ang_speed > 13.0) max_ang_speed = 13.0;
-	if(max_lin_speed > 60.0) max_lin_speed = 60.0;
+	if(max_ang_speed > 100.0) max_ang_speed = 100.0;
+	if(max_lin_speed > 250.0) max_lin_speed = 250.0;
 }
 
 static int mode_xy;
@@ -1068,6 +1066,23 @@ void drive_freerunning_fsm()
 	gyro_calib_fsm();
 }
 
+#define MANUAL_DRIVE_TIMER_SETVAL  400 // manual drive message received -> this timer value set
+#define MANUAL_DRIVE_SLOWDOWN_TIME 300 // timer has ran down to this value -> start ignoring FAST button, acting slow instead
+#define MANUAL_DRIVE_STOP_TIME     200 // timer has ran down to this value -> ignore all buttons, start slowing down towards stop
+// timer has ran down to 0 -> manual drive is turned off, normal commands are used again
+
+
+static int manual_drive;
+static uint_fast16_t manual_drive_buttons;
+static uint_fast16_t manual_drive_flags;
+
+void drive_manual_drive(s2b_manual_drive_t* msg)
+{
+	manual_drive = MANUAL_DRIVE_TIMER_SETVAL;
+	manual_drive_buttons = msg->buttons;
+	manual_drive_flags = msg->flags;
+}
+
 
 #define DEFAULT_GYROMULT 153322782
 #define MIN_GYROMULT ((2*DEFAULT_GYROMULT)/3)
@@ -1524,6 +1539,7 @@ void drive_handler()
 	int64_t lin_err;
 
 	int reverse = 0;
+	int clockwise = 0;
 
 
 	if(mode_xy)
@@ -1557,7 +1573,6 @@ void drive_handler()
 
 	int32_t ang_err = cur_pos.ang - ang_to_target;
 
-
 	if(mode_xy)
 	{
 		int auto_decision = 0;
@@ -1572,6 +1587,10 @@ void drive_handler()
 			ang_err = (uint32_t)ang_err + (uint32_t)(ANG_180_DEG);
 		}
 	}
+
+	// if rotation auto decision:	
+	clockwise = (ang_err > 0);
+
 
 	static int prev_run;
 
@@ -1676,15 +1695,15 @@ void drive_handler()
 	double max_ang_speed_by_ang_err;
 
 	if(correcting_linear && abso(lin_err) > 100*65536)
-		max_ang_speed_by_ang_err =       0.000000040*(double)abso(ang_err);
+		max_ang_speed_by_ang_err = 0.0 + 0.000000010*(double)abso(ang_err);
 	else
-		max_ang_speed_by_ang_err = 1.0 + 0.000000040*(double)abso(ang_err);
+		max_ang_speed_by_ang_err = 10.0 + 0.000000080*(double)abso(ang_err);
 
 
 	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
 
 	static double lin_speed;
-	double max_lin_speed_by_lin_err = 7.0 + 0.07*(double)abso((lin_err>>16)); // 400mm error -> speed unit 35
+	double max_lin_speed_by_lin_err = 50.0 + 0.22*(double)abso((lin_err>>16)); // 1000mm error -> speed unit 270. 400mm -> 138
 	double max_lin_speed_by_ang_err;
 
 	if(accurot)
@@ -1692,64 +1711,38 @@ void drive_handler()
 		if(abso(ang_err) > 5*ANG_1_DEG)
 			max_lin_speed_by_ang_err = 0.0;
 		else
-			max_lin_speed_by_ang_err = ((double)ANG_1_DEG*40.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 4 units.
+			max_lin_speed_by_ang_err = ((double)ANG_1_DEG*100.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 10 units.
 	}
 	else
 	{
-		if(abso(ang_err) > 20*ANG_1_DEG)
+		if(abso(ang_err) > 15*ANG_1_DEG)
 			max_lin_speed_by_ang_err = 0.0;
 		else
-			max_lin_speed_by_ang_err = ((double)ANG_1_DEG*180.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 18 units.
+			max_lin_speed_by_ang_err = 999.9; // ((double)ANG_1_DEG*200.0) / ((double)abso(ang_err)); // 10 deg error -> max lin speed 20 units.
 	}
 
 
-	// Calculate the target wheel positions to correct the measured angular error
-	// In theory, this movement produces the "correct" end result automatically
-	// However, only the _remaining_ error (by gyro!) is used on each cycle, so the target
-	// wheel position gets better and better.
-	// 180 degree positive turn is -18000 units on both wheels
-	// 18 degree is -1800
-	// 1.8 degree is -180 units
-	// 1 degree is -100 units
-	
-	int32_t delta_mpos_ang[2];
-	int32_t delta_mpos_lin[2];
+	double decided_max_ang_speed = max_ang_speed;
+	if(!correcting_angle) decided_max_ang_speed = 0.0;
+	if(decided_max_ang_speed > max_ang_speed_by_ang_err) decided_max_ang_speed = max_ang_speed_by_ang_err;
+	if(decided_max_ang_speed > max_ang_speed_by_lin_err) decided_max_ang_speed = max_ang_speed_by_lin_err;
 
-	if(abso(ang_err) < 1*ANG_1_DEG)
-	{
-		delta_mpos_ang[0] = 0;
-		delta_mpos_ang[1] = 0;
-	}
-	else
-	{
-		delta_mpos_ang[0] = (ang_err/ANG_0_01_DEG);
-		delta_mpos_ang[1] = (ang_err/ANG_0_01_DEG);
-	}
-
-	if(abso(lin_err) < 10*65536)
-	{
-		delta_mpos_lin[0] = 0;
-		delta_mpos_lin[1] = 0;
-	}
-	else
-	{
-		delta_mpos_lin[0] = lin_err / (int64_t)(wheel_diam[0]/HALL_STEPS_PER_TURN);
-		delta_mpos_lin[1] = -1*lin_err / (int64_t)(wheel_diam[1]/HALL_STEPS_PER_TURN);
-	}
-
-	if(!correcting_angle || ang_speed > max_ang_speed || ang_speed > max_ang_speed_by_ang_err || ang_speed > max_ang_speed_by_lin_err)
+	if(ang_speed > decided_max_ang_speed)
 		ang_speed -= 0.05;
-	else if(correcting_angle)
+	else if(ang_speed < decided_max_ang_speed - 0.07)
 		ang_speed += 0.05;
 
 	if(ang_speed < 0.0) ang_speed = 0.0;
 
+	double decided_max_lin_speed = max_lin_speed;
+	if(!correcting_linear) decided_max_lin_speed = 0.0;
+	if(decided_max_lin_speed > max_lin_speed_by_ang_err) decided_max_lin_speed = max_lin_speed_by_ang_err;
+	if(decided_max_lin_speed > max_lin_speed_by_lin_err) decided_max_lin_speed = max_lin_speed_by_lin_err;
 
-
-	if(!correcting_linear || lin_speed > max_lin_speed || lin_speed > max_lin_speed_by_lin_err || lin_speed > max_lin_speed_by_ang_err)
-		lin_speed -= 0.20;
-	else if(correcting_linear)
-		lin_speed += 0.20;
+	if(lin_speed > decided_max_lin_speed)
+		lin_speed -= 0.40;
+	else if(lin_speed < decided_max_lin_speed - 0.50)
+		lin_speed += 0.40;
 
 	if(lin_speed < 0.0) lin_speed = 0.0;
 
@@ -1793,69 +1786,96 @@ void drive_handler()
 	}
 
 
+	int ang_speed_i = (int)(ang_speed*256.0)*(clockwise?-1:1);
+	int lin_speed_i = (int)(lin_speed*256.0)*(reverse?-1:1);
 
-	static const int max_mpos_err = 4*256;
-	static int max_pos_err_cnt;
-	// We know the target wheel positions, but limit the rate of change
-	int ang_speed_i = (int)ang_speed;
-	int lin_speed_i = (int)lin_speed;
 
-	int manual_drive = 1;
-	if(manual_drive)
+	// joystick-like mode: override calculated ang_speed_i and lin_speed_i
+
+	static int manual_drive_lin_speed;
+	static int manual_drive_ang_speed;
+
+	#define MANUAL_ACCEL 100
+	#define MANUAL_FAST_LIN_SPEED 30000
+	#define MANUAL_SLOW_LIN_SPEED 15000
+	#define MANUAL_FAST_ANG_SPEED 13000
+	#define MANUAL_SLOW_ANG_SPEED 7000
+
+
+	if(manual_drive > 0)
 	{
-		lin_err = 100*65536;
-		ang_err = 10*ANG_1_DEG;
+		manual_drive--;
 
-		lin_speed_i = 0;
-		ang_speed_i = 10;
-		delta_mpos_lin[0] = lin_err / (int64_t)(wheel_diam[0]/HALL_STEPS_PER_TURN);
-		delta_mpos_lin[1] = -1*lin_err / (int64_t)(wheel_diam[1]/HALL_STEPS_PER_TURN);
-		delta_mpos_ang[0] = (ang_err/ANG_0_01_DEG);
-		delta_mpos_ang[1] = (ang_err/ANG_0_01_DEG);
+		int right = manual_drive_buttons & (1<<0);
+		int left  = manual_drive_buttons & (1<<1);
+		int down  = manual_drive_buttons & (1<<2);
+		int up    = manual_drive_buttons & (1<<3);
+		int fast  = manual_drive_buttons & (1<<4);
+
+		static int beep_cnt;
+		beep_cnt++;
+		if((!fast && (beep_cnt&255) == 255) || (fast && (beep_cnt&127) == 127))
+		{
+			beep(100, 2000, 0, 50);
+		}
 
 
-		ang_speed_i = 0;
-		correcting_linear = 1;
-		correcting_angle = 1;
-		motors_enabled = 1000;
+		if(manual_drive < MANUAL_DRIVE_SLOWDOWN_TIME)
+			fast = 0;
+
+		if(manual_drive < MANUAL_DRIVE_STOP_TIME)
+			right=left=down=up=fast = 0;
+
+
+		// pressing opposite directions simultaneously equals pressing neither
+		if(up && down) up = down = 0;
+		if(left && right) left = right = 0;
+
+		// Increment speeds depending on button pressed; decrement if no press
+		if(up)
+			manual_drive_lin_speed += MANUAL_ACCEL;
+		else if(down)
+			manual_drive_lin_speed -= MANUAL_ACCEL;
+		else // neither is pressed - slow down towards 0
+			if(manual_drive_lin_speed != 0) manual_drive_lin_speed += (manual_drive_lin_speed>0)?-MANUAL_ACCEL:MANUAL_ACCEL;
+
+		if(left)
+			manual_drive_ang_speed += MANUAL_ACCEL;
+		else if(right)
+			manual_drive_ang_speed -= MANUAL_ACCEL;
+		else // neither is pressed - slow down towards 0
+			if(manual_drive_ang_speed != 0) manual_drive_ang_speed += (manual_drive_ang_speed>0)?-MANUAL_ACCEL:MANUAL_ACCEL;
+
+		// Ramp speeds down if overspeeding. Speedlimit depends on whether FAST is pressed
+		if(manual_drive_lin_speed > (fast?MANUAL_FAST_LIN_SPEED:MANUAL_SLOW_LIN_SPEED))
+			manual_drive_lin_speed -= MANUAL_ACCEL;
+		else if(manual_drive_lin_speed < (fast?-MANUAL_FAST_LIN_SPEED:-MANUAL_SLOW_LIN_SPEED))
+			manual_drive_lin_speed += MANUAL_ACCEL;
+
+		if(manual_drive_ang_speed > (fast?MANUAL_FAST_ANG_SPEED:MANUAL_SLOW_ANG_SPEED))
+			manual_drive_ang_speed -= MANUAL_ACCEL;
+		else if(manual_drive_ang_speed < (fast?-MANUAL_FAST_ANG_SPEED:-MANUAL_SLOW_ANG_SPEED))
+			manual_drive_ang_speed += MANUAL_ACCEL;
+
+		lin_speed_i = manual_drive_lin_speed;
+		ang_speed_i = manual_drive_ang_speed;
+		motors_enabled = manual_drive;
 
 	}
 
 
-	if(delta_mpos_ang[0] != 0 || delta_mpos_ang[1] != 0 || delta_mpos_lin[0] != 0 || delta_mpos_lin[1] != 0)
+	if(run || manual_drive)
+	{
+		set_motor_velocities(lin_speed_i - ang_speed_i , -lin_speed_i - ang_speed_i);
+	}
+	else
+	{
+		set_motor_velocities(0,0);
+	}
+
+	
+	if(abso(lin_speed_i) > 0 || abso(ang_speed_i) > 0)
 		robot_moves();
-
-	for(int m=0; m<2; m++)
-	{
-		int d_ang = delta_mpos_ang[m];
-		int d_lin = delta_mpos_lin[m];
-
-		if(d_ang > ang_speed_i) d_ang = ang_speed_i;
-		else if(d_ang < -1*ang_speed_i) d_ang = -1*ang_speed_i;
-
-		if(d_lin > lin_speed_i) d_lin = lin_speed_i;
-		else if(d_lin < -1*lin_speed_i) d_lin = -1*lin_speed_i;
-
-		int increment = d_ang + d_lin;
-//		if(m==0) dbg5 = increment; else dbg6 = increment;
-
-		int32_t old_pos_err = mpos[m] - bldc_pos_set[m];
-		uint32_t new_pos = bldc_pos_set[m] + (uint32_t)increment;
-		int32_t new_pos_err = mpos[m] - new_pos;
-
-		// If the error would grow too far, saturate the position. But, allow error-decreasing direction of change.
-		if((new_pos_err > max_mpos_err && abso(new_pos_err) > abso(old_pos_err)) ||
-		   (new_pos_err < -1*max_mpos_err && abso(new_pos_err) > abso(old_pos_err)))
-
-		{
-			max_pos_err_cnt++;
-		}
-		else
-		{
-			bldc_pos_set[m] = new_pos;
-		}
-	}
-
 
 
 #define OBST_THRESHOLD 4
@@ -1866,7 +1886,7 @@ void drive_handler()
 	{
 		stop(3);
 	}
-	else if(run)
+	else if(run && !manual_drive)
 	{
 		if(mode_xy)
 		{
@@ -1889,6 +1909,22 @@ void drive_handler()
 
 			}
 		}
+
+	}
+
+	int jerk0 = get_jerk_status(0);
+	int jerk1 = get_jerk_status(1);
+
+	if(jerk0 > 70 || jerk1 > 70)
+	{
+		beep(500, 100, 0, 70);
+		stop_indicators = 125;
+		#ifdef STOP_LEDS_ON
+		for(int i=0; i<N_SENSORS; i++)
+			led_status(i, RED, LED_MODE_FADE);
+		#endif
+		micronavi_status |= 1UL<<5;
+		stop(8);
 
 	}
 
@@ -1959,6 +1995,12 @@ void drive_handler()
 	int do_start = 0;
 
 	// Then, starting conditions:
+
+	static int prev_manual_drive;
+
+	if(prev_manual_drive == 0 && manual_drive > 0)
+		do_start = 1;
+	prev_manual_drive = manual_drive;
 	if(accurot)
 	{
 		if(ang_err < -2*ANG_1_DEG || ang_err > 2*ANG_1_DEG || lin_err > 40LL*65536LL || lin_err < -40LL*65536LL)
@@ -1981,10 +2023,9 @@ void drive_handler()
 		if(stop_indicators == 0)
 			beep(150, 800, -300, 50);
 
-		motor_torque_lim(0, 90);
-		motor_torque_lim(1, 90);
-		motor_run(0);
-		motor_run(1);
+		motor_torque_lim(0, 50);
+		motor_torque_lim(1, 50);
+		enable_motors();
 		ang_speed = min_ang_speed;
 		lin_speed = min_lin_speed;
 		run = 1;
@@ -1992,8 +2033,8 @@ void drive_handler()
 
 	if(!run)
 	{
-		motor_let_stop(0);
-		motor_let_stop(1);
+//		motor_let_stop(0);
+//		motor_let_stop(1);
 	}
 
 	prev_run = run;
@@ -2010,10 +2051,8 @@ void drive_handler()
 		}
 		else
 		{
-			motor_release(0);
-			motor_release(1);
-//			bldc_pos_set[0] = bldc_pos[0];
-//			bldc_pos_set[1] = bldc_pos[1];
+
+			disable_motors();
 		}
 	}
 

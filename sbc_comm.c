@@ -718,6 +718,13 @@ void parse_rx_packet()
 //			o_utoa8_hex(p_data[i], printbuf); uart_print_string_blocking(printbuf); uart_print_string_blocking(" ");
 //		}
 
+		// TODO: If you want to be helpful and reduce amount of code, add a function pointer to api_board_to_soft.h s2b_message_t, defined in
+		// S2B_MESSAGE_STRUCT. Make that macro define the extern function so that no header is need to be included. Functions should be of the
+		// standard type always with one argument of the message type and void return value. Then, instead of this massive switch-case, check
+		// if that function pointer is non-zero, automagically call it with (correct_type*)p_data
+		// (just like most of the cases are doing right now). Fix those few message types like CMD_MOVE_REL which separately supply
+		// arguments to the function they call, to use the message struct as-is. Parse everything inside those handler functions.
+
 		switch(p_cmdheader->msgid)
 		{
 			case CMD_SUBSCRIBE:
@@ -802,6 +809,12 @@ void parse_rx_packet()
 				case CMD_INJECT_GYROCAL:
 				{
 					drive_inject_gyrocal(&(((s2b_inject_gyrocal_t*)p_data)->gyrocal));
+				}
+				break;
+
+				case CMD_MANUAL_DRIVE:
+				{
+					drive_manual_drive((s2b_manual_drive_t*)p_data);
 				}
 				break;
 /*

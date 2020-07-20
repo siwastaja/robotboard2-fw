@@ -47,3 +47,6 @@ void self_calib(s2b_self_calib_request_t* cmd);
 void drive_inject_gyrocal(gyro_cal_t* gc);
 
 void drive_freerunning_fsm();
+
+void drive_manual_drive(s2b_manual_drive_t* msg);
+
