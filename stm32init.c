@@ -492,6 +492,9 @@ void init_delay_us(uint32_t i)
 // Get the bare minimum ready ASAP so that the charge pump can start.
 void stm32init(void)
 {
+	#include "pwrswitch.h"
+	init_power_outputs();
+
 	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
 //	IO_TO_GPO(GPIOC, 13); // LED
 

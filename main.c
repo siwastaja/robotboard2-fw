@@ -464,10 +464,11 @@ void main()
 	// require battery & gate driver check only for production work,
 	// calibrators run with power supplies & main power switch bypassed
 	int vgplat = VGPLAT_MEAS_TO_MV(adc3.s.bms_mainfet_g_meas);
-	uart_print_string_blocking("Vgplat converted mV = ");
+	uart_print_string_blocking("Vgplat[mV]=");
 	o_utoa16(vgplat, printbuf); uart_print_string_blocking(printbuf);
-	if(vgplat < 6*3000 + 10000)
+	if(vgplat < 6*3000 + 10000) // 6 cells * 3.0V/cell + 10V gate charge pump increase
 	{
+		// Battery is way too dead. Do nothing. New battery is required.
 		beep_blocking(20, 4000, 1500);
 		main_power_enabled = 1; // blink and die
 		while(1);
@@ -527,7 +528,7 @@ void main()
 
 
 
-	uart_print_string_blocking("No terse\r\n\r\n"); 
+	uart_print_string_blocking(" --> No terse!\r\n\r\n"); 
 
 	DBG_PR_VAR_U32_HEX(backup_ram.immediate_5v);
 	backup_ram.immediate_5v = 11;
@@ -541,13 +542,18 @@ void main()
 	DBG_PR_VAR_U32(backup_ram.boot_cnt);
 	DBG_PR_VAR_U32(backup_ram.dummy);
 
-	init_power_outputs();
+	// init_power_outputs(); // moved to early stm32init so that DEFAULT ON outputs won't turn off for too long during FW update
 
 	#ifndef CALIBRATOR
-		//init_imu();
+		#ifndef BLDC_TEST
+			init_imu();
+		#endif
+
 		init_bldc(); // Gives triggers to ADC1. Init ADCs first so they sync correctly.
-		extern void bldc_test();
-		bldc_test();
+		#ifdef BLDC_TEST
+			extern void bldc_test();
+			bldc_test();
+		#endif
 		init_charger(); // Requires working ADC1 data, so init_bldc() first.
 
 		#ifdef EXT_VACUUM
@@ -563,7 +569,6 @@ void main()
 	init_cpu_profiler();
 
 	tof_ctrl_init();
-	uart_print_string_blocking("init ok\r\n"); 
 	#ifdef CALIBRATOR
 
 		#ifdef CALIBRATOR_BOX
@@ -577,6 +582,8 @@ void main()
 	#ifndef CALIBRATOR
 		verify_calibration();
 	#endif
+
+	uart_print_string_blocking("init ok\r\n"); 
 
 	while(1)
 	{
