@@ -111,6 +111,8 @@ void led_status(int sid, uint32_t val, int mode);
 #define ORANGE 0x04dd2a00
 #define RED    0x04ff0000
 #define GREEN  0x0400ee00
+#define BLUE   0x040010ff
+#define MAGENTA 0x04b000ff
 #define LED_MODE_FADE  0
 #define LED_MODE_KEEP  1
 #define LED_MODE_BLINK 2

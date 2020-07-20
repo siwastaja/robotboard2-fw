@@ -1601,7 +1601,7 @@ void drive_handler()
 	}
 
 #ifdef LEDS_ON
-	if(stop_indicators == 0)
+	if(stop_indicators == 0 && !manual_drive)
 	{
 		if(ang_err > 20*ANG_1_DEG && run)
 		{
@@ -1796,11 +1796,14 @@ void drive_handler()
 	static int manual_drive_ang_speed;
 
 	#define MANUAL_ACCEL 100
-	#define MANUAL_FAST_LIN_SPEED 30000
+	#define MANUAL_FAST_LIN_SPEED 35000
 	#define MANUAL_SLOW_LIN_SPEED 15000
-	#define MANUAL_FAST_ANG_SPEED 13000
+	#define MANUAL_FAST_ANG_SPEED 15000
 	#define MANUAL_SLOW_ANG_SPEED 7000
 
+
+#define OBST_THRESHOLD 4
+#define OBST_THRESHOLD_FAR 99999
 
 	if(manual_drive > 0)
 	{
@@ -1811,13 +1814,6 @@ void drive_handler()
 		int down  = manual_drive_buttons & (1<<2);
 		int up    = manual_drive_buttons & (1<<3);
 		int fast  = manual_drive_buttons & (1<<4);
-
-		static int beep_cnt;
-		beep_cnt++;
-		if((!fast && (beep_cnt&255) == 255) || (fast && (beep_cnt&127) == 127))
-		{
-			beep(100, 2000, 0, 50);
-		}
 
 
 		if(manual_drive < MANUAL_DRIVE_SLOWDOWN_TIME)
@@ -1830,6 +1826,67 @@ void drive_handler()
 		// pressing opposite directions simultaneously equals pressing neither
 		if(up && down) up = down = 0;
 		if(left && right) left = right = 0;
+
+
+		// Give some indication about obstacles, and prevent going FAST if going to hit
+
+		static int beep_cnt;
+		beep_cnt++;
+		if((!fast && (beep_cnt&255) == 255) || (fast && (beep_cnt&127) == 127))
+		{
+			if(up && obstacle_front_near > OBST_THRESHOLD)
+			{
+				fast = 0;
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+				#ifdef STOP_LEDS_ON
+				led_status(9, RED, LED_MODE_FADE);
+				led_status(0, RED, LED_MODE_FADE);
+				led_status(1, RED, LED_MODE_FADE);
+				#endif
+			}
+			else if(down && obstacle_back_near > OBST_THRESHOLD)
+			{
+				fast = 0;
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+				#ifdef STOP_LEDS_ON
+				led_status(4, RED, LED_MODE_FADE);
+				led_status(5, RED, LED_MODE_FADE);
+				led_status(6, RED, LED_MODE_FADE);
+				#endif
+			}
+			else if(right && obstacle_left_near > OBST_THRESHOLD)
+			{
+				fast = 0;
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+				#ifdef STOP_LEDS_ON
+				led_status(2, RED, LED_MODE_FADE);
+				led_status(3, RED, LED_MODE_FADE);
+				#endif
+			}
+			else if(left && obstacle_right_near > OBST_THRESHOLD) 
+			{
+				fast = 0;
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+				#ifdef STOP_LEDS_ON
+				led_status(7, RED, LED_MODE_FADE);
+				led_status(8, RED, LED_MODE_FADE);
+				#endif
+			}
+			else
+			{
+				beep(100, 2000, 0, 50);
+
+				for(int i=0; i<N_SENSORS; i++)
+					led_status(i, fast?MAGENTA:BLUE, LED_MODE_FADE);
+
+			}
+		}
+
+
 
 		// Increment speeds depending on button pressed; decrement if no press
 		if(up)
@@ -1878,8 +1935,6 @@ void drive_handler()
 		robot_moves();
 
 
-#define OBST_THRESHOLD 4
-#define OBST_THRESHOLD_FAR 99999
 
 	// All stopping conditions first:
 	if(!motors_enabled)
@@ -1924,73 +1979,77 @@ void drive_handler()
 			led_status(i, RED, LED_MODE_FADE);
 		#endif
 		micronavi_status |= 1UL<<5;
+		manual_drive = 0;
 		stop(8);
 
 	}
 
-	if(ignore_front==0 && run && correcting_linear && ((lin_err > 50*65536 && obstacle_front_near > OBST_THRESHOLD) || (lin_err > 300*65536 && obstacle_front_far > OBST_THRESHOLD_FAR)))
+	if(!manual_drive)
 	{
+		if(ignore_front==0 && run && correcting_linear && ((lin_err > 50*65536 && obstacle_front_near > OBST_THRESHOLD) || (lin_err > 300*65536 && obstacle_front_far > OBST_THRESHOLD_FAR)))
 		{
-			beep(500, 100, 0, 70);
-			stop_indicators = 125;
-			#ifdef STOP_LEDS_ON
-			led_status(9, RED, LED_MODE_FADE);
-			led_status(0, RED, LED_MODE_FADE);
-			led_status(1, RED, LED_MODE_FADE);
-			#endif
-		}
-		micronavi_status |= 1UL<<0;
-		stop(4);
+			{
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+				#ifdef STOP_LEDS_ON
+				led_status(9, RED, LED_MODE_FADE);
+				led_status(0, RED, LED_MODE_FADE);
+				led_status(1, RED, LED_MODE_FADE);
+				#endif
+			}
+			micronavi_status |= 1UL<<0;
+			stop(4);
 
-	}
-	else if(ignore_back==0 && run && correcting_linear && ((lin_err < -50*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_err < -300*65536 && obstacle_back_far > OBST_THRESHOLD_FAR)))
-	{
+		}
+		else if(ignore_back==0 && run && correcting_linear && ((lin_err < -50*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_err < -300*65536 && obstacle_back_far > OBST_THRESHOLD_FAR)))
 		{
-			beep(500, 100, 0, 70);
-			stop_indicators = 125;
-			#ifdef STOP_LEDS_ON
-			led_status(4, RED, LED_MODE_FADE);
-			led_status(5, RED, LED_MODE_FADE);
-			led_status(6, RED, LED_MODE_FADE);
-			#endif
-		}
+			{
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+				#ifdef STOP_LEDS_ON
+				led_status(4, RED, LED_MODE_FADE);
+				led_status(5, RED, LED_MODE_FADE);
+				led_status(6, RED, LED_MODE_FADE);
+				#endif
+			}
 
-		micronavi_status |= 1UL<<0;
-		stop(5);
-	}
-	else if(ignore_left==0 && run && correcting_angle && ((ang_err > 0*ANG_1_DEG && obstacle_left_very_near > OBST_THRESHOLD) || (ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 25*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD_FAR)))
-	{
+			micronavi_status |= 1UL<<0;
+			stop(5);
+		}
+		else if(ignore_left==0 && run && correcting_angle && ((ang_err > 0*ANG_1_DEG && obstacle_left_very_near > OBST_THRESHOLD) || (ang_err > 10*ANG_1_DEG && obstacle_left_near > OBST_THRESHOLD) || (ang_err > 25*ANG_1_DEG && obstacle_left_far > OBST_THRESHOLD_FAR)))
 		{
-			beep(500, 100, 0, 70);
-			stop_indicators = 125;
-			#ifdef STOP_LEDS_ON
-			led_status(2, RED, LED_MODE_FADE);
-			led_status(3, RED, LED_MODE_FADE);
-			#endif
-		}
+			{
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+				#ifdef STOP_LEDS_ON
+				led_status(2, RED, LED_MODE_FADE);
+				led_status(3, RED, LED_MODE_FADE);
+				#endif
+			}
 
-		micronavi_status |= 1UL<<2;
-		stop(6);
-	}
-	else if(ignore_right==0 && run && correcting_angle && ((ang_err < -0*ANG_1_DEG && obstacle_right_very_near > OBST_THRESHOLD) || (ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -25*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD_FAR)))
-	{
+			micronavi_status |= 1UL<<2;
+			stop(6);
+		}
+		else if(ignore_right==0 && run && correcting_angle && ((ang_err < -0*ANG_1_DEG && obstacle_right_very_near > OBST_THRESHOLD) || (ang_err < -10*ANG_1_DEG && obstacle_right_near > OBST_THRESHOLD) || (ang_err < -25*ANG_1_DEG && obstacle_right_far > OBST_THRESHOLD_FAR)))
 		{
-			beep(500, 100, 0, 70);
-			stop_indicators = 125;
-			#ifdef STOP_LEDS_ON
-			led_status(7, RED, LED_MODE_FADE);
-			led_status(8, RED, LED_MODE_FADE);
-			#endif
+			{
+				beep(500, 100, 0, 70);
+				stop_indicators = 125;
+				#ifdef STOP_LEDS_ON
+				led_status(7, RED, LED_MODE_FADE);
+				led_status(8, RED, LED_MODE_FADE);
+				#endif
+			}
+			micronavi_status |= 1UL<<2;
+
+			stop(7);
 		}
-		micronavi_status |= 1UL<<2;
 
-		stop(7);
+		if(ignore_left > 0) ignore_left--;
+		if(ignore_right > 0) ignore_right--;
+		if(ignore_front > 0) ignore_front--;
+		if(ignore_back > 0) ignore_back--;
 	}
-
-	if(ignore_left > 0) ignore_left--;
-	if(ignore_right > 0) ignore_right--;
-	if(ignore_front > 0) ignore_front--;
-	if(ignore_back > 0) ignore_back--;
 
 	int do_start = 0;
 
