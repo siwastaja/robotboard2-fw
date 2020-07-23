@@ -492,29 +492,8 @@ void init_delay_us(uint32_t i)
 // Get the bare minimum ready ASAP so that the charge pump can start.
 void stm32init(void)
 {
-	#include "pwrswitch.h"
-	init_power_outputs();
-
 	RCC->AHB4ENR |= 0b111111111; // enable GPIOA to GPIOI (J and K do not exist on the device)
 //	IO_TO_GPO(GPIOC, 13); // LED
-
-	PWR->CR1 |= 1UL<<8; // Enable write access to the backup SRAM, and the PWR->CR2 register
-	__DSB();
-
-
-//	int backup_sram_lost = 0;
-	if(!(PWR->CR2 & 1UL)) // Backup regulator was turned off, for example, because the Vbat was disconnected
-	{
-//		backup_sram_lost = 1;
-		PWR->CR2 |= 1UL; // Turn the regulator on, so it will continue working the next time the robot is turned off.
-		RCC->BDCR = 1UL /*LSE oscillator on, for RTC*/ | 0b01UL<<8 /*LSE clock drives RTC*/ |
-		            1UL<<15 /*Enable RTC*/;
-//		LED_ON();
-//		init_delay_us(200000);
-//		LED_OFF();
-	}
-
-	RCC->AHB4ENR |= 1UL<<28; // Enable backup ram access clock.
 
 #ifdef REV2A
 
@@ -539,14 +518,36 @@ void stm32init(void)
 	// so that the capacitors are able to precharge through precharging resistors to a voltage high enough
 	// to allow the main switch desaturation detection to let go. Complex, yeah?
 
-	if(backup_ram.immediate_5v == 0x420b1a5e && !PWRSWITCH_PRESSED)
+	if(/*backup_ram.immediate_5v == 0x420b1a5e &&*/ !PWRSWITCH_PRESSED)
 	{
+		extern void init_power_outputs();
+		init_power_outputs();
+
 		RCC->AHB4ENR |= 1UL<<5;
 		BIG5V_ON();
 		IO_TO_GPO(GPIOF, 5); // 5Vbig - same pin in REV2A, REV2B
-		backup_ram.immediate_5v = 0;
-		backup_ram.immediate_5v; // dummy read, see flash.c
+//		backup_ram.immediate_5v = 0;
+//		backup_ram.immediate_5v; // dummy read, see flash.c
 	}
+
+
+	PWR->CR1 |= 1UL<<8; // Enable write access to the backup SRAM, and the PWR->CR2 register
+	__DSB();
+
+//	int backup_sram_lost = 0;
+	if(!(PWR->CR2 & 1UL)) // Backup regulator was turned off, for example, because the Vbat was disconnected
+	{
+//		backup_sram_lost = 1;
+		PWR->CR2 |= 1UL; // Turn the regulator on, so it will continue working the next time the robot is turned off.
+		RCC->BDCR = 1UL /*LSE oscillator on, for RTC*/ | 0b01UL<<8 /*LSE clock drives RTC*/ |
+		            1UL<<15 /*Enable RTC*/;
+//		LED_ON();
+//		init_delay_us(200000);
+//		LED_OFF();
+	}
+
+	RCC->AHB4ENR |= 1UL<<28; // Enable backup ram access clock.
+
 
 	RCC->APB4ENR |= 1UL<<1 /*SYSCFG needs to be on for some configuration thingies often needed when fighting against
 		 device errata*/;
