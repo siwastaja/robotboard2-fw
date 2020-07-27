@@ -150,6 +150,13 @@ void init_pwrswitch_and_led()
 
 void init_power_outputs()
 {
+	static int initialized;
+
+	if(initialized)
+		return;
+
+	initialized = 1;
+
 	#ifdef REV2A
 		// REV2A didn't simply have these convenience defines, and the init is done whenever needed, manually.
 		error(222);
@@ -158,13 +165,41 @@ void init_power_outputs()
 	#ifdef REV2B
 		RCC->AHB4ENR |= 1UL<<1 | 1UL<<2 | 1UL<<6 | 1UL<<8; // PB, PC, PG, PI
 
-		PO1_OFF();
-		PO1_OFF();
-		PO2_OFF();
-		PO3_OFF();
-		PO4_OFF();
-		PO5_OFF();
-		PO6_OFF();
+		#ifdef PO1_DEFAULT_ON
+			PO1_ON();
+		#else
+			PO1_OFF();			
+		#endif
+
+		#ifdef PO2_DEFAULT_ON
+			PO2_ON();
+		#else
+			PO2_OFF();
+		#endif
+
+		#ifdef PO3_DEFAULT_ON
+			PO3_ON();
+		#else
+			PO3_OFF();
+		#endif
+
+		#ifdef PO4_DEFAULT_ON
+			PO4_ON();
+		#else
+			PO4_OFF();
+		#endif
+
+		#ifdef PO5_DEFAULT_ON
+			PO5_ON();
+		#else
+			PO5_OFF();
+		#endif
+
+		#ifdef PO6_DEFAULT_ON
+			PO6_ON();
+		#else
+			PO6_OFF();
+		#endif
 
 		IO_TO_GPO(GPIOG,0); // PO1
 		IO_TO_GPO(GPIOG,1); // PO2
@@ -176,29 +211,6 @@ void init_power_outputs()
 		IO_TO_GPI(GPIOB,2); // 1,2,3,4 status
 		IO_PULLUP_ON(GPIOB,2); // 1,2,3,4 status
 
-		#ifdef PO1_DEFAULT_ON
-			PO1_ON();
-		#endif
-
-		#ifdef PO2_DEFAULT_ON
-			PO2_ON();
-		#endif
-
-		#ifdef PO3_DEFAULT_ON
-			PO3_ON();
-		#endif
-
-		#ifdef PO4_DEFAULT_ON
-			PO4_ON();
-		#endif
-
-		#ifdef PO5_DEFAULT_ON
-			PO5_ON();
-		#endif
-
-		#ifdef PO6_DEFAULT_ON
-			PO6_ON();
-		#endif
 
 	#endif
 }

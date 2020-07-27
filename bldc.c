@@ -109,9 +109,6 @@ volatile int32_t curr_info_ma[2];
 
 uint32_t bldc_pos[2];
 
-int run[2] = {0};
-int wanna_stop[2] = {0};
-
 #ifdef BLDC_TEST
 	#define TRACE_LEN 2048
 	int trace_at = -1;
@@ -160,12 +157,20 @@ TEST_VOLATILE int cc_i = 1200;
 // plant setpoint = desired wheel velocity
 // plant output = desired current (iq) to the FOC current control loop
 
-
 TEST_VOLATILE int velo_ff = 2400;
 TEST_VOLATILE int velo_acc_ff = 200000;
 TEST_VOLATILE int velo_p = 3000;
 TEST_VOLATILE int velo_i = 10;
 TEST_VOLATILE int velo_d = 1000;
+
+
+/*
+TEST_VOLATILE int velo_ff = 0;
+TEST_VOLATILE int velo_acc_ff = 0;
+TEST_VOLATILE int velo_p = 0;
+TEST_VOLATILE int velo_i = 0;
+TEST_VOLATILE int velo_d = 0;
+*/
 
 TEST_VOLATILE int motor_enabled[2];
 TEST_VOLATILE int sp_velo[2];
@@ -199,7 +204,7 @@ static void calc_max_errint_v()
 }
 
 // If the jerk (wheel oscillation) status increases this value even brifly, error() is generated right at the interrupt handler
-#define JERK_STATUS_ERROR_OUT 120000
+#define JERK_STATUS_ERROR_OUT 200000
 
 static int jerk_status[2];
 int ITCM get_jerk_status(int m)
@@ -216,6 +221,8 @@ static int32_t iq_meas[2]; // measured IQ times 256 (IIR filtered)
 // Maximum possible calculated this way would be 1.0 (when dt=1, minimum possible value)
 // For fixed-point implementation, large nominator is used, defined here:
 #define VELO_NOM 16777216
+
+volatile int32_t gyro_to_motor_feedforward;
 
 void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 {
@@ -559,8 +566,7 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		// We have no idea how to estimate the angle.
 		// Keep the previous and increase the error counter fast.
 
-		illegal_hall_err_cnt += 200;
-		error(57);
+		illegal_hall_err_cnt += 1000;
 
 	}
 
@@ -606,12 +612,18 @@ void ITCM bldc_handler(int mc, int ib, int ic, int hall)
 		if(errint_v[mc] > max_errint_v) errint_v[mc] = max_errint_v;
 		if(errint_v[mc] < -max_errint_v) errint_v[mc] = -max_errint_v;
 
+		int32_t gfw = gyro_to_motor_feedforward;
+
+		if(gfw < -MAX_CURRENT_LIMIT/2 || gfw > MAX_CURRENT_LIMIT/2)
+			error(125);
+
 		int32_t now_current = 
-		       (((int64_t)velo_ff * (int64_t)sp_v)>>16) +
-		       (((int64_t)velo_acc_ff * (int64_t)sp_acc[mc])>>16) +
-		       (((int64_t)velo_p  * (int64_t)err_v)>>16) +
-		       (((int64_t)velo_i  * (int64_t)errint_v[mc])>>16) +
-		       (((int64_t)velo_d  * (int64_t)der_v[mc])>>16);
+			gfw + 
+			(((int64_t)velo_ff * (int64_t)sp_v)>>16) +
+			(((int64_t)velo_acc_ff * (int64_t)sp_acc[mc])>>16) +
+			(((int64_t)velo_p  * (int64_t)err_v)>>16) +
+			(((int64_t)velo_i  * (int64_t)errint_v[mc])>>16) +
+			(((int64_t)velo_d  * (int64_t)der_v[mc])>>16);
 
 		// A bit of IIR filter
 		current[mc] = (current[mc] + now_current)>>1;

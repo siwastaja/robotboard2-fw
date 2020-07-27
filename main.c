@@ -542,7 +542,7 @@ void main()
 	DBG_PR_VAR_U32(backup_ram.boot_cnt);
 	DBG_PR_VAR_U32(backup_ram.dummy);
 
-	// init_power_outputs(); // moved to early stm32init so that DEFAULT ON outputs won't turn off for too long during FW update
+	init_power_outputs(); // stm32init() may have called this already so that DEFAULT ON outputs won't turn off for too long during FW update
 
 	#ifndef CALIBRATOR
 		#ifndef BLDC_TEST

@@ -122,31 +122,36 @@ int is_driving()
 	return run;
 }
 
-static double max_ang_speed = 100.0;
-static double min_ang_speed = 30.0;
+static double max_ang_speed = 50.0;
 static double max_lin_speed = 200.0;
-static double min_lin_speed = 50.0;
 
 void set_top_speed_max(int old_style_value)
 {
-	max_ang_speed = (double)old_style_value;// / 5.0;
-	max_lin_speed = (double)old_style_value*2.0;
+	max_ang_speed = (double)old_style_value * 0.75;// / 5.0;
+	max_lin_speed = (double)old_style_value * 2.5;
 
 
-	if(max_ang_speed < min_ang_speed) max_ang_speed = min_ang_speed;
-	if(max_lin_speed < min_lin_speed) max_lin_speed = min_lin_speed;
+	if(max_ang_speed < 20.0) max_ang_speed = 20.0;
+	if(max_lin_speed < 50.0) max_lin_speed = 50.0;
 	if(max_ang_speed > 100.0) max_ang_speed = 100.0;
 	if(max_lin_speed > 250.0) max_lin_speed = 250.0;
 }
 
-static int mode_xy;
-static uint32_t ang_to_target;
+static uint32_t target_ang;
+static int reverse;
 
 volatile int lock_processing;
 
 static int stop_indicators;
 
 static int accurot;
+
+static int64_t lin_left; 
+
+int32_t get_remaining_lin()
+{
+	return lin_left>>16;
+}
 
 
 void cmd_go_to(s2b_move_abs_t* m)
@@ -166,7 +171,31 @@ void cmd_go_to(s2b_move_abs_t* m)
 	micronavi_status = 0;
 
 	accurot = 0;
-	mode_xy = 1;
+
+	reverse = 0;
+	int64_t dx = cur_pos.x - target_pos.x;
+	int64_t dy = cur_pos.y - target_pos.y;
+	lin_left = sqrt(sq((double)dx) + sq((double)dy));
+
+	target_ang  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2.0*M_PI));
+
+
+	int auto_decision = 0;
+	if((lin_left < 300*65536) || backmode==2)
+	{
+		auto_decision = 1;
+	}
+
+	int32_t ang_err = cur_pos.ang - target_ang;
+
+	if((auto_decision && (ang_err > 90*ANG_1_DEG || ang_err < -90*ANG_1_DEG)) || (backmode==1 && !auto_decision))
+	{
+		reverse = 1;
+		//ang_err = (uint32_t)ang_err + (uint32_t)(ANG_180_DEG);
+		target_ang = (uint32_t)target_ang + (uint32_t)(ANG_180_DEG);
+	}
+
+
 //	do_start = 1;
 
 	lock_processing = 0;
@@ -194,13 +223,6 @@ void straight_rel(int32_t mm)
 }
 #endif
 
-static int64_t store_lin_err;
-
-int32_t get_remaining_lin()
-{
-	return store_lin_err>>16;
-}
-
 void straight_rel(int32_t mm)
 {
 	if(ignore_commands)
@@ -210,9 +232,9 @@ void straight_rel(int32_t mm)
 
 //	uart_print_string_blocking("straight_rel\r\n");
 //	DBG_PR_VAR_I32(mm);
-	ang_to_target = cur_pos.ang;
-	store_lin_err = (int64_t)mm<<16;
-	mode_xy = 0;
+	target_ang = cur_pos.ang;
+	lin_left = abso((int64_t)mm<<16);
+	reverse = (mm<0)?1:0;
 
 	if(stop_indicators == 0)
 		beep(75, 800, -600, 30);
@@ -233,11 +255,10 @@ void rotate_rel(int32_t ang32, int accurate)
 
 //	uart_print_string_blocking("rotate_rel\r\n");
 //	DBG_PR_VAR_I32(ang32);
-//	DBG_PR_VAR_I32(ang_to_target);
-	ang_to_target = cur_pos.ang + (uint32_t)ang32;
-//	DBG_PR_VAR_I32(ang_to_target);
+//	DBG_PR_VAR_I32(target_ang);
+	target_ang = cur_pos.ang + (uint32_t)ang32;
+//	DBG_PR_VAR_I32(target_ang);
 //	store_lin_err = 0;
-	mode_xy = 0;
 
 	if(stop_indicators == 0)
 		beep(75, 800, -600, 30);
@@ -258,11 +279,9 @@ void rotate_rel_on_fly(int32_t ang32, int accurate)
 
 //	uart_print_string_blocking("rotate_rel\r\n");
 //	DBG_PR_VAR_I32(ang32);
-//	DBG_PR_VAR_I32(ang_to_target);
-	ang_to_target = ang_to_target + (uint32_t)ang32;
-//	DBG_PR_VAR_I32(ang_to_target);
-//	store_lin_err = 0;
-	mode_xy = 0;
+//	DBG_PR_VAR_I32(target_ang);
+	target_ang = target_ang + (uint32_t)ang32;
+//	DBG_PR_VAR_I32(target_ang);
 
 	if(stop_indicators == 0)
 		beep(75, 800, -600, 30);
@@ -282,9 +301,9 @@ void rotate_and_straight_rel(int32_t ang32, int32_t mm, int accurate_rotation_fi
 //	uart_print_string_blocking("rotate_and_straight_rel\r\n");
 //	DBG_PR_VAR_I32(ang32);
 //	DBG_PR_VAR_I32(mm);
-	ang_to_target = cur_pos.ang + (uint32_t)ang32;
-	store_lin_err = (int64_t)mm<<16;
-	mode_xy = 0;
+	target_ang = cur_pos.ang + (uint32_t)ang32;
+	lin_left = abso((int64_t)mm<<16);
+	reverse = (mm<0)?1:0;
 
 	if(stop_indicators == 0)
 		beep(75, 800, -600, 30);
@@ -347,18 +366,14 @@ void execute_corr_pos()
 }
 
 
-
-
-static uint32_t ang_to_target;
-
 static void stop(int reason)
 {
 	target_pos = cur_pos;
 	new_direction = 0;
 	run = 0;
-	store_lin_err = 0;
+	lin_left = 0;
 //	do_start = 0;
-	ang_to_target = cur_pos.ang;
+	target_ang = cur_pos.ang;
 	backmode = 2; // auto decision
 //	DBG_PR_VAR_I32(reason);
 }
@@ -581,7 +596,7 @@ static int rotation_fsm(int cmd)
 	{
 		cmd_motors(1000);
 		state = 0;
-		ang_to_target = start_ang;
+		target_ang = start_ang;
 	}
 	else if(cmd == ROTA_CMD_START_POSANG)
 	{
@@ -630,7 +645,7 @@ static int rotation_fsm(int cmd)
 
 			cmd_motors(1000);
 
-			ang_to_target = cur_pos.ang + 45*ANG_1_DEG;
+			target_ang = cur_pos.ang + 45*ANG_1_DEG;
 
 		} break;
 
@@ -651,7 +666,7 @@ static int rotation_fsm(int cmd)
 
 			cmd_motors(1000);
 
-			ang_to_target = cur_pos.ang - 45*ANG_1_DEG;
+			target_ang = cur_pos.ang - 45*ANG_1_DEG;
 
 		} break;
 
@@ -1536,69 +1551,22 @@ void drive_handler()
 	// The rest is movement control, processing when to start and commanding motors
 
 
-	int64_t lin_err;
-
-	int reverse = 0;
-	int clockwise = 0;
+//	int clockwise = 0;
 
 
-	if(mode_xy)
-	{
-		int64_t dx = cur_pos.x - target_pos.x;
-		int64_t dy = cur_pos.y - target_pos.y;
-		lin_err = sqrt(sq((double)dx) + sq((double)dy));
 
-		if(lin_err > 400LL*65536LL || new_direction)
-			ang_to_target  = (uint32_t)(((double)ANG_180_DEG*2.0*(M_PI+atan2((double)dy, (double)dx)))/(2.0*M_PI));
-	}
+	if(reverse)
+		lin_left += fwd;
 	else
-	{
-		store_lin_err -= fwd;
+		lin_left -= fwd;
 
-		if(store_lin_err < 0)
-		{
-			lin_err = -1*store_lin_err;
-			reverse = 1;
-		}
-		else
-		{
-			lin_err = store_lin_err;
-			reverse = 0;
-		}
-
-	}
 
 
 	new_direction = 0;
 
-	int32_t ang_err = cur_pos.ang - ang_to_target;
-
-	if(mode_xy)
-	{
-		int auto_decision = 0;
-		if((lin_err < 300*65536 && lin_err > -300*65536) || backmode==2)
-		{
-			auto_decision = 1;
-		}
-
-		if((auto_decision && (ang_err > 90*ANG_1_DEG || ang_err < -90*ANG_1_DEG)) || (backmode==1 && !auto_decision))
-		{
-			reverse = 1;
-			ang_err = (uint32_t)ang_err + (uint32_t)(ANG_180_DEG);
-		}
-	}
-
+	int32_t ang_err = cur_pos.ang - target_ang;
 	// if rotation auto decision:	
-	clockwise = (ang_err > 0);
-
-
-	static int prev_run;
-
-
-	if(reverse)
-	{
-		lin_err *= -1;
-	}
+//	clockwise = (ang_err > 0);
 
 #ifdef LEDS_ON
 	if(stop_indicators == 0 && !manual_drive)
@@ -1644,8 +1612,8 @@ void drive_handler()
 	}
 #endif
 
-	// Over 100 meters is an error.
-	if(lin_err < -6553600000LL || lin_err > 6553600000LL) error(136);
+	// Significant wrong direction, or over 100 meters is an error.
+	if(lin_left < -200LL*65536LL || lin_left > 100000LL*65536LL) error(136);
 
 
 	int dbg1, dbg2, dbg3, dbg4, dbg5, dbg6;
@@ -1663,7 +1631,7 @@ void drive_handler()
 			correcting_linear = 0;
 			dbg6 = 1;
 		}
-		else if((abso(ang_err) < 3*ANG_1_DEG) && abso(lin_err) > 50*65535)
+		else if((abso(ang_err) < 3*ANG_1_DEG) && lin_left > 50*65535)
 		{
 			correcting_linear = 1;
 			dbg6 = 2;
@@ -1673,13 +1641,13 @@ void drive_handler()
 	}
 	else
 	{
-		if(abso(ang_err) > 25*ANG_1_DEG)
+		if(abso(ang_err) > 10*ANG_1_DEG)
 		{
 			rotation_happening = 1;
 			correcting_linear = 0;
 			dbg6 = 4;
 		}
-		else if((abso(ang_err) < 8*ANG_1_DEG) && abso(lin_err) > 50*65536)
+		else if((abso(ang_err) < 6*ANG_1_DEG) && lin_left > 50*65536)
 		{
 			correcting_linear = 1;
 			dbg6 = 5;
@@ -1692,18 +1660,24 @@ void drive_handler()
 
 
 	static double ang_speed;
-	double max_ang_speed_by_ang_err;
+	double targ_ang_speed;
 
-	if(correcting_linear && abso(lin_err) > 100*65536)
-		max_ang_speed_by_ang_err = 0.0 + 0.000000010*(double)abso(ang_err);
+	if(!correcting_angle)
+		targ_ang_speed = 0.0;
 	else
-		max_ang_speed_by_ang_err = 10.0 + 0.000000080*(double)abso(ang_err);
+	{
+//		if(correcting_linear) // && lin_left > 100*65536)
+//			targ_ang_speed =  -0.000001000*(double)ang_err;
+//		else
 
+		targ_ang_speed =  -0.000000500*(double)ang_err;
+	}
 
-	double max_ang_speed_by_lin_err = 999.9; // do not use such limitation
 
 	static double lin_speed;
-	double max_lin_speed_by_lin_err = 50.0 + 0.22*(double)abso((lin_err>>16)); // 1000mm error -> speed unit 270. 400mm -> 138
+	double max_lin_speed_by_lin_err = 0.80*(double)(lin_left>>16);
+	if(lin_left > 0)
+		max_lin_speed_by_lin_err += 25;
 	double max_lin_speed_by_ang_err;
 
 	if(accurot)
@@ -1722,17 +1696,19 @@ void drive_handler()
 	}
 
 
-	double decided_max_ang_speed = max_ang_speed;
-	if(!correcting_angle) decided_max_ang_speed = 0.0;
-	if(decided_max_ang_speed > max_ang_speed_by_ang_err) decided_max_ang_speed = max_ang_speed_by_ang_err;
-	if(decided_max_ang_speed > max_ang_speed_by_lin_err) decided_max_ang_speed = max_ang_speed_by_lin_err;
+	if(targ_ang_speed > max_ang_speed)
+		targ_ang_speed = max_ang_speed;
+	else if(targ_ang_speed < -1.0*max_ang_speed)
+		targ_ang_speed = -1.0*max_ang_speed;
 
-	if(ang_speed > decided_max_ang_speed)
-		ang_speed -= 0.05;
-	else if(ang_speed < decided_max_ang_speed - 0.07)
-		ang_speed += 0.05;
 
-	if(ang_speed < 0.0) ang_speed = 0.0;
+	// If overspeeding, decelerate. If underspeeding, accelerate.
+	// ang_speed = signed
+	if(ang_speed > targ_ang_speed+0.10)
+		ang_speed -= 0.5;
+	else if(ang_speed < targ_ang_speed-0.10)
+		ang_speed += 0.5;
+
 
 	double decided_max_lin_speed = max_lin_speed;
 	if(!correcting_linear) decided_max_lin_speed = 0.0;
@@ -1747,46 +1723,32 @@ void drive_handler()
 	if(lin_speed < 0.0) lin_speed = 0.0;
 
 
-	dbg1 = max_lin_speed;
-	dbg2 = max_lin_speed_by_lin_err;
-	dbg3 = max_lin_speed_by_ang_err;
+	dbg1 = targ_ang_speed;
+	dbg2 = ang_speed;
+	dbg3 = 0;
 	dbg4 = lin_speed;
 	dbg5 = correcting_linear;
 	//dbg6 = 0;
 
 	if(correcting_linear)
 	{
-		if(lin_err < -50*65536)
-		{
+		if(reverse)
 			sensors_bwd(lin_speed);
-		}
-		else if(lin_err > 50*65536)
-		{
-			sensors_fwd(lin_speed);
-		}
 		else
-		{
-			sensors_idle();
-		}
+			sensors_fwd(lin_speed);
 	}
 	else // Rotating only
 	{
 		if(ang_err < -6*ANG_1_DEG)
-		{
 			sensors_posang(ang_speed);
-		}
 		else if(ang_err > +6*ANG_1_DEG)
-		{
 			sensors_negang(ang_speed);
-		}
 		else
-		{
 			sensors_idle();
-		}
 	}
 
 
-	int ang_speed_i = (int)(ang_speed*256.0)*(clockwise?-1:1);
+	int ang_speed_i = (int)(ang_speed*256.0); //*(clockwise?-1:1);
 	int lin_speed_i = (int)(lin_speed*256.0)*(reverse?-1:1);
 
 
@@ -1807,6 +1769,8 @@ void drive_handler()
 
 	if(manual_drive > 0)
 	{
+		lin_left = 0;
+		target_ang = cur_pos.ang;
 		manual_drive--;
 
 		int right = manual_drive_buttons & (1<<0);
@@ -1917,7 +1881,18 @@ void drive_handler()
 		lin_speed_i = manual_drive_lin_speed;
 		ang_speed_i = manual_drive_ang_speed;
 		motors_enabled = manual_drive;
+	}
 
+
+	if(run && !manual_drive)
+	{
+		int32_t ang_err_limited = ang_err;
+		if(ang_err_limited > 7*ANG_1_DEG)
+			ang_err_limited = 7*ANG_1_DEG;
+		else if(ang_err_limited < -7*ANG_1_DEG)
+			ang_err_limited = -7*ANG_1_DEG;
+
+		gyro_to_motor_feedforward = 2*ang_err_limited/ANG_0_01_DEG;
 	}
 
 
@@ -1943,28 +1918,14 @@ void drive_handler()
 	}
 	else if(run && !manual_drive)
 	{
-		if(mode_xy)
+		if((accurot && (ang_err > -3*ANG_0_5_DEG && ang_err < 3*ANG_0_5_DEG && lin_left < 20LL*65536LL)) ||
+		  (!accurot && (ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG && lin_left < 20LL*65536LL)) )
 		{
-			if(lin_err < 30LL*65536LL && lin_err > -30LL*65536LL)
-			{
-				if(stop_indicators == 0)
-					beep(100, 2000, 0, 50);
-				run = 0;
+			if(stop_indicators == 0)
+				beep(100, 2000, 0, 50);
+			run = 0;
 
-			}
 		}
-		else
-		{
-			if((accurot && (ang_err > -3*ANG_0_5_DEG && ang_err < 3*ANG_0_5_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)) ||
-			  (!accurot && (ang_err > -4*ANG_1_DEG && ang_err < 4*ANG_1_DEG && lin_err < 20LL*65536LL && lin_err > -20LL*65536LL)) )
-			{
-				if(stop_indicators == 0)
-					beep(100, 2000, 0, 50);
-				run = 0;
-
-			}
-		}
-
 	}
 
 	int jerk0 = get_jerk_status(0);
@@ -1986,7 +1947,7 @@ void drive_handler()
 
 	if(!manual_drive)
 	{
-		if(ignore_front==0 && run && correcting_linear && ((lin_err > 50*65536 && obstacle_front_near > OBST_THRESHOLD) || (lin_err > 300*65536 && obstacle_front_far > OBST_THRESHOLD_FAR)))
+		if(ignore_front==0 && run && correcting_linear && !reverse && ((lin_left > 10*65536 && obstacle_front_near > OBST_THRESHOLD) || (lin_left > 300*65536 && obstacle_front_far > OBST_THRESHOLD_FAR)))
 		{
 			{
 				beep(500, 100, 0, 70);
@@ -2001,7 +1962,7 @@ void drive_handler()
 			stop(4);
 
 		}
-		else if(ignore_back==0 && run && correcting_linear && ((lin_err < -50*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_err < -300*65536 && obstacle_back_far > OBST_THRESHOLD_FAR)))
+		else if(ignore_back==0 && run && correcting_linear && reverse && ((lin_left > 10*65536 && obstacle_back_near > OBST_THRESHOLD) || (lin_left > 300*65536 && obstacle_back_far > OBST_THRESHOLD_FAR)))
 		{
 			{
 				beep(500, 100, 0, 70);
@@ -2062,7 +2023,7 @@ void drive_handler()
 	prev_manual_drive = manual_drive;
 	if(accurot)
 	{
-		if(ang_err < -2*ANG_1_DEG || ang_err > 2*ANG_1_DEG || lin_err > 40LL*65536LL || lin_err < -40LL*65536LL)
+		if(ang_err < -2*ANG_1_DEG || ang_err > 2*ANG_1_DEG || lin_left > 40LL*65536LL)
 		{
 			if(motors_enabled)
 				do_start = 1;
@@ -2070,7 +2031,7 @@ void drive_handler()
 	}
 	else
 	{
-		if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_err > 60LL*65536LL || lin_err < -60LL*65536LL)
+		if(ang_err < -7*ANG_1_DEG || ang_err > 7*ANG_1_DEG || lin_left > 60LL*65536LL)
 		{
 			if(motors_enabled)
 				do_start = 1;
@@ -2085,8 +2046,8 @@ void drive_handler()
 		motor_torque_lim(0, 50);
 		motor_torque_lim(1, 50);
 		enable_motors();
-		ang_speed = min_ang_speed;
-		lin_speed = min_lin_speed;
+		ang_speed = 0;
+		lin_speed = 0;
 		run = 1;
 	}
 
@@ -2095,8 +2056,6 @@ void drive_handler()
 //		motor_let_stop(0);
 //		motor_let_stop(1);
 	}
-
-	prev_run = run;
 
 	static int nonrun_cnt;
 	if(run)
@@ -2127,13 +2086,13 @@ void drive_handler()
 	if(drive_diag)
 	{
 		drive_diag->ang_err = ang_err;
-		drive_diag->lin_err = lin_err>>16;
+		drive_diag->lin_err = lin_left>>16;
 		drive_diag->cur_x = cur_pos.x>>16;
 		drive_diag->cur_y = cur_pos.y>>16;
 		drive_diag->target_x = target_pos.x>>16;
 		drive_diag->target_y = target_pos.y>>16;
 		drive_diag->id = cur_id;
-		drive_diag->remaining = abso((lin_err>>16));
+		drive_diag->remaining = lin_left>>16;
 		drive_diag->micronavi_stop_flags = micronavi_status;
 		drive_diag->run = run;
 /*
@@ -2149,7 +2108,7 @@ void drive_handler()
 		drive_diag->dbg3 = dbg3;
 		drive_diag->dbg4 = dbg4;
 		drive_diag->dbg5 = dbg5;
-		drive_diag->dbg6 = dbg6;
+		drive_diag->dbg6 = reverse;
 		drive_diag->ang_speed_i = ang_speed_i;
 		drive_diag->lin_speed_i = lin_speed_i;
 	}

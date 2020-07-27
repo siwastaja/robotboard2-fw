@@ -55,3 +55,7 @@ void set_motor_velocities(int v1, int v2);
 #define SUBSTEP_SHIFT 8
 extern uint32_t bldc_pos[2];
 
+// Feedforward some current into both motors, generating rotational torque immediately (not having to wait for the speed loop to respond)
+// Do not exceed +/-MAX_CURRENT_LIMIT, or error is generated
+extern volatile int32_t gyro_to_motor_feedforward;
+
